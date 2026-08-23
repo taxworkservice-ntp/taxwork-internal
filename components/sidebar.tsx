@@ -2,24 +2,55 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 const links = [
-  { href: "/clients", label: "ลูกค้า" },
-  { href: "/files", label: "ไฟล์" },
-  { href: "/contacts", label: "ผู้เกี่ยวข้อง" },
-  { href: "/tools", label: "เครื่องมือ" },
+  {
+    href: "/clients",
+    label: "ลูกค้า",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+  },
+  {
+    href: "/files",
+    label: "ไฟล์",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <path d="M14 2v6h6" />
+      </svg>
+    ),
+  },
+  {
+    href: "/contacts",
+    label: "ผู้เกี่ยวข้อง",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+        <rect x="2" y="5" width="20" height="15" rx="2" />
+        <circle cx="9" cy="11" r="2.2" />
+        <path d="M4.5 17c.7-1.8 2.5-2.8 4.5-2.8s3.8 1 4.5 2.8M16 9h4M16 13h4" />
+      </svg>
+    ),
+  },
+  {
+    href: "/tools",
+    label: "เครื่องมือ",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+        <path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14.5 12l-2.5-2.5z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
 
   async function signOut() {
     await createClient().auth.signOut();
@@ -33,42 +64,9 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Mobile top bar */}
-      <header className="fixed inset-x-0 top-0 z-40 flex h-12 items-center gap-3 border-b border-neutral-200 bg-white px-3 md:hidden">
-        <button
-          aria-label="เมนู"
-          className="flex h-8 w-8 items-center justify-center rounded text-lg hover:bg-neutral-100"
-          onClick={() => setOpen(true)}
-        >
-          ☰
-        </button>
-        <span className="text-sm font-bold">Taxwork</span>
-      </header>
-
-      {/* Backdrop */}
-      {open && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 md:hidden"
-          onClick={() => setOpen(false)}
-        />
-      )}
-
-      {/* Sidebar: drawer on mobile, fixed column on desktop */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-56 shrink-0 transform flex-col border-r border-neutral-200 bg-white p-4 transition-transform duration-200 md:sticky md:top-0 md:h-screen md:w-44 md:translate-x-0 ${
-          open ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="mb-6 flex items-center justify-between">
-          <span className="text-sm font-bold">Taxwork</span>
-          <button
-            aria-label="ปิดเมนู"
-            className="flex h-7 w-7 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 md:hidden"
-            onClick={() => setOpen(false)}
-          >
-            ✕
-          </button>
-        </div>
+      {/* Desktop sidebar */}
+      <aside className="sticky top-0 hidden h-screen w-44 shrink-0 flex-col border-r border-neutral-200 bg-white p-4 md:flex">
+        <div className="mb-6 text-sm font-bold">Taxwork</div>
         <nav className="flex flex-col gap-1">
           {links.map((l) => (
             <Link
@@ -82,13 +80,26 @@ export default function Sidebar() {
             </Link>
           ))}
         </nav>
-        <button
-          onClick={signOut}
-          className="btn mt-auto text-left text-neutral-500"
-        >
+        <button onClick={signOut} className="btn mt-auto text-left text-neutral-500">
           ออกจากระบบ
         </button>
       </aside>
+
+      {/* Mobile bottom nav */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
+        {links.map((l) => (
+          <Link
+            key={l.href}
+            href={l.href}
+            className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] ${
+              isActive(l.href) ? "text-blue-600" : "text-neutral-500"
+            }`}
+          >
+            {l.icon}
+            {l.label}
+          </Link>
+        ))}
+      </nav>
     </>
   );
 }
