@@ -94,7 +94,8 @@ task_instances id, template_id → templates (CASCADE), client_id, title,
 ```
 
 - **RLS enabled on every table**: all policies are simply `to authenticated using (true)`.
-- **Storage**: private bucket `client-files`, paths `{clientId}/{timestamp}-{filename}`, authenticated-only policies.
+- **File storage: Cloudflare R2** (bucket `internal-waxwork`, S3-compatible). Uploads go browser → presigned PUT (`/api/files/sign-upload`) → straight to R2. Downloads use presigned GETs (`/api/files/sign-download`); deletes via `/api/files/delete`. All three API routes require an authenticated Supabase session. Metadata stays in the Supabase `files` table. Legacy Supabase Storage bucket `client-files` still exists but is no longer used.
+- **R2 env vars**: `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (set in `.env.local` and Vercel).
 
 ## 6. Business rules & UX conventions
 

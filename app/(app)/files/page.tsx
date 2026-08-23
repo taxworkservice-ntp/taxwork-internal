@@ -42,35 +42,51 @@ export default function FilesPage() {
     if (!list?.length) return;
     setUploading(true);
     for (const file of Array.from(list)) {
-      const owner = clientId || "general";
-      const path = `${owner}/${Date.now()}-${file.name}`;
-      const { error } = await supabase.storage.from("client-files").upload(path, file);
-      if (!error) {
-        await supabase.from("files").insert({
-          client_id: clientId || null,
-          storage_path: path,
-          file_name: file.name,
-          size_bytes: file.size,
-          mime_type: file.type,
-        });
-      }
+      const signRes = await fetch("/api/files/sign-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, fileName: file.name }),
+      });
+      if (!signRes.ok) continue;
+      const { url, path } = await signRes.json();
+      const putRes = await fetch(url, {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+      });
+      if (!putRes.ok) continue;
+      await supabase.from("files").insert({
+        client_id: clientId || null,
+        storage_path: path,
+        file_name: file.name,
+        size_bytes: file.size,
+        mime_type: file.type,
+      });
     }
     setUploading(false);
     load();
   }
 
   async function remove(file: FileRow) {
-    if (!confirm(`Delete ${file.file_name}?`)) return;
-    await supabase.storage.from("client-files").remove([file.storage_path]);
+    if (!confirm(`ลบไฟล์ ${file.file_name}?`)) return;
+    await fetch("/api/files/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storagePath: file.storage_path }),
+    });
     await supabase.from("files").delete().eq("id", file.id);
     load();
   }
 
   async function download(file: FileRow) {
-    const { data } = await supabase.storage
-      .from("client-files")
-      .createSignedUrl(file.storage_path, 60);
-    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+    const res = await fetch("/api/files/sign-download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storagePath: file.storage_path }),
+    });
+    if (!res.ok) return;
+    const { url } = await res.json();
+    window.open(url, "_blank");
   }
 
   const filtered = files.filter(
