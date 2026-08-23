@@ -47,6 +47,10 @@ export default function FileSection({
     const list = e.target.files;
     if (!list?.length) return;
     setUploading(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
     for (const file of Array.from(list)) {
       // 1. get a presigned upload URL from our API
       const signRes = await fetch("/api/files/sign-upload", {
@@ -72,6 +76,7 @@ export default function FileSection({
         file_name: file.name,
         size_bytes: file.size,
         mime_type: file.type,
+        uploaded_by: user?.email ?? null,
       });
     }
     setUploading(false);
