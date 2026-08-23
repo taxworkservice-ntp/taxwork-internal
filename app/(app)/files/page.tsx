@@ -213,7 +213,7 @@ export default function FilesPage() {
                   {f.uploaded_by ? (
                     <span className="inline-flex items-center">
                       <CopyButton text={f.uploaded_by} />
-                      <span className="ml-1 truncate">{f.uploaded_by}</span>
+                      <span className="ml-1 break-all">{f.uploaded_by}</span>
                     </span>
                   ) : (
                     "—"
