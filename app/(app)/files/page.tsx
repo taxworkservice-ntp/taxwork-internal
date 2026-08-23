@@ -133,20 +133,20 @@ export default function FilesPage() {
     <>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">ไฟล์</h1>
+        <div className="flex-grow" />
         <label className={`btn-primary ${uploading ? "opacity-50" : ""}`}>
           {uploading ? "กำลังอัปโหลด..." : "อัปโหลด"}
           <input type="file" multiple className="hidden" onChange={upload} disabled={uploading} />
         </label>
-        <div className="flex-grow" />
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <input
-          className="input max-w-xs"
+          className="input w-full sm:max-w-xs"
           placeholder="ค้นหา..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
           className="input w-32"
           value={filterYear}
