@@ -53,6 +53,7 @@ export default function Sidebar() {
   const router = useRouter();
 
   async function signOut() {
+    if (!confirm("ต้องการออกจากระบบใช่หรือไม่?")) return;
     await createClient().auth.signOut();
     router.push("/login");
     router.refresh();
@@ -64,6 +65,14 @@ export default function Sidebar() {
 
   return (
     <>
+      {/* Mobile sign-out (top right) */}
+      <button
+        onClick={signOut}
+        className="btn fixed right-3 top-3 z-30 text-xs text-neutral-500 md:hidden"
+      >
+        ออกจากระบบ
+      </button>
+
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-44 shrink-0 flex-col border-r border-neutral-200 bg-white p-4 md:flex">
         <div className="mb-6 text-sm font-bold">Taxwork</div>
