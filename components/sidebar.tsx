@@ -65,14 +65,6 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Mobile sign-out (top right) */}
-      <button
-        onClick={signOut}
-        className="btn fixed right-3 top-3 z-30 text-xs text-neutral-500 md:hidden"
-      >
-        ออกจากระบบ
-      </button>
-
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-44 shrink-0 flex-col border-r border-neutral-200 bg-white p-4 md:flex">
         <div className="mb-6 text-sm font-bold">Taxwork</div>
@@ -108,6 +100,15 @@ export default function Sidebar() {
             {l.label}
           </Link>
         ))}
+        <button
+          onClick={signOut}
+          className="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] text-neutral-500 active:text-red-600"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+          </svg>
+          ออกจากระบบ
+        </button>
       </nav>
     </>
   );
