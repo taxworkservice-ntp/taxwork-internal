@@ -27,15 +27,10 @@ type SortDir = "asc" | "desc";
 
 const SORT_STORAGE_KEY = "clients.sort";
 
-function Cell({ value, clip }: { value: string; clip?: boolean }) {
+function Cell({ value }: { value: string }) {
   return (
-    <span className="flex items-center gap-1">
-      <span
-        className={clip ? "min-w-0 truncate" : "break-all"}
-        title={value}
-      >
-        {value}
-      </span>
+    <span className="flex min-w-0 items-center gap-1">
+      <span className="min-w-0 truncate" title={value}>{value}</span>
       <CopyButton text={value} />
     </span>
   );
@@ -235,7 +230,7 @@ export default function ClientsPage() {
                 <td className="text-neutral-400">{expandedId === c.id ? "▼" : "▶"}</td>
                 <td className="overflow-hidden"><Cell value={c.name} /></td>
                 <td className="overflow-hidden">{c.tax_id ? <Cell value={c.tax_id} /> : "—"}</td>
-                <td className="overflow-hidden">{c.address ? <Cell value={c.address} clip /> : "—"}</td>
+                <td className="overflow-hidden">{c.address ? <Cell value={c.address} /> : "—"}</td>
                 <td className="whitespace-nowrap">
                   <Link
                     href={`/clients/${c.id}`}
