@@ -147,7 +147,7 @@ export default function ContactsPage() {
       </div>
 
       {showForm && (
-        <form onSubmit={add} className="card mb-4 grid max-w-2xl grid-cols-2 gap-3">
+        <form onSubmit={add} className="card mb-4 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="label">ชื่อ *</label>
             <input
@@ -219,7 +219,8 @@ export default function ContactsPage() {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      <table className="table-base w-full max-w-5xl table-fixed">
+      <div className="overflow-x-auto">
+      <table className="table-base w-full min-w-[760px] max-w-5xl table-fixed">
         <thead>
           <tr>
             <Th label="ชื่อ" sortKey="name" sort={sort} onSort={changeSort} className="w-[25%]" />
@@ -259,6 +260,7 @@ export default function ContactsPage() {
           )}
         </tbody>
       </table>
+      </div>
     </>
   );
 }

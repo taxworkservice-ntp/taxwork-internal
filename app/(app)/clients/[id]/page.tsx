@@ -122,7 +122,7 @@ export default function ClientDetailPage() {
     <>
       <div className="mb-6 max-w-xl">
         <h1 className="mb-3 text-lg font-semibold">{client.name}</h1>
-        <div className="card grid grid-cols-2 gap-3">
+        <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="label">ชื่อบริษัท</label>
             <input className="input" value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
@@ -163,9 +163,9 @@ export default function ClientDetailPage() {
               <p className="mb-2 text-sm text-red-700">
                 จะลบ <strong>{client.name}</strong> พร้อมข้อมูลเข้าระบบ ไฟล์ และงานทั้งหมดของลูกค้านี้ ไม่สามารถกู้คืนได้
               </p>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
-                  className="input flex-1 border-red-300 bg-white"
+                  className="input min-w-0 flex-1 border-red-300 bg-white"
                   placeholder={`พิมพ์ "${client.name}" เพื่อยืนยัน`}
                   value={deleteInput}
                   onChange={(e) => setDeleteInput(e.target.value)}
@@ -194,7 +194,7 @@ export default function ClientDetailPage() {
 
       {/* Credentials */}
       <section className="mb-8 max-w-xl">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-medium">ข้อมูลเข้าระบบ</h2>
           <button className="btn" onClick={() => setShowCredForm(!showCredForm)}>
             {showCredForm ? "ยกเลิก" : "เพิ่มข้อมูลเข้าระบบ"}
@@ -218,7 +218,7 @@ export default function ClientDetailPage() {
                 ))}
               </datalist>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="label">ผู้ใช้</label>
                 <input className="input" value={cred.username} onChange={(e) => setCred({ ...cred, username: e.target.value })} />

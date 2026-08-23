@@ -74,7 +74,7 @@ export default function TasksPage() {
 
   return (
     <>
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">งาน</h1>
         <button className="btn" onClick={() => setMonth(month - 1)}>←</button>
         <span className="w-32 text-center text-sm font-medium">
@@ -93,7 +93,8 @@ export default function TasksPage() {
         คลิกที่สถานะเพื่อเปลี่ยน • วันครบกำหนดสีแดง = เกินกำหนด
       </p>
 
-      <table className="table-base max-w-2xl">
+      <div className="overflow-x-auto">
+      <table className="table-base w-full min-w-[640px] max-w-2xl">
         <thead>
           <tr><th>กำหนดส่ง</th><th>งาน</th><th>ลูกค้า</th><th>สถานะ</th></tr>
         </thead>
@@ -138,6 +139,7 @@ export default function TasksPage() {
           )}
         </tbody>
       </table>
+      </div>
     </>
   );
 }

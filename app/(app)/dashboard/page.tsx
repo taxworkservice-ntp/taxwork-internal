@@ -33,7 +33,7 @@ export default async function DashboardPage() {
     <>
       <h1 className="mb-4 text-lg font-semibold">แดชบอร์ด</h1>
 
-      <div className="mb-6 flex gap-6 text-sm text-neutral-600">
+      <div className="mb-6 flex flex-wrap gap-3 text-sm text-neutral-600">
         <div className="card">ลูกค้าที่ใช้งาน: {clients?.length ?? 0}</div>
         <div className="card text-red-600">เกินกำหนด: {overdue.data?.length ?? 0}</div>
         <div className="card">ครบกำหนดใน 14 วัน: {upcoming.data?.length ?? 0}</div>

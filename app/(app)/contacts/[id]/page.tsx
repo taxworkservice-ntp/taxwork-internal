@@ -116,7 +116,7 @@ export default function ContactDetailPage() {
         {saved && <span className="text-xs font-normal text-green-600">บันทึกแล้ว</span>}
       </h1>
 
-      <div className="card grid grid-cols-2 gap-3">
+      <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="label">ชื่อ *</label>
           <input
@@ -260,9 +260,9 @@ export default function ContactDetailPage() {
             <p className="mb-2 text-sm text-red-700">
               จะลบ <strong>{contact.name}</strong> และยกเลิกการมอบหมายลูกค้าทั้งหมด ไม่สามารถกู้คืนได้
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <input
-                className="input flex-1 border-red-300 bg-white"
+                className="input min-w-0 flex-1 border-red-300 bg-white"
                 placeholder={`พิมพ์ "${contact.name}" เพื่อยืนยัน`}
                 value={deleteInput}
                 onChange={(e) => setDeleteInput(e.target.value)}

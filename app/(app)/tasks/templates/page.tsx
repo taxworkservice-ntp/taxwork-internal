@@ -86,7 +86,7 @@ export default function TemplatesPage() {
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">เทมเพลตงาน</h1>
         <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
           {showForm ? "ยกเลิก" : "เพิ่มเทมเพลต"}
@@ -103,7 +103,7 @@ export default function TemplatesPage() {
             <label className="label">รายละเอียด</label>
             <input className="input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="label">ความถี่</label>
               <select className="input" value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value as Template["frequency"] })}>
@@ -130,7 +130,7 @@ export default function TemplatesPage() {
             <label className="label">
               ใช้บังคับในเดือน ({form.frequency === "monthly" ? "ทุกเดือน" : form.frequency === "quarterly" ? "เดือนเริ่มไตรมาส" : "เดือนเริ่มงาน"})
             </label>
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               {MONTH_NAMES.map((name, i) => (
                 <button
                   type="button"
@@ -151,7 +151,8 @@ export default function TemplatesPage() {
         </form>
       )}
 
-      <table className="table-base max-w-3xl">
+      <div className="overflow-x-auto">
+      <table className="table-base w-full min-w-[720px] max-w-3xl">
         <thead>
           <tr><th>ชื่องาน</th><th>ความถี่</th><th>วันที่</th><th>ลูกค้า</th><th>เปิดใช้งาน</th><th></th></tr>
         </thead>
@@ -180,6 +181,7 @@ export default function TemplatesPage() {
           )}
         </tbody>
       </table>
+      </div>
     </>
   );
 }

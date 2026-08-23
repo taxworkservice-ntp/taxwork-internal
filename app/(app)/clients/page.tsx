@@ -209,7 +209,8 @@ export default function ClientsPage() {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      <table className="table-base w-full max-w-5xl table-fixed">
+      <div className="overflow-x-auto">
+      <table className="table-base w-full min-w-[760px] max-w-5xl table-fixed">
         <thead>
           <tr>
             <th className="w-8"></th>
@@ -254,7 +255,7 @@ export default function ClientsPage() {
                         เพื่อเพิ่มข้อมูล
                       </p>
                     ) : (
-                      <table className="table-base bg-white">
+                      <div className="overflow-x-auto"><table className="table-base w-full min-w-[480px] bg-white">
                         <thead>
                           <tr><th>แพลตฟอร์ม</th><th>ผู้ใช้</th><th>รหัสผ่าน</th></tr>
                         </thead>
@@ -274,7 +275,7 @@ export default function ClientsPage() {
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </table></div>
                     )}
                   </td>
                 </tr>
@@ -288,6 +289,7 @@ export default function ClientsPage() {
           )}
         </tbody>
       </table>
+      </div>
     </>
   );
 }

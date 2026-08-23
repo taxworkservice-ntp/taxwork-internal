@@ -81,7 +81,7 @@ export default function FilesPage() {
 
   return (
     <>
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">ไฟล์</h1>
         <select className="input w-48" value={clientId} onChange={(e) => setClientId(e.target.value)}>
           <option value="">ทั่วไป (ไม่ระบุลูกค้า)</option>
@@ -97,7 +97,8 @@ export default function FilesPage() {
         <input className="input max-w-xs" placeholder="ค้นหา..." value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
 
-      <table className="table-base">
+      <div className="overflow-x-auto">
+      <table className="table-base w-full min-w-[640px]">
         <thead>
           <tr><th>ชื่อไฟล์</th><th>ลูกค้า</th><th>ขนาด</th><th>วันที่อัปโหลด</th><th></th></tr>
         </thead>
@@ -124,6 +125,7 @@ export default function FilesPage() {
           )}
         </tbody>
       </table>
+      </div>
     </>
   );
 }

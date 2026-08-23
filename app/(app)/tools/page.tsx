@@ -97,7 +97,7 @@ export default function ToolsPage() {
         ทุกอย่างประมวลผลในเบราว์เซอร์ของคุณ — ไฟล์จะไม่ถูกอัปโหลดไปที่ใด
       </p>
 
-      <div className="grid max-w-3xl grid-cols-2 gap-6">
+      <div className="grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
         <section className="card">
           <h2 className="mb-3 font-medium">รวม PDF</h2>
           <input
