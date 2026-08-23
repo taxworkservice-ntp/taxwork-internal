@@ -33,6 +33,13 @@ export default function FilesPage() {
   const [files, setFiles] = useState<FileRow[]>([]);
   const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [filterYear, setFilterYear] = useState("");
+  const [filterMonth, setFilterMonth] = useState("");
+  const [filterUser, setFilterUser] = useState("");
+
+  const years = [...new Set(files.map((f) => new Date(f.uploaded_at).getFullYear()))].sort((a, b) => b - a);
+  const users = [...new Set(files.map((f) => f.uploaded_by ?? "").filter(Boolean))].sort();
+  const hasFilter = filterYear !== "" || filterMonth !== "" || filterUser !== "";
 
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -105,12 +112,22 @@ export default function FilesPage() {
     window.open(url, "_blank");
   }
 
-  const filtered = files.filter(
-    (f) =>
-      f.file_name.toLowerCase().includes(search.toLowerCase()) ||
-      (f.uploaded_by ?? "").toLowerCase().includes(search.toLowerCase()) ||
-      (f.clients?.name ?? "").toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = files.filter((f) => {
+    if (search) {
+      const q = search.toLowerCase();
+      if (
+        !f.file_name.toLowerCase().includes(q) &&
+        !(f.uploaded_by ?? "").toLowerCase().includes(q) &&
+        !(f.clients?.name ?? "").toLowerCase().includes(q)
+      )
+        return false;
+    }
+    if (filterUser && f.uploaded_by !== filterUser) return false;
+    const d = new Date(f.uploaded_at);
+    if (filterYear && d.getFullYear() !== Number(filterYear)) return false;
+    if (filterMonth && d.getMonth() + 1 !== Number(filterMonth)) return false;
+    return true;
+  });
 
   return (
     <>
@@ -127,6 +144,53 @@ export default function FilesPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <select
+          className="input w-32"
+          value={filterYear}
+          onChange={(e) => setFilterYear(e.target.value)}
+        >
+          <option value="">ทุกปี</option>
+          {years.map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+        <select
+          className="input w-36"
+          value={filterMonth}
+          onChange={(e) => setFilterMonth(e.target.value)}
+        >
+          <option value="">ทุกเดือน</option>
+          {["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"].map(
+            (m, i) => (
+              <option key={i + 1} value={i + 1}>{m}</option>
+            )
+          )}
+        </select>
+        <select
+          className="input w-56"
+          value={filterUser}
+          onChange={(e) => setFilterUser(e.target.value)}
+        >
+          <option value="">ผู้อัปโหลดทั้งหมด</option>
+          {users.map((u) => (
+            <option key={u} value={u}>{u}</option>
+          ))}
+        </select>
+        {hasFilter && (
+          <button
+            className="btn"
+            onClick={() => {
+              setFilterYear("");
+              setFilterMonth("");
+              setFilterUser("");
+            }}
+          >
+            ✕ ล้างตัวกรอง
+          </button>
+        )}
       </div>
 
       <div className="overflow-x-auto">
