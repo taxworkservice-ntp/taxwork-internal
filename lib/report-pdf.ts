@@ -636,6 +636,9 @@ export async function fetchAttachmentBytes(
   if (!res.ok) throw new Error("ขอลิงก์ดาวน์โหลดไม่สำเร็จ");
   const { url } = await res.json();
   const fileRes = await fetch(url);
-  if (!fileRes.ok) throw new Error("ดาวน์โหลดไฟล์แนบไม่สำเร็จ");
+  if (!fileRes.ok)
+    throw new Error(
+      `ดาวน์โหลดไฟล์แนบไม่สำเร็จ (HTTP ${fileRes.status}): ${storagePath}`
+    );
   return fileRes.arrayBuffer();
 }
