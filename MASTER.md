@@ -23,10 +23,10 @@ Single-user tool (the owner) used daily to:
 | Framework | Next.js 15 (App Router) + TypeScript | Vercel-native |
 | Styling | Tailwind CSS v4 + small custom component classes in `app/globals.css` | `.btn`, `.btn-primary`, `.btn-danger`, `.input`, `.label`, `.card`, `.table-base` |
 | Database/Auth/Storage | Supabase (Postgres + Auth + Storage) | Project ref: `bcftfhhnrmsblgbvmjnd` |
-| PDF tools | pdf-lib (client-side only) | Files never leave the browser |
+| PDF tools | pdf-lib + @pdf-lib/fontkit (client-side only) | Thai text via embedded Sarabun fonts (`public/fonts/`); files never leave the browser |
 | Hosting | Vercel → https://internal.taxworkaccount.com | Auto-deploys on push to `main` |
 
-**Runtime deps kept minimal:** `@supabase/ssr`, `@supabase/supabase-js`, `pdf-lib`.
+**Runtime deps kept minimal:** `@supabase/ssr`, `@supabase/supabase-js`, `pdf-lib`, `@pdf-lib/fontkit`.
 
 ## 3. Language & locale
 
@@ -46,10 +46,12 @@ app/
   (app)/files/page.tsx        All files; upload to general or per-client bucket folder
   (app)/contacts/page.tsx     Auditor/accountant list
   (app)/contacts/[id]/page.tsx Contact detail incl. assigned clients panel
-  (app)/tasks/page.tsx        Month navigator, "สร้างงาน" generates instances from templates
-  (app)/tasks/templates/page.tsx  Recurring task template manager
-  (app)/dashboard/page.tsx    Overdue/upcoming tasks (hidden from nav, still reachable by URL)
-  (app)/tools/page.tsx        PDF merge & split (pdf-lib, in-browser)
+   (app)/tasks/page.tsx        Month navigator, "สร้างงาน" generates instances from templates
+   (app)/tasks/templates/page.tsx  Recurring task template manager
+   (app)/reports/page.tsx      Monthly report builder: filings per client/month, slip/QR attachments,
+                               bank accounts for service fees, generates client-facing PDF (also saved to R2)
+   (app)/dashboard/page.tsx    Overdue/upcoming tasks (hidden from nav, still reachable by URL)
+   (app)/tools/page.tsx        PDF merge & split (pdf-lib, in-browser)
 components/
   sidebar.tsx                 Desktop sidebar + mobile fixed bottom nav + sign-out
   copy-button.tsx             Copy icon w/ check feedback (used on every data field)
@@ -59,6 +61,8 @@ lib/
   supabase/client.ts          Browser Supabase client (@supabase/ssr)
   supabase/server.ts          Server Supabase client
   tasks.ts                    generateDueTasks() — idempotent task generation
+  report-pdf.ts               Client-side monthly report PDF builder (Sarabun embedded, slips/QR/invoice blocks)
+  thai-baht-text.ts           Number → Thai baht words ("...บาทถ้วน")
 middleware.ts                Auth guard: no user → /login; logged in on /login → /clients
 supabase/migrations/         Schema applied to production via Management API
 ```
@@ -91,6 +95,19 @@ task_instances id, template_id → templates (CASCADE), client_id, title,
              period_label ("2026-08" / "2026-Q3" / "2026"), due_date date,
              status ('todo'|'in_progress'|'done'|'skipped'), completed_at,
              UNIQUE(template_id, period_label)
+
+bank_accounts id, label (e.g. "MyServices"), bank_name, account_no,
+              account_name, promptpay_id (nullable), created_at
+
+monthly_filings id, client_id → clients (CASCADE), period_label ("2026-08"),
+              form_code (free text w/ presets like ภ.พ.30 / ภ.ง.ด.1),
+              description, amount numeric(12,2), due_date date,
+              bank_account_id → bank_accounts (nullable = show invoice block in PDF),
+              sort_order, created_at
+
+filing_attachments id, filing_id → monthly_filings (CASCADE),
+              kind ('slip'|'qr'|'document'), storage_path (R2 under {clientId}/),
+              file_name, size_bytes, mime_type, created_at
 ```
 
 - **RLS enabled on every table**: all policies are simply `to authenticated using (true)`.
@@ -104,6 +121,7 @@ task_instances id, template_id → templates (CASCADE), client_id, title,
 - **Hard-confirm deletes**: deleting a client or contact requires typing its exact name; final button stays disabled until match. Deleting a client cascades credentials/files/tasks.
 - **Task generation**: `generateDueTasks()` runs from the Tasks page button. It upserts instances keyed on `(template_id, period_label)` with `ignoreDuplicates` — safe to run repeatedly. Annual templates check windows starting current AND previous year. Due day clamps to last day of period (e.g. day 31 → Feb 28).
 - **Task status cycles** on click: รอทำ → กำลังทำ → เสร็จแล้ว → ข้าม.
+- **Monthly report flow** (Reports page): pick client + month → add filing rows (form code, amount, due date) → attach slip/QR/document images or PDFs per row (uploaded to R2 via the same presign flow, stored in `filing_attachments`) → optionally link a bank account for service-fee rows (renders an invoice-style block) → "สร้างรายงาน PDF" builds the client-facing PDF entirely in-browser (Sarabun embedded), downloads it, and saves a copy to R2 + `files` table with `category: 'monthly-report'`. Unsupported image types (webp/gif) are skipped with a note in the PDF; PNG/JPG and PDF attachments are embedded.
 - **Sort persistence**: list pages store sort state in `localStorage` (`clients.sort`, `contacts.sort`); Thai-aware `localeCompare(..., "th")`.
 - **Tables never overlap**: cells use flex + `min-w-0` + `truncate`; tables wrapped in `overflow-x-auto` with `min-w-[...]` under `table-fixed`.
 - **Mobile-first responsive**: fixed bottom tab bar (icons + labels) below `md:`; sidebar only on desktop; forms collapse to 1 column below `sm:`; content padded above/below fixed chrome; sign-out button fixed top-right on mobile.
