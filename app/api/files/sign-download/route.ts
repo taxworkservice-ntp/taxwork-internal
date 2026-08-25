@@ -21,7 +21,10 @@ export async function POST(request: NextRequest) {
   const accountId = process.env.R2_ACCOUNT_ID!;
   const bucket = process.env.R2_BUCKET ?? "internal-waxwork";
   const host = `${accountId}.r2.cloudflarestorage.com`;
-  const canonicalUri = `/${bucket}/${encodeRfc3986(storagePath.split("/").map(encodeURIComponent).join("/"))}`;
+  const canonicalUri = `/${bucket}/${storagePath
+    .split("/")
+    .map(encodeRfc3986)
+    .join("/")}`;
 
   const now = new Date();
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");

@@ -408,12 +408,7 @@ export default function ReportsPage() {
 
       setStatus("สร้างรายงานสำเร็จ — ดาวน์โหลดแล้ว และบันทึกสำเนาในไฟล์ของลูกค้าแล้ว");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const hint =
-        msg.includes("Failed to fetch") || msg.includes("NetworkError")
-          ? " — ตรวจว่า CORS ของ bucket R2 อนุญาต GET จากโดเมนนี้แล้ว"
-          : "";
-      alert(`สร้างรายงานไม่สำเร็จ: ${msg}${hint}`);
+      alert(`สร้างรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setGenerating(false);
     }

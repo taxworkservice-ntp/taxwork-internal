@@ -111,7 +111,7 @@ filing_attachments id, filing_id → monthly_filings (CASCADE),
 ```
 
 - **RLS enabled on every table**: all policies are simply `to authenticated using (true)`.
-- **File storage: Cloudflare R2** (bucket `internal-waxwork`, S3-compatible). Uploads go browser → presigned PUT (`/api/files/sign-upload`) → straight to R2. Downloads use presigned GETs (`/api/files/sign-download`); deletes via `/api/files/delete`. All three API routes require an authenticated Supabase session. Metadata stays in the Supabase `files` table. Legacy Supabase Storage bucket `client-files` still exists but is no longer used.
+- **File storage: Cloudflare R2** (bucket `internal-waxwork`, S3-compatible). Uploads go browser → presigned PUT (`/api/files/sign-upload`) → straight to R2. Downloads use presigned GETs (`/api/files/sign-download`); deletes via `/api/files/delete`. The monthly-report builder loads attachment bytes server-side via `/api/files/fetch` (authenticated proxy — avoids R2 CORS entirely; R2 omits CORS headers on error responses, which makes presigned-URL fetches undebuggable in the browser). All four API routes require an authenticated Supabase session. Metadata stays in the Supabase `files` table. Legacy Supabase Storage bucket `client-files` still exists but is no longer used.
 - **R2 env vars**: `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (set in `.env.local` and Vercel).
 
 ## 6. Business rules & UX conventions

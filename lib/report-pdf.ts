@@ -628,17 +628,13 @@ export async function buildMonthlyReportPdf(
 export async function fetchAttachmentBytes(
   storagePath: string
 ): Promise<ArrayBuffer> {
-  const res = await fetch("/api/files/sign-download", {
+  const res = await fetch("/api/files/fetch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ storagePath }),
   });
-  if (!res.ok) throw new Error("ขอลิงก์ดาวน์โหลดไม่สำเร็จ");
-  const { url } = await res.json();
-  const fileRes = await fetch(url);
-  if (!fileRes.ok)
-    throw new Error(
-      `ดาวน์โหลดไฟล์แนบไม่สำเร็จ (HTTP ${fileRes.status}): ${storagePath}`
-    );
-  return fileRes.arrayBuffer();
+  if (!res.ok) {
+    throw new Error(`โหลดไฟล์แนบไม่สำเร็จ (HTTP ${res.status}): ${storagePath}`);
+  }
+  return res.arrayBuffer();
 }
