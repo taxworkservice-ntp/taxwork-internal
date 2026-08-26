@@ -216,9 +216,7 @@ export default function ClientsPage() {
         <thead>
           <tr>
             <th className="w-8"></th>
-            <Th label="ชื่อบริษัท" sortKey="name" sort={sort} onSort={changeSort} className="w-[34%]" />
-            <Th label="เลขผู้เสียภาษี" sortKey="tax_id" sort={sort} onSort={changeSort} className="w-[22%]" />
-            <Th label="ที่อยู่" sortKey="address" sort={sort} onSort={changeSort} className="w-[30%]" />
+            <Th label="ชื่อบริษัท" sortKey="name" sort={sort} onSort={changeSort} />
             <th className="w-16"></th>
           </tr>
         </thead>
@@ -231,8 +229,6 @@ export default function ClientsPage() {
               >
                 <td className="text-neutral-400">{expandedId === c.id ? "▼" : "▶"}</td>
                 <td className="overflow-hidden"><span className="block truncate" title={c.name}>{c.name}</span></td>
-                <td className="overflow-hidden">{c.tax_id ? <span className="block truncate" title={c.tax_id}>{c.tax_id}</span> : "—"}</td>
-                <td className="overflow-hidden">{c.address ? <span className="block truncate" title={c.address}>{c.address}</span> : "—"}</td>
                 <td className="whitespace-nowrap">
                   <Link
                     href={`/clients/${c.id}`}
@@ -247,35 +243,47 @@ export default function ClientsPage() {
               {/* Expanded credentials */}
               {expandedId === c.id && (
                 <tr>
-                  <td colSpan={5} className="bg-neutral-50 p-4">
-                    <div className="mb-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
-                      <div>
-                        <span className="text-neutral-500">อีเมล: </span>
-                        {c.email ? <Cell value={c.email} /> : <span className="text-neutral-400">—</span>}
-                      </div>
-                      <div>
-                        <span className="text-neutral-500">โทรศัพท์: </span>
-                        {c.phone ? <Cell value={c.phone} /> : <span className="text-neutral-400">—</span>}
-                      </div>
-                      <div>
-                        <span className="text-neutral-500">สถานะ: </span>
-                        <span
-                          className={
-                            c.status === "active"
-                              ? "inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700"
-                              : "inline-flex rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600"
-                          }
-                        >
-                          {c.status}
-                        </span>
-                      </div>
-                      {c.notes && (
-                        <div className="col-span-2 sm:col-span-3">
-                          <span className="text-neutral-500">หมายเหตุ: </span>
-                          <Cell value={c.notes} />
-                        </div>
-                      )}
-                    </div>
+                   <td colSpan={3} className="bg-neutral-50 p-4">
+                     <div className="mb-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
+                       <div>
+                         <span className="text-neutral-500">ชื่อ: </span>
+                         <Cell value={c.name} />
+                       </div>
+                       <div>
+                         <span className="text-neutral-500">เลขผู้เสียภาษี: </span>
+                         {c.tax_id ? <Cell value={c.tax_id} /> : <span className="text-neutral-400">—</span>}
+                       </div>
+                       <div>
+                         <span className="text-neutral-500">ที่อยู่: </span>
+                         {c.address ? <Cell value={c.address} /> : <span className="text-neutral-400">—</span>}
+                       </div>
+                       <div>
+                         <span className="text-neutral-500">อีเมล: </span>
+                         {c.email ? <Cell value={c.email} /> : <span className="text-neutral-400">—</span>}
+                       </div>
+                       <div>
+                         <span className="text-neutral-500">โทรศัพท์: </span>
+                         {c.phone ? <Cell value={c.phone} /> : <span className="text-neutral-400">—</span>}
+                       </div>
+                       <div>
+                         <span className="text-neutral-500">สถานะ: </span>
+                         <span
+                           className={
+                             c.status === "active"
+                               ? "inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700"
+                               : "inline-flex rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600"
+                           }
+                         >
+                           {c.status}
+                         </span>
+                       </div>
+                       {c.notes && (
+                         <div className="col-span-2 sm:col-span-3">
+                           <span className="text-neutral-500">หมายเหตุ: </span>
+                           <Cell value={c.notes} />
+                         </div>
+                       )}
+                     </div>
 
                     <h3 className="mb-2 text-sm font-medium">ข้อมูลเข้าระบบ</h3>
                     {(credCache[c.id]?.length ?? 0) === 0 ? (
@@ -316,7 +324,7 @@ export default function ClientsPage() {
           ))}
           {!sorted.length && (
             <tr>
-              <td colSpan={5} className="text-neutral-500">ยังไม่มีลูกค้า</td>
+              <td colSpan={3} className="text-neutral-500">ยังไม่มีลูกค้า</td>
             </tr>
           )}
         </tbody>
