@@ -12,7 +12,9 @@ type Client = {
   email: string | null;
   phone: string | null;
   address: string | null;
+  notes: string | null;
   status: string;
+  created_at: string;
 };
 
 type Credential = {

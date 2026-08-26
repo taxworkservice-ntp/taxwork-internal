@@ -36,6 +36,7 @@ type Attachment = {
   size_bytes: number | null;
   mime_type: string | null;
   created_at: string;
+  covers?: string[];
 };
 
 type Filing = {
@@ -126,6 +127,26 @@ export default function ReportsPage() {
   const [bankAcctName, setBankAcctName] = useState("");
   const [bankPromptpay, setBankPromptpay] = useState("");
 
+  const [slipPanelFor, setSlipPanelFor] = useState<string | null>(null);
+  const [slipCovers, setSlipCovers] = useState<Set<string>>(new Set());
+
+  function openSlipPanel(filingId: string) {
+    setSlipPanelFor(filingId);
+    setSlipCovers(new Set([filingId]));
+  }
+
+  function toggleSlipCover(filingId: string) {
+    setSlipCovers((prev) => {
+      const next = new Set(prev);
+      if (next.has(filingId)) {
+        if (next.size > 1) next.delete(filingId);
+      } else {
+        next.add(filingId);
+      }
+      return next;
+    });
+  }
+
   const selectedClient = clients.find((c) => c.id === clientId) ?? null;
 
   useEffect(() => {
@@ -159,11 +180,32 @@ export default function ReportsPage() {
       .order("sort_order")
       .order("created_at");
     const ordered = (data ?? []) as Filing[];
-    for (const f of ordered) {
-      f.filing_attachments?.sort(
-        (a, b) =>
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      );
+    if (ordered.length) {
+      const { data: links } = await supabase
+        .from("attachment_filings")
+        .select("attachment_id, filing_id")
+        .in(
+          "filing_id",
+          ordered.map((f) => f.id)
+        );
+      const coverMap = new Map<string, Set<string>>();
+      for (const link of links ?? []) {
+        if (!coverMap.has(link.attachment_id))
+          coverMap.set(link.attachment_id, new Set());
+        coverMap.get(link.attachment_id)!.add(link.filing_id);
+      }
+      for (const f of ordered) {
+        f.filing_attachments?.sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() -
+            new Date(b.created_at).getTime()
+        );
+        for (const att of f.filing_attachments ?? []) {
+          const set = coverMap.get(att.id);
+          set?.add(att.filing_id);
+          att.covers = Array.from(set ?? [att.filing_id]);
+        }
+      }
     }
     setFilings(ordered);
     setLoading(false);
@@ -254,7 +296,8 @@ export default function ReportsPage() {
   async function uploadAttachment(
     filingId: string,
     kind: Attachment["kind"],
-    file: File
+    file: File,
+    covers?: string[]
   ) {
     const signRes = await fetch("/api/files/sign-upload", {
       method: "POST",
@@ -275,15 +318,32 @@ export default function ReportsPage() {
       alert("อัปโหลดไม่สำเร็จ");
       return;
     }
-    const { error } = await supabase.from("filing_attachments").insert({
-      filing_id: filingId,
-      kind,
-      storage_path: path,
-      file_name: file.name,
-      size_bytes: file.size,
-      mime_type: file.type || null,
-    });
-    if (error) alert(`บันทึกไม่สำเร็จ: ${error.message}`);
+    const { data: inserted, error } = await supabase
+      .from("filing_attachments")
+      .insert({
+        filing_id: filingId,
+        kind,
+        storage_path: path,
+        file_name: file.name,
+        size_bytes: file.size,
+        mime_type: file.type || null,
+      })
+      .select("id")
+      .single();
+    if (error) {
+      alert(`บันทึกไม่สำเร็จ: ${error.message}`);
+      loadFilings();
+      return;
+    }
+    const extras = (covers ?? []).filter((cid) => cid !== filingId);
+    if (kind === "slip" && extras.length && inserted) {
+      const { error: linkError } = await supabase
+        .from("attachment_filings")
+        .insert(
+          extras.map((fid) => ({ attachment_id: inserted.id, filing_id: fid }))
+        );
+      if (linkError) alert(`ผูกฟอร์มไม่สำเร็จ: ${linkError.message}`);
+    }
     loadFilings();
   }
 
@@ -336,16 +396,30 @@ export default function ReportsPage() {
     setGenerating(true);
     setStatus("");
     try {
+      const filingById = new Map(filings.map((f) => [f.id, f]));
       const enriched = [];
       for (const f of filings) {
         const attachments = [];
         for (const att of f.filing_attachments) {
           const bytes = await fetchAttachmentBytes(att.storage_path);
+          const coveredFilings = (att.covers?.length
+            ? att.covers
+            : [f.id]
+          )
+            .map((cid) => filingById.get(cid))
+            .filter((cf): cf is Filing => Boolean(cf));
           attachments.push({
             kind: att.kind as string,
             file_name: att.file_name,
             mime_type: att.mime_type,
             bytes,
+            covered_forms: [
+              ...new Set(coveredFilings.map((cf) => cf.form_code)),
+            ],
+            covered_amount: coveredFilings.reduce(
+              (sum, cf) => sum + Number(cf.amount ?? 0),
+              0
+            ),
           });
         }
         enriched.push({
@@ -536,6 +610,7 @@ export default function ReportsPage() {
                 <FilingCard
                   key={f.id}
                   filing={f}
+                  allFilings={filings}
                   bankAccounts={bankAccounts}
                   onPatch={patchFiling}
                   onDelete={() => deleteFiling(f)}
@@ -543,6 +618,16 @@ export default function ReportsPage() {
                     uploadAttachment(f.id, kind, file)
                   }
                   onDeleteAttachment={deleteAttachment}
+                  slipOpen={slipPanelFor === f.id}
+                  slipCovers={slipCovers}
+                  onOpenSlipPanel={() => openSlipPanel(f.id)}
+                  onCloseSlipPanel={() => setSlipPanelFor(null)}
+                  onToggleSlipCover={toggleSlipCover}
+                  onSlipFiles={(files) =>
+                    files.forEach((file) =>
+                      uploadAttachment(f.id, "slip", file, [...slipCovers])
+                    )
+                  }
                 />
               ))
             )}
@@ -672,18 +757,32 @@ export default function ReportsPage() {
 
 function FilingCard({
   filing,
+  allFilings,
   bankAccounts,
   onPatch,
   onDelete,
   onUpload,
   onDeleteAttachment,
+  slipOpen,
+  slipCovers,
+  onOpenSlipPanel,
+  onCloseSlipPanel,
+  onToggleSlipCover,
+  onSlipFiles,
 }: {
   filing: Filing;
+  allFilings: Filing[];
   bankAccounts: BankAccount[];
   onPatch: (id: string, patch: Partial<Filing>) => void;
   onDelete: () => void;
   onUpload: (kind: Attachment["kind"], file: File) => void;
   onDeleteAttachment: (att: Attachment) => void;
+  slipOpen: boolean;
+  slipCovers: Set<string>;
+  onOpenSlipPanel: () => void;
+  onCloseSlipPanel: () => void;
+  onToggleSlipCover: (filingId: string) => void;
+  onSlipFiles: (files: File[]) => void;
 }) {
   function blurField(
     key: "form_code" | "description" | "amount" | "due_date",
@@ -767,20 +866,34 @@ function FilingCard({
 
       <div className="flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">
         {(["slip", "qr", "document"] as const).map((kind) => (
-          <label key={kind} className="btn cursor-pointer text-xs">
+          <label
+            key={kind}
+            className="btn cursor-pointer text-xs"
+            onClick={
+              kind === "slip"
+                ? (e) => {
+                    e.preventDefault();
+                    if (slipOpen) onCloseSlipPanel();
+                    else onOpenSlipPanel();
+                  }
+                : undefined
+            }
+          >
             + {ATTACHMENT_KIND_LABELS[kind]}
-            <input
-              type="file"
-              multiple
-              accept="image/png,image/jpeg,image/webp,.pdf"
-              className="hidden"
-              onChange={(e) => {
-                const list = e.target.files;
-                if (!list?.length) return;
-                Array.from(list).forEach((file) => onUpload(kind, file));
-                e.target.value = "";
-              }}
-            />
+            {kind !== "slip" && (
+              <input
+                type="file"
+                multiple
+                accept="image/png,image/jpeg,image/webp,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const list = e.target.files;
+                  if (!list?.length) return;
+                  Array.from(list).forEach((file) => onUpload(kind, file));
+                  e.target.value = "";
+                }}
+              />
+            )}
           </label>
         ))}
         <span className="ml-auto flex flex-wrap gap-1">
@@ -792,6 +905,11 @@ function FilingCard({
               >
                 [{ATTACHMENT_KIND_LABELS[att.kind] ?? att.kind}]{" "}
                 {truncateName(att.file_name)}
+                {att.covers && att.covers.length > 1 && (
+                  <span className="text-blue-600">
+                    ·{att.covers.length} ฟอร์ม
+                  </span>
+                )}
                 <button
                   className="text-red-500 hover:text-red-700"
                   onClick={() => onDeleteAttachment(att)}
@@ -806,6 +924,57 @@ function FilingCard({
           )}
         </span>
       </div>
+
+      {slipOpen && (
+        <div className="rounded border border-neutral-200 bg-neutral-50 p-3 text-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-medium">
+              สลิปนี้ชำระสำหรับฟอร์มใด (เลือกได้หลายฟอร์ม):
+            </p>
+            <button
+              className="text-xs text-neutral-400 hover:text-neutral-700"
+              onClick={onCloseSlipPanel}
+            >
+              ยกเลิก ✕
+            </button>
+          </div>
+          <div className="mb-3 grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
+            {allFilings.map((pf) => (
+              <label
+                key={pf.id}
+                className="flex items-center gap-1.5 text-xs"
+              >
+                <input
+                  type="checkbox"
+                  checked={slipCovers.has(pf.id)}
+                  onChange={() => onToggleSlipCover(pf.id)}
+                />
+                <span className={pf.id === filing.id ? "font-medium" : ""}>
+                  {[pf.form_code, pf.description].filter(Boolean).join(" – ") ||
+                    "-"}
+                  {` (${fmtMoney(Number(pf.amount))})`}
+                </span>
+              </label>
+            ))}
+          </div>
+          <label className="btn inline-flex cursor-pointer text-xs">
+            เลือกไฟล์สลิป...
+            <input
+              type="file"
+              multiple
+              accept="image/png,image/jpeg,image/webp,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                const list = e.target.files;
+                if (!list?.length) return;
+                onSlipFiles(Array.from(list));
+                e.target.value = "";
+                onCloseSlipPanel();
+              }}
+            />
+          </label>
+        </div>
+      )}
     </div>
   );
 }

@@ -57,6 +57,8 @@ export type ReportAttachment = {
   file_name: string;
   mime_type: string | null;
   bytes: ArrayBuffer;
+  covered_forms?: string[];
+  covered_amount?: number;
 };
 
 export type ReportFiling = {
@@ -67,7 +69,7 @@ export type ReportFiling = {
   due_date: string | null;
   bank_account_id?: string | null;
   bank_account?: ReportBankAccount | null;
-  attachments: Omit<ReportAttachment, "bytes">[];
+  attachments: ReportAttachment[];
 };
 
 export type ReportClient = {
@@ -311,6 +313,68 @@ class ReportRenderer {
   }
 }
 
+function refCaption(att: ReportAttachment): string {
+  const bits: string[] = [];
+  const forms = att.covered_forms?.filter(Boolean) ?? [];
+  if (forms.length)
+    bits.push(`อ้างอิง ${Array.from(new Set(forms)).join(", ")}`);
+  if (typeof att.covered_amount === "number" && att.covered_amount > 0)
+    bits.push(`${fmtMoney(att.covered_amount)} บาท`);
+  return bits.length ? ` (${bits.join(" · ")})` : "";
+}
+
+function drawStampBox(
+  r: ReportRenderer,
+  imgLeft: number,
+  imgTop: number,
+  imgW: number,
+  att: ReportAttachment
+): void {
+  const forms = Array.from(new Set(att.covered_forms?.filter(Boolean) ?? []));
+  if (!forms.length) return;
+  const line1 = `อ้างอิง: ${forms.join(", ")}`;
+  const line2 =
+    typeof att.covered_amount === "number" && att.covered_amount > 0
+      ? `ยอดชำระ ${fmtMoney(att.covered_amount)} บาท`
+      : "";
+  const size = 7.5;
+  const textW = Math.max(
+    r.fonts.bold.widthOfTextAtSize(line1, size),
+    line2 ? r.fonts.regular.widthOfTextAtSize(line2, size) : 0
+  );
+  const w = Math.min(textW + 12, imgW * 0.7);
+  const h = (line2 ? 2 : 1) * 11 + 8;
+  const x = Math.max(imgLeft + imgW - w - 4, imgLeft + 4);
+  const y = imgTop - h - 4;
+  r.page.drawRectangle({
+    x,
+    y,
+    width: w,
+    height: h,
+    color: rgb(1, 1, 1),
+    opacity: 0.85,
+    borderColor: COLOR_BORDER,
+    borderWidth: 0.8,
+  });
+  r.page.drawText(line1, {
+    x: x + 6,
+    y: y + h - 13,
+    size,
+    font: r.fonts.bold,
+    color: COLOR_TEXT,
+    opacity: 0.9,
+  });
+  if (line2)
+    r.page.drawText(line2, {
+      x: x + 6,
+      y: y + 4,
+      size,
+      font: r.fonts.regular,
+      color: COLOR_TEXT,
+      opacity: 0.9,
+    });
+}
+
 async function drawImageOrPdf(
   r: ReportRenderer,
   att: ReportAttachment
@@ -332,16 +396,20 @@ async function drawImageOrPdf(
       }
       r.ensureSpace(h + 18);
       r.y -= 2;
-      r.text(`${ATTACHMENT_KIND_LABELS[att.kind] ?? "ไฟล์แนบ"}: ${att.file_name}`, {
-        size: 8.5,
-        color: COLOR_MUTED,
-      });
+      r.text(
+        `${ATTACHMENT_KIND_LABELS[att.kind] ?? "ไฟล์แนบ"}: ${att.file_name}${refCaption(att)}`,
+        {
+          size: 8.5,
+          color: COLOR_MUTED,
+        }
+      );
       r.page.drawImage(img, {
         x: M + (CONTENT_W - w) / 2,
         y: r.y - h,
         width: w,
         height: h,
       });
+      drawStampBox(r, M + (CONTENT_W - w) / 2, r.y, w, att);
       r.y -= h + 14;
       return;
     } catch {
@@ -543,56 +611,194 @@ function drawCover(r: ReportRenderer, opts: BuildOptions) {
   r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
 }
 
-function drawBankBlock(r: ReportRenderer, f: ReportFiling) {
-  const ba = f.bank_account!;
-  const blockLines = [
-    `จำนวนเงินที่ต้องชำระ: ${fmtMoney(Number(f.amount ?? 0))} บาท`,
-    `โอนเข้าบัญชี${ba.bank_name}`,
-    `เลขที่บัญชี: ${ba.account_no}`,
-    `ชื่อบัญชี: ${ba.account_name}`,
-    ...(ba.promptpay_id ? [`PromptPay: ${ba.promptpay_id}`] : []),
-  ];
-  const innerH = blockLines.length * 17 + 46;
-  r.ensureSpace(innerH + 20);
-  const top = r.y;
-  r.page.drawRectangle({
-    x: M,
-    y: top - innerH,
-    width: CONTENT_W,
-    height: innerH,
-    borderColor: COLOR_BORDER,
-    borderWidth: 1,
-  });
-  r.y = top - 12;
-  r.text("ข้อมูลการชำระค่าบริการ", {
-    x: M + 14,
-    size: 11.5,
-    bold: true,
-  });
-  for (const line of blockLines) {
-    r.text(line, { x: M + 14, size: 10.5, lineHeight: 17 });
+async function drawPaymentSection(
+  r: ReportRenderer,
+  filings: SectionFiling[]
+): Promise<void> {
+  const rows = filings.filter(
+    (f) => f.attachments.some((a) => a.kind === "qr") || Boolean(f.bank_account)
+  );
+  if (!rows.length) return;
+
+  const headerH = 20;
+  const rowPadY = 5;
+  const qrSize = 54;
+  const colItemW = 258;
+  const colXDues = M + colItemW;
+  const colXAmt = colXDues + COL_DUE_W;
+  const colXQr = colXAmt + COL_AMT_W;
+  const qrColW = CONTENT_W - (colXQr - M);
+  const tableRight = M + CONTENT_W;
+
+  const itemLinesOf = (f: ReportFiling): string[] => {
+    const base =
+      [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
+    const lines = wrapText(base, r.fonts.regular, 9.5, colItemW - 12);
+    if (!f.attachments.some((a) => a.kind === "qr") && f.bank_account) {
+      lines.push(`โอนเข้า ${f.bank_account.bank_name} ${f.bank_account.account_no}`);
+    }
+    return lines;
+  };
+  const rowHOf = (f: ReportFiling): number => {
+    const hasQr = f.attachments.some((a) => a.kind === "qr");
+    const linesH =
+      itemLinesOf(f).length * 9.5 * 1.4 + rowPadY * 2;
+    return Math.max(hasQr ? qrSize + rowPadY * 2 : 20, linesH);
+  };
+
+  r.ensureSpace(headerH + 80);
+  r.y -= 6;
+  r.text("ข้อมูลการชำระ", { size: 12, bold: true });
+  r.y -= 4;
+
+  const drawHeader = () => {
+    r.ensureSpace(headerH + 70);
+    r.page.drawRectangle({
+      x: M,
+      y: r.y - headerH,
+      width: CONTENT_W,
+      height: headerH,
+      color: COLOR_HEADER_BG,
+    });
+    const baseline = r.y - 14;
+    r.page.drawText("รายการ", {
+      x: M + 6,
+      y: baseline,
+      size: 9.5,
+      font: r.fonts.bold,
+      color: COLOR_TEXT,
+    });
+    r.page.drawText("กำหนดชำระ", {
+      x: colXDues + 6,
+      y: baseline,
+      size: 9.5,
+      font: r.fonts.bold,
+      color: COLOR_TEXT,
+    });
+    const amtLabel = "จำนวนเงิน";
+    const amtW = r.fonts.bold.widthOfTextAtSize(amtLabel, 9.5);
+    r.page.drawText(amtLabel, {
+      x: colXQr - 6 - amtW,
+      y: baseline,
+      size: 9.5,
+      font: r.fonts.bold,
+      color: COLOR_TEXT,
+    });
+    r.page.drawText("QR", {
+      x: colXQr + (qrColW - r.fonts.bold.widthOfTextAtSize("QR", 9.5)) / 2,
+      y: baseline,
+      size: 9.5,
+      font: r.fonts.bold,
+      color: COLOR_TEXT,
+    });
+    r.y -= headerH;
+  };
+
+  drawHeader();
+
+  for (const f of rows) {
+    const rowH = rowHOf(f);
+    if (r.y - rowH < M + 60) {
+      r.hr();
+      drawHeader();
+    }
+    const top = r.y;
+    const lines = itemLinesOf(f);
+    lines.forEach((line, li) => {
+      r.page.drawText(line, {
+        x: M + 6,
+        y: top - 14 - li * 9.5 * 1.4,
+        size: 9.5,
+        font: r.fonts.regular,
+        color: COLOR_TEXT,
+      });
+    });
+    r.page.drawText(formatDateTh(f.due_date), {
+      x: colXDues + 6,
+      y: top - 14,
+      size: 9.5,
+      font: r.fonts.regular,
+      color: COLOR_TEXT,
+    });
+    const amtText = fmtMoney(Number(f.amount ?? 0));
+    const amtW2 = r.fonts.regular.widthOfTextAtSize(amtText, 9.5);
+    r.page.drawText(amtText, {
+      x: colXQr - 6 - amtW2,
+      y: top - 14,
+      size: 9.5,
+      font: r.fonts.regular,
+      color: COLOR_TEXT,
+    });
+
+    const qrAtt = f.attachments.find((a) => a.kind === "qr");
+    if (qrAtt) {
+      try {
+        const view = new Uint8Array(qrAtt.bytes);
+        const img = isPng(view)
+          ? await r.doc.embedPng(qrAtt.bytes)
+          : isJpeg(view)
+            ? await r.doc.embedJpg(qrAtt.bytes)
+            : null;
+        if (img) {
+          const s = Math.min(
+            qrSize,
+            qrColW - 8,
+            (img.width / img.height) * qrSize
+          );
+          const h = (img.height / img.width) * s;
+          r.page.drawImage(img, {
+            x: colXQr + (qrColW - s) / 2,
+            y: top - rowPadY - h,
+            width: s,
+            height: h,
+          });
+        } else {
+          throw new Error("unsupported qr image");
+        }
+      } catch {
+        r.page.drawText("[QR]", {
+          x: colXQr + (qrColW - r.fonts.regular.widthOfTextAtSize("[QR]", 8)) / 2,
+          y: top - 20,
+          size: 8,
+          font: r.fonts.regular,
+          color: COLOR_MUTED,
+        });
+      }
+    }
+
+    r.page.drawLine({
+      start: { x: M, y: top - rowH },
+      end: { x: tableRight, y: top - rowH },
+      thickness: 0.5,
+      color: COLOR_BORDER,
+    });
+    r.y -= rowH;
   }
-  r.y = top - innerH - 12;
 }
 
-async function drawFilingSections(r: ReportRenderer, filings: SectionFiling[]) {
+async function drawEvidencePages(
+  r: ReportRenderer,
+  filings: SectionFiling[]
+): Promise<void> {
+  const evidence: ReportAttachment[] = [];
+  const documents: ReportAttachment[] = [];
   for (const f of filings) {
-    const hasBank = Boolean(f.bank_account);
-    const hasDocs = f.attachments.length > 0;
-    if (!hasBank && !hasDocs) continue;
-
-    r.newPage();
-
-    const heading =
-      [f.form_code, f.description].filter(Boolean).join(" – ") || "รายการ";
-    r.text(heading, { size: 13, bold: true });
-    r.y -= 4;
-
-    if (hasBank) drawBankBlock(r, f);
-
     for (const att of f.attachments) {
-      await drawImageOrPdf(r, att);
+      if (att.kind === "document") documents.push(att);
+      else evidence.push(att);
     }
+  }
+
+  const groups = [
+    { title: "หลักฐานการชำระเงิน", items: evidence },
+    { title: "เอกสารอ้างอิง", items: documents },
+  ];
+  for (const g of groups) {
+    if (!g.items.length) continue;
+    r.newPage();
+    r.text(g.title, { size: 13, bold: true });
+    r.y -= 4;
+    for (const att of g.items) await drawImageOrPdf(r, att);
   }
 }
 
@@ -619,7 +825,8 @@ export async function buildMonthlyReportPdf(
   r.doc.setLanguage("th-TH");
 
   drawCover(r, opts);
-  await drawFilingSections(r, opts.filings as SectionFiling[]);
+  await drawPaymentSection(r, opts.filings as SectionFiling[]);
+  await drawEvidencePages(r, opts.filings as SectionFiling[]);
   r.drawFooters();
 
   return r.doc.save();
