@@ -23,10 +23,10 @@ Single-user tool (the owner) used daily to:
 | Framework | Next.js 15 (App Router) + TypeScript | Vercel-native |
 | Styling | Tailwind CSS v4 + small custom component classes in `app/globals.css` | `.btn`, `.btn-primary`, `.btn-danger`, `.input`, `.label`, `.card`, `.table-base` |
 | Database/Auth/Storage | Supabase (Postgres + Auth + Storage) | Project ref: `bcftfhhnrmsblgbvmjnd` |
-| PDF tools | pdf-lib + @pdf-lib/fontkit (client-side only) | Thai text via embedded Sarabun fonts (`public/fonts/`); files never leave the browser |
+| PDF tools | pdf-lib (client-side only) | Thai text rendered to canvas (browser shapes it correctly) then embedded as images; Sarabun via `public/fonts/`; files never leave the browser |
 | Hosting | Vercel → https://internal.taxworkaccount.com | Auto-deploys on push to `main` |
 
-**Runtime deps kept minimal:** `@supabase/ssr`, `@supabase/supabase-js`, `pdf-lib`, `@pdf-lib/fontkit`.
+**Runtime deps kept minimal:** `@supabase/ssr`, `@supabase/supabase-js`, `pdf-lib`.
 
 ## 3. Language & locale
 

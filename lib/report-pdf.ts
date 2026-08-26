@@ -1,10 +1,9 @@
-import fontkit from "@pdf-lib/fontkit";
 import {
   PDFDocument,
-  PDFFont,
   PDFPage,
   rgb,
   type Color,
+  type PDFImage,
 } from "pdf-lib";
 import { thaiBahtText } from "@/lib/thai-baht-text";
 
@@ -80,8 +79,6 @@ export type ReportClient = {
   email: string | null;
 };
 
-type Fonts = { regular: PDFFont; bold: PDFFont };
-
 const PAGE_W = 595.28;
 const PAGE_H = 841.89;
 const M = 48;
@@ -133,10 +130,32 @@ async function loadFont(url: string): Promise<ArrayBuffer> {
   return res.arrayBuffer();
 }
 
+function cssColor(c: Color): string {
+  const rgb = c as { red: number; green: number; blue: number };
+  const r = Math.round(rgb.red * 255);
+  const g = Math.round(rgb.green * 255);
+  const b = Math.round(rgb.blue * 255);
+  return `rgb(${r},${g},${b})`;
+}
+
+let canvasFontsLoaded = false;
+async function ensureCanvasFonts(): Promise<void> {
+  if (canvasFontsLoaded) return;
+  const [regularBuf, boldBuf] = await Promise.all([
+    loadFont("/fonts/Sarabun-Regular.ttf"),
+    loadFont("/fonts/Sarabun-Bold.ttf"),
+  ]);
+  const regular = new FontFace("Sarabun", regularBuf);
+  const bold = new FontFace("Sarabun", boldBuf, { weight: "bold" });
+  await Promise.all([regular.load(), bold.load()]);
+  document.fonts.add(regular);
+  document.fonts.add(bold);
+  canvasFontsLoaded = true;
+}
+
 function wrapText(
   text: string,
-  font: PDFFont,
-  size: number,
+  measure: (s: string) => number,
   maxWidth: number
 ): string[] {
   const out: string[] = [];
@@ -147,9 +166,9 @@ function wrapText(
   };
   for (const word of text.trim().split(/\s+/)) {
     if (!word) continue;
-    if (font.widthOfTextAtSize(word, size) <= maxWidth) {
+    if (measure(word) <= maxWidth) {
       const candidate = line ? `${line} ${word}` : word;
-      if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+      if (measure(candidate) <= maxWidth) {
         line = candidate;
       } else {
         flush();
@@ -159,10 +178,7 @@ function wrapText(
       flush();
       for (const ch of Array.from(word)) {
         const candidate = line + ch;
-        if (
-          line &&
-          font.widthOfTextAtSize(candidate, size) > maxWidth
-        ) {
+        if (line && measure(candidate) > maxWidth) {
           out.push(line);
           line = ch;
         } else {
@@ -187,10 +203,12 @@ function isJpeg(bytes: Uint8Array): boolean {
 
 class ReportRenderer {
   doc!: PDFDocument;
-  fonts!: Fonts;
   page!: PDFPage;
   y!: number;
   footerDate: string;
+  private canvas = document.createElement("canvas");
+  private ctx = this.canvas.getContext("2d")!;
+  private textImageCache = new Map<string, PDFImage>();
 
   constructor() {
     this.footerDate = nowThai();
@@ -198,15 +216,7 @@ class ReportRenderer {
 
   async init() {
     this.doc = await PDFDocument.create();
-    this.doc.registerFontkit(fontkit);
-    const [regularBuf, boldBuf] = await Promise.all([
-      loadFont("/fonts/Sarabun-Regular.ttf"),
-      loadFont("/fonts/Sarabun-Bold.ttf"),
-    ]);
-    this.fonts = {
-      regular: await this.doc.embedFont(regularBuf),
-      bold: await this.doc.embedFont(boldBuf),
-    };
+    await ensureCanvasFonts();
     this.newPage();
   }
 
@@ -220,7 +230,63 @@ class ReportRenderer {
     if (this.y - height < M + 24) this.newPage();
   }
 
-  text(
+  measureText(value: string, size: number, bold: boolean): number {
+    this.ctx.font = `${bold ? "bold" : "normal"} ${size * 2}px Sarabun`;
+    return this.ctx.measureText(value).width / 2;
+  }
+
+  async drawTextCanvas(
+    value: string,
+    x: number,
+    baselineY: number,
+    opts: { size?: number; bold?: boolean; color?: Color } = {},
+    page: PDFPage = this.page
+  ): Promise<number> {
+    if (!value) return 0;
+    const size = opts.size ?? 10;
+    const bold = opts.bold ?? false;
+    const color = opts.color ?? COLOR_TEXT;
+    const scale = 2;
+    const weight = bold ? "bold" : "normal";
+
+    const cacheKey = `${value}|${size}|${weight}|${cssColor(color)}`;
+    let img = this.textImageCache.get(cacheKey);
+
+    if (!img) {
+      this.ctx.font = `${weight} ${size * scale}px Sarabun`;
+      const textW = this.ctx.measureText(value).width;
+
+      const pad = 2;
+      const canvasW = Math.ceil(textW) + pad * 2;
+      const canvasH = Math.ceil(size * scale * 1.4);
+
+      this.canvas.width = canvasW;
+      this.canvas.height = canvasH;
+
+      this.ctx.font = `${weight} ${size * scale}px Sarabun`;
+      this.ctx.fillStyle = cssColor(color);
+      this.ctx.textBaseline = "alphabetic";
+      this.ctx.fillText(value, pad, size * scale);
+
+      const dataUrl = this.canvas.toDataURL("image/png");
+      const bytes = Uint8Array.from(atob(dataUrl.split(",")[1]), (c) =>
+        c.charCodeAt(0)
+      );
+      img = await this.doc.embedPng(bytes);
+      this.textImageCache.set(cacheKey, img);
+    }
+
+    this.ctx.font = `${weight} ${size * scale}px Sarabun`;
+    const textW = this.ctx.measureText(value).width;
+    const drawW = (Math.ceil(textW) + 4) / scale;
+    const drawH = (Math.ceil(size * scale * 1.4)) / scale;
+    const imgY = baselineY - size * 0.4;
+    page.drawImage(img, { x, y: imgY, width: drawW, height: drawH });
+
+    return drawW;
+  }
+
+  async text(
     value: string,
     opts: {
       x?: number;
@@ -231,24 +297,27 @@ class ReportRenderer {
       width?: number;
       lineHeight?: number;
     } = {}
-  ) {
+  ): Promise<void> {
     const size = opts.size ?? 10;
-    const font = opts.bold ? this.fonts.bold : this.fonts.regular;
     const lineHeight = opts.lineHeight ?? size * 1.45;
-    const color = opts.color ?? COLOR_TEXT;
+    const w = this.measureText(value, size, opts.bold ?? false);
     let x = opts.x ?? M;
     if (opts.align === "center" && opts.width) {
-      const w = font.widthOfTextAtSize(value, size);
       x += (opts.width - w) / 2;
     } else if (opts.align === "right" && opts.width) {
-      const w = font.widthOfTextAtSize(value, size);
       x += opts.width - w;
     }
-    this.page.drawText(value, { x, y: this.y - size, size, font, color });
+    await this.drawTextCanvas(
+      value,
+      x,
+      this.y - size,
+      { size, bold: opts.bold, color: opts.color },
+      this.page
+    );
     this.y -= lineHeight;
   }
 
-  wrapped(
+  async wrapped(
     value: string,
     opts: {
       x?: number;
@@ -257,13 +326,14 @@ class ReportRenderer {
       bold?: boolean;
       color?: Color;
     }
-  ): string[] {
+  ): Promise<string[]> {
     const size = opts.size ?? 10;
-    const font = opts.bold ? this.fonts.bold : this.fonts.regular;
-    const lines = wrapText(value, font, size, opts.width);
+    const measure = (s: string) =>
+      this.measureText(s, size, opts.bold ?? false);
+    const lines = wrapText(value, measure, opts.width);
     const lineHeight = size * 1.4;
     for (const line of lines) {
-      this.text(line, {
+      await this.text(line, {
         x: opts.x,
         size,
         bold: opts.bold,
@@ -274,7 +344,7 @@ class ReportRenderer {
     return lines;
   }
 
-  hr(color: Color = COLOR_BORDER) {
+  async hr(color: Color = COLOR_BORDER) {
     this.page.drawLine({
       start: { x: M, y: this.y },
       end: { x: PAGE_W - M, y: this.y },
@@ -284,32 +354,33 @@ class ReportRenderer {
     this.y -= 10;
   }
 
-  drawFooters() {
+  async drawFooters() {
     const pages = this.doc.getPages();
-    pages.forEach((p, i) => {
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
       p.drawLine({
         start: { x: M, y: M - 14 },
         end: { x: PAGE_W - M, y: M - 14 },
         thickness: 0.5,
         color: COLOR_BORDER,
       });
-      p.drawText(`ออกเอกสาร ${this.footerDate}`, {
-        x: M,
-        y: M - 26,
-        size: 8,
-        font: this.fonts.regular,
-        color: COLOR_MUTED,
-      });
+      await this.drawTextCanvas(
+        `ออกเอกสาร ${this.footerDate}`,
+        M,
+        M - 26,
+        { size: 8, color: COLOR_MUTED },
+        p
+      );
       const label = `หน้า ${i + 1}/${pages.length}`;
-      const w = this.fonts.regular.widthOfTextAtSize(label, 8);
-      p.drawText(label, {
-        x: PAGE_W - M - w,
-        y: M - 26,
-        size: 8,
-        font: this.fonts.regular,
-        color: COLOR_MUTED,
-      });
-    });
+      const w = this.measureText(label, 8, false);
+      await this.drawTextCanvas(
+        label,
+        PAGE_W - M - w,
+        M - 26,
+        { size: 8, color: COLOR_MUTED },
+        p
+      );
+    }
   }
 }
 
@@ -323,13 +394,13 @@ function refCaption(att: ReportAttachment): string {
   return bits.length ? ` (${bits.join(" · ")})` : "";
 }
 
-function drawStampBox(
+async function drawStampBox(
   r: ReportRenderer,
   imgLeft: number,
   imgTop: number,
   imgW: number,
   att: ReportAttachment
-): void {
+): Promise<void> {
   const forms = Array.from(new Set(att.covered_forms?.filter(Boolean) ?? []));
   if (!forms.length) return;
   const line1 = `อ้างอิง: ${forms.join(", ")}`;
@@ -339,8 +410,8 @@ function drawStampBox(
       : "";
   const size = 7.5;
   const textW = Math.max(
-    r.fonts.bold.widthOfTextAtSize(line1, size),
-    line2 ? r.fonts.regular.widthOfTextAtSize(line2, size) : 0
+    r.measureText(line1, size, true),
+    line2 ? r.measureText(line2, size, false) : 0
   );
   const w = Math.min(textW + 12, imgW * 0.7);
   const h = (line2 ? 2 : 1) * 11 + 8;
@@ -356,22 +427,15 @@ function drawStampBox(
     borderColor: COLOR_BORDER,
     borderWidth: 0.8,
   });
-  r.page.drawText(line1, {
-    x: x + 6,
-    y: y + h - 13,
+  await r.drawTextCanvas(line1, x + 6, y + h - 13, {
     size,
-    font: r.fonts.bold,
+    bold: true,
     color: COLOR_TEXT,
-    opacity: 0.9,
   });
   if (line2)
-    r.page.drawText(line2, {
-      x: x + 6,
-      y: y + 4,
+    await r.drawTextCanvas(line2, x + 6, y + 4, {
       size,
-      font: r.fonts.regular,
       color: COLOR_TEXT,
-      opacity: 0.9,
     });
 }
 
@@ -396,7 +460,7 @@ async function drawImageOrPdf(
       }
       r.ensureSpace(h + 18);
       r.y -= 2;
-      r.text(
+      await r.text(
         `${ATTACHMENT_KIND_LABELS[att.kind] ?? "ไฟล์แนบ"}: ${att.file_name}${refCaption(att)}`,
         {
           size: 8.5,
@@ -409,14 +473,14 @@ async function drawImageOrPdf(
         width: w,
         height: h,
       });
-      drawStampBox(r, M + (CONTENT_W - w) / 2, r.y, w, att);
+      await drawStampBox(r, M + (CONTENT_W - w) / 2, r.y, w, att);
       r.y -= h + 14;
       return;
     } catch {
-      r.text(
-        `[ไม่สามารถฝังรูปภาพได้: ${att.file_name}]`,
-        { size: 9, color: COLOR_MUTED }
-      );
+      await r.text(`[ไม่สามารถฝังรูปภาพได้: ${att.file_name}]`, {
+        size: 9,
+        color: COLOR_MUTED,
+      });
       return;
     }
   }
@@ -429,7 +493,7 @@ async function drawImageOrPdf(
       r.newPage();
       return;
     } catch {
-      r.text(`[ไม่สามารถฝังไฟล์ PDF ได้: ${att.file_name}]`, {
+      await r.text(`[ไม่สามารถฝังไฟล์ PDF ได้: ${att.file_name}]`, {
         size: 9,
         color: COLOR_MUTED,
       });
@@ -437,7 +501,7 @@ async function drawImageOrPdf(
     }
   }
 
-  r.text(
+  await r.text(
     `[ไม่รองรับไฟล์ประเภทนี้ในรายงาน (${att.mime_type ?? "ไม่ทราบชนิด"}): ${att.file_name}]`,
     { size: 9, color: COLOR_MUTED }
   );
@@ -450,32 +514,40 @@ function isPdfBytes(bytes: Uint8Array): boolean {
   );
 }
 
-function drawCover(r: ReportRenderer, opts: BuildOptions) {
+async function drawCover(r: ReportRenderer, opts: BuildOptions) {
   const periodTh = periodToThai(opts.periodLabel);
   const firmName = opts.firmName ?? "Taxwork";
 
-  r.text(firmName, { size: 17, bold: true, align: "center", width: CONTENT_W });
+  await r.text(firmName, {
+    size: 17,
+    bold: true,
+    align: "center",
+    width: CONTENT_W,
+  });
   r.y -= 2;
-  r.text(
-    `รายงานงานภาษีประจำเดือน ${periodTh}`,
-    { size: 13, align: "center", width: CONTENT_W, color: COLOR_MUTED }
-  );
+  await r.text(`รายงานงานภาษีประจำเดือน ${periodTh}`, {
+    size: 13,
+    align: "center",
+    width: CONTENT_W,
+    color: COLOR_MUTED,
+  });
   r.y -= 4;
-  r.hr();
+  await r.hr();
   r.y -= 6;
 
-  r.text(opts.client.name, { size: 13, bold: true });
+  await r.text(opts.client.name, { size: 13, bold: true });
   if (opts.client.tax_id)
-    r.text(`เลขประจำตัวผู้เสียภาษี: ${opts.client.tax_id}`, { size: 10 });
+    await r.text(`เลขประจำตัวผู้เสียภาษี: ${opts.client.tax_id}`, { size: 10 });
   if (opts.client.address)
-    r.wrapped(opts.client.address, { width: CONTENT_W, size: 10 });
+    await r.wrapped(opts.client.address, { width: CONTENT_W, size: 10 });
   const contactLine = [opts.client.phone, opts.client.email]
     .filter(Boolean)
     .join("  ·  ");
-  if (contactLine) r.text(contactLine, { size: 10, color: COLOR_MUTED });
+  if (contactLine)
+    await r.text(contactLine, { size: 10, color: COLOR_MUTED });
 
   r.y -= 10;
-  r.text("สรุปรายการ", { size: 12, bold: true });
+  await r.text("สรุปรายการ", { size: 12, bold: true });
 
   const rowPadY = 5;
   const headerH = 22;
@@ -485,7 +557,7 @@ function drawCover(r: ReportRenderer, opts: BuildOptions) {
   const colXAmt = colXDues + COL_DUE_W;
   const tableRight = colXAmt + COL_AMT_W;
 
-  const drawTableHeader = () => {
+  const drawTableHeader = async () => {
     r.ensureSpace(headerH + 30);
     r.page.drawRectangle({
       x: M,
@@ -495,87 +567,68 @@ function drawCover(r: ReportRenderer, opts: BuildOptions) {
       color: COLOR_HEADER_BG,
     });
     const baseline = r.y - 15;
-    r.page.drawText("ลำดับ", {
-      x: colXIdx + 6,
-      y: baseline,
+    await r.drawTextCanvas("ลำดับ", colXIdx + 6, baseline, {
       size: 9.5,
-      font: r.fonts.bold,
-      color: COLOR_TEXT,
+      bold: true,
     });
-    r.page.drawText("รายการ", {
-      x: colXItem + 6,
-      y: baseline,
+    await r.drawTextCanvas("รายการ", colXItem + 6, baseline, {
       size: 9.5,
-      font: r.fonts.bold,
-      color: COLOR_TEXT,
+      bold: true,
     });
-    r.page.drawText("กำหนดชำระ", {
-      x: colXDues + 6,
-      y: baseline,
+    await r.drawTextCanvas("กำหนดชำระ", colXDues + 6, baseline, {
       size: 9.5,
-      font: r.fonts.bold,
-      color: COLOR_TEXT,
+      bold: true,
     });
     const amtLabel = "จำนวนเงิน";
-    const amtW = r.fonts.bold.widthOfTextAtSize(amtLabel, 9.5);
-    r.page.drawText(amtLabel, {
-      x: tableRight - 6 - amtW,
-      y: baseline,
+    const amtW = r.measureText(amtLabel, 9.5, true);
+    await r.drawTextCanvas(amtLabel, tableRight - 6 - amtW, baseline, {
       size: 9.5,
-      font: r.fonts.bold,
-      color: COLOR_TEXT,
+      bold: true,
     });
     r.y -= headerH;
   };
 
-  drawTableHeader();
+  await drawTableHeader();
 
   const filings = opts.filings;
   let total = 0;
 
-  filings.forEach((f, i) => {
+  for (let i = 0; i < filings.length; i++) {
+    const f = filings[i];
     total += Number(f.amount ?? 0);
-    const itemText = [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
-    const lines = wrapText(itemText, r.fonts.regular, 9.5, COL_ITEM_W - 12);
+    const itemText =
+      [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
+    const lines = wrapText(
+      itemText,
+      (s) => r.measureText(s, 9.5, false),
+      COL_ITEM_W - 12
+    );
     const rowH = Math.max(lines.length * 9.5 * 1.4 + rowPadY * 2, 20);
 
     if (r.y - rowH < M + 60) {
-      r.hr();
-      drawTableHeader();
+      await r.hr();
+      await drawTableHeader();
     }
 
     const top = r.y;
-    r.page.drawText(String(i + 1), {
-      x: colXIdx + 6,
-      y: top - 14,
+    await r.drawTextCanvas(String(i + 1), colXIdx + 6, top - 14, {
       size: 9.5,
-      font: r.fonts.regular,
-      color: COLOR_TEXT,
     });
-    lines.forEach((line, li) => {
-      r.page.drawText(line, {
-        x: colXItem + 6,
-        y: top - 14 - li * 9.5 * 1.4,
-        size: 9.5,
-        font: r.fonts.regular,
-        color: COLOR_TEXT,
-      });
-    });
-    r.page.drawText(formatDateTh(f.due_date), {
-      x: colXDues + 6,
-      y: top - 14,
+    for (let li = 0; li < lines.length; li++) {
+      await r.drawTextCanvas(
+        lines[li],
+        colXItem + 6,
+        top - 14 - li * 9.5 * 1.4,
+        { size: 9.5 }
+      );
+    }
+    await r.drawTextCanvas(formatDateTh(f.due_date), colXDues + 6, top - 14, {
       size: 9.5,
-      font: r.fonts.regular,
-      color: COLOR_TEXT,
     });
     const amtText = fmtMoney(Number(f.amount ?? 0));
-    const amtW = r.fonts.regular.widthOfTextAtSize(amtText, 9.5);
-    r.page.drawText(amtText, {
-      x: tableRight - 6 - amtW,
-      y: top - 14,
+    const amtW = r.measureText(amtText, 9.5, false);
+    await r.drawTextCanvas(amtText, tableRight - 6 - amtW, top - 14, {
       size: 9.5,
-      font: r.fonts.regular,
-      color: COLOR_TEXT,
     });
     r.page.drawLine({
       start: { x: M, y: top - rowH },
@@ -584,31 +637,25 @@ function drawCover(r: ReportRenderer, opts: BuildOptions) {
       color: COLOR_BORDER,
     });
     r.y -= rowH;
-  });
+  }
 
   const totalRowH = 26;
   r.y -= 4;
   r.ensureSpace(totalRowH + 40);
   const totalLabel = "ยอดรวมทั้งสิ้น";
-  r.page.drawText(totalLabel, {
-    x: colXDues + 6,
-    y: r.y - 15,
+  await r.drawTextCanvas(totalLabel, colXDues + 6, r.y - 15, {
     size: 11,
-    font: r.fonts.bold,
-    color: COLOR_TEXT,
+    bold: true,
   });
   const totalText = fmtMoney(total);
-  const totalTextW = r.fonts.bold.widthOfTextAtSize(totalText, 11);
-  r.page.drawText(totalText, {
-    x: tableRight - 6 - totalTextW,
-    y: r.y - 15,
+  const totalTextW = r.measureText(totalText, 11, true);
+  await r.drawTextCanvas(totalText, tableRight - 6 - totalTextW, r.y - 15, {
     size: 11,
-    font: r.fonts.bold,
-    color: COLOR_TEXT,
+    bold: true,
   });
   r.y -= totalRowH;
 
-  r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
+  await r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
 }
 
 async function drawPaymentSection(
@@ -633,25 +680,30 @@ async function drawPaymentSection(
   const itemLinesOf = (f: ReportFiling): string[] => {
     const base =
       [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
-    const lines = wrapText(base, r.fonts.regular, 9.5, colItemW - 12);
+    const lines = wrapText(
+      base,
+      (s) => r.measureText(s, 9.5, false),
+      colItemW - 12
+    );
     if (!f.attachments.some((a) => a.kind === "qr") && f.bank_account) {
-      lines.push(`โอนเข้า ${f.bank_account.bank_name} ${f.bank_account.account_no}`);
+      lines.push(
+        `โอนเข้า ${f.bank_account.bank_name} ${f.bank_account.account_no}`
+      );
     }
     return lines;
   };
   const rowHOf = (f: ReportFiling): number => {
     const hasQr = f.attachments.some((a) => a.kind === "qr");
-    const linesH =
-      itemLinesOf(f).length * 9.5 * 1.4 + rowPadY * 2;
+    const linesH = itemLinesOf(f).length * 9.5 * 1.4 + rowPadY * 2;
     return Math.max(hasQr ? qrSize + rowPadY * 2 : 20, linesH);
   };
 
   r.ensureSpace(headerH + 80);
   r.y -= 6;
-  r.text("ข้อมูลการชำระ", { size: 12, bold: true });
+  await r.text("ข้อมูลการชำระ", { size: 12, bold: true });
   r.y -= 4;
 
-  const drawHeader = () => {
+  const drawHeader = async () => {
     r.ensureSpace(headerH + 70);
     r.page.drawRectangle({
       x: M,
@@ -661,73 +713,56 @@ async function drawPaymentSection(
       color: COLOR_HEADER_BG,
     });
     const baseline = r.y - 14;
-    r.page.drawText("รายการ", {
-      x: M + 6,
-      y: baseline,
+    await r.drawTextCanvas("รายการ", M + 6, baseline, {
       size: 9.5,
-      font: r.fonts.bold,
-      color: COLOR_TEXT,
+      bold: true,
     });
-    r.page.drawText("กำหนดชำระ", {
-      x: colXDues + 6,
-      y: baseline,
+    await r.drawTextCanvas("กำหนดชำระ", colXDues + 6, baseline, {
       size: 9.5,
-      font: r.fonts.bold,
-      color: COLOR_TEXT,
+      bold: true,
     });
     const amtLabel = "จำนวนเงิน";
-    const amtW = r.fonts.bold.widthOfTextAtSize(amtLabel, 9.5);
-    r.page.drawText(amtLabel, {
-      x: colXQr - 6 - amtW,
-      y: baseline,
+    const amtW = r.measureText(amtLabel, 9.5, true);
+    await r.drawTextCanvas(amtLabel, colXQr - 6 - amtW, baseline, {
       size: 9.5,
-      font: r.fonts.bold,
-      color: COLOR_TEXT,
+      bold: true,
     });
-    r.page.drawText("QR", {
-      x: colXQr + (qrColW - r.fonts.bold.widthOfTextAtSize("QR", 9.5)) / 2,
-      y: baseline,
-      size: 9.5,
-      font: r.fonts.bold,
-      color: COLOR_TEXT,
-    });
+    const qrLabel = "QR";
+    const qrLabelW = r.measureText(qrLabel, 9.5, true);
+    await r.drawTextCanvas(
+      qrLabel,
+      colXQr + (qrColW - qrLabelW) / 2,
+      baseline,
+      { size: 9.5, bold: true }
+    );
     r.y -= headerH;
   };
 
-  drawHeader();
+  await drawHeader();
 
   for (const f of rows) {
     const rowH = rowHOf(f);
     if (r.y - rowH < M + 60) {
-      r.hr();
-      drawHeader();
+      await r.hr();
+      await drawHeader();
     }
     const top = r.y;
     const lines = itemLinesOf(f);
-    lines.forEach((line, li) => {
-      r.page.drawText(line, {
-        x: M + 6,
-        y: top - 14 - li * 9.5 * 1.4,
-        size: 9.5,
-        font: r.fonts.regular,
-        color: COLOR_TEXT,
-      });
-    });
-    r.page.drawText(formatDateTh(f.due_date), {
-      x: colXDues + 6,
-      y: top - 14,
+    for (let li = 0; li < lines.length; li++) {
+      await r.drawTextCanvas(
+        lines[li],
+        M + 6,
+        top - 14 - li * 9.5 * 1.4,
+        { size: 9.5 }
+      );
+    }
+    await r.drawTextCanvas(formatDateTh(f.due_date), colXDues + 6, top - 14, {
       size: 9.5,
-      font: r.fonts.regular,
-      color: COLOR_TEXT,
     });
     const amtText = fmtMoney(Number(f.amount ?? 0));
-    const amtW2 = r.fonts.regular.widthOfTextAtSize(amtText, 9.5);
-    r.page.drawText(amtText, {
-      x: colXQr - 6 - amtW2,
-      y: top - 14,
+    const amtW2 = r.measureText(amtText, 9.5, false);
+    await r.drawTextCanvas(amtText, colXQr - 6 - amtW2, top - 14, {
       size: 9.5,
-      font: r.fonts.regular,
-      color: COLOR_TEXT,
     });
 
     const qrAtt = f.attachments.find((a) => a.kind === "qr");
@@ -756,13 +791,14 @@ async function drawPaymentSection(
           throw new Error("unsupported qr image");
         }
       } catch {
-        r.page.drawText("[QR]", {
-          x: colXQr + (qrColW - r.fonts.regular.widthOfTextAtSize("[QR]", 8)) / 2,
-          y: top - 20,
-          size: 8,
-          font: r.fonts.regular,
-          color: COLOR_MUTED,
-        });
+        const ph = "[QR]";
+        const phW = r.measureText(ph, 8, false);
+        await r.drawTextCanvas(
+          ph,
+          colXQr + (qrColW - phW) / 2,
+          top - 20,
+          { size: 8, color: COLOR_MUTED }
+        );
       }
     }
 
@@ -784,20 +820,23 @@ async function drawEvidencePages(
   const documents: ReportAttachment[] = [];
   for (const f of filings) {
     for (const att of f.attachments) {
+      if (att.kind === "qr") continue;
       if (att.kind === "document") documents.push(att);
       else evidence.push(att);
     }
   }
 
   const groups = [
-    { title: "หลักฐานการชำระเงิน", items: evidence },
-    { title: "เอกสารอ้างอิง", items: documents },
+    { items: evidence, title: null as string | null },
+    { items: documents, title: "เอกสารอ้างอิง" },
   ];
   for (const g of groups) {
     if (!g.items.length) continue;
     r.newPage();
-    r.text(g.title, { size: 13, bold: true });
-    r.y -= 4;
+    if (g.title) {
+      await r.text(g.title, { size: 13, bold: true });
+      r.y -= 4;
+    }
     for (const att of g.items) await drawImageOrPdf(r, att);
   }
 }
@@ -824,10 +863,10 @@ export async function buildMonthlyReportPdf(
   r.doc.setCreator(opts.firmName ?? "Taxwork");
   r.doc.setLanguage("th-TH");
 
-  drawCover(r, opts);
+  await drawCover(r, opts);
   await drawPaymentSection(r, opts.filings as SectionFiling[]);
   await drawEvidencePages(r, opts.filings as SectionFiling[]);
-  r.drawFooters();
+  await r.drawFooters();
 
   return r.doc.save();
 }
