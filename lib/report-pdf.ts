@@ -769,8 +769,11 @@ async function drawPaymentSection(
     }
     return lines;
   };
+  const rowHasQr = (f: ReportFiling): boolean =>
+    f.attachments.some((a) => a.kind === "qr") ||
+    Boolean(f.bank_account?.qr_bytes);
   const rowHOf = (f: ReportFiling): number => {
-    const hasQr = f.attachments.some((a) => a.kind === "qr");
+    const hasQr = rowHasQr(f);
     const linesH = itemLinesOf(f).length * 9.5 * 1.4 + rowPadY * 2;
     return Math.max(hasQr ? qrSize + rowPadY * 2 : 20, linesH);
   };
