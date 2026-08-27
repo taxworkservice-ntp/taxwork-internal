@@ -49,6 +49,7 @@ export type ReportBankAccount = {
   account_no: string;
   account_name: string;
   promptpay_id: string | null;
+  qr_bytes?: ArrayBuffer | null;
 };
 
 export type ReportAttachment = {
@@ -58,14 +59,16 @@ export type ReportAttachment = {
   bytes: ArrayBuffer;
   covered_forms?: string[];
   covered_amount?: number;
+  covered_filings?: string[];
 };
 
 export type ReportFiling = {
-  id?: string;
+  id: string;
   form_code: string;
   description: string | null;
   amount: number;
   due_date: string | null;
+  remark?: string | null;
   bank_account_id?: string | null;
   bank_account?: ReportBankAccount | null;
   attachments: ReportAttachment[];
@@ -84,8 +87,6 @@ const PAGE_H = 841.89;
 const M = 48;
 const CONTENT_W = PAGE_W - M * 2;
 
-const COL_IDX_W = 26;
-const COL_ITEM_W = 296;
 const COL_DUE_W = 92;
 const COL_AMT_W = 85;
 
@@ -206,6 +207,14 @@ class ReportRenderer {
   page!: PDFPage;
   y!: number;
   footerDate: string;
+  sim = false;
+  pageIndex = 0;
+  slipPageByAtt = new WeakMap<ReportAttachment, number>();
+  imgDimsByAtt = new WeakMap<
+    ReportAttachment,
+    { width: number; height: number }
+  >();
+  private pendingFresh = false;
   private canvas = document.createElement("canvas");
   private ctx = this.canvas.getContext("2d")!;
   private textImageCache = new Map<string, PDFImage>();
@@ -216,17 +225,32 @@ class ReportRenderer {
 
   async init() {
     this.doc = await PDFDocument.create();
+    this.textImageCache.clear();
     await ensureCanvasFonts();
+    this.pageIndex = -1;
     this.newPage();
   }
 
   newPage(): PDFPage {
     this.page = this.doc.addPage([PAGE_W, PAGE_H]);
     this.y = PAGE_H - M;
+    this.pageIndex = this.doc.getPageCount() - 1;
+    this.pendingFresh = false;
     return this.page;
   }
 
+  requestFreshPage() {
+    this.pendingFresh = true;
+  }
+
+  private realizePendingPage() {
+    if (!this.pendingFresh) return;
+    this.pendingFresh = false;
+    this.newPage();
+  }
+
   ensureSpace(height: number) {
+    this.realizePendingPage();
     if (this.y - height < M + 24) this.newPage();
   }
 
@@ -249,13 +273,16 @@ class ReportRenderer {
     const scale = 2;
     const weight = bold ? "bold" : "normal";
 
+    this.ctx.font = `${weight} ${size * scale}px Sarabun`;
+    const textW = this.ctx.measureText(value).width;
+    const drawW = (Math.ceil(textW) + 4) / scale;
+
+    if (this.sim) return drawW;
+
     const cacheKey = `${value}|${size}|${weight}|${cssColor(color)}`;
     let img = this.textImageCache.get(cacheKey);
 
     if (!img) {
-      this.ctx.font = `${weight} ${size * scale}px Sarabun`;
-      const textW = this.ctx.measureText(value).width;
-
       const pad = 2;
       const canvasW = Math.ceil(textW) + pad * 2;
       const canvasH = Math.ceil(size * scale * 1.4);
@@ -276,10 +303,7 @@ class ReportRenderer {
       this.textImageCache.set(cacheKey, img);
     }
 
-    this.ctx.font = `${weight} ${size * scale}px Sarabun`;
-    const textW = this.ctx.measureText(value).width;
-    const drawW = (Math.ceil(textW) + 4) / scale;
-    const drawH = (Math.ceil(size * scale * 1.4)) / scale;
+    const drawH = Math.ceil(size * scale * 1.4) / scale;
     const imgY = baselineY - size * 0.4;
     page.drawImage(img, { x, y: imgY, width: drawW, height: drawH });
 
@@ -298,6 +322,7 @@ class ReportRenderer {
       lineHeight?: number;
     } = {}
   ): Promise<void> {
+    this.realizePendingPage();
     const size = opts.size ?? 10;
     const lineHeight = opts.lineHeight ?? size * 1.45;
     const w = this.measureText(value, size, opts.bold ?? false);
@@ -345,12 +370,14 @@ class ReportRenderer {
   }
 
   async hr(color: Color = COLOR_BORDER) {
-    this.page.drawLine({
-      start: { x: M, y: this.y },
-      end: { x: PAGE_W - M, y: this.y },
-      thickness: 0.7,
-      color,
-    });
+    this.realizePendingPage();
+    if (!this.sim)
+      this.page.drawLine({
+        start: { x: M, y: this.y },
+        end: { x: PAGE_W - M, y: this.y },
+        thickness: 0.7,
+        color,
+      });
     this.y -= 10;
   }
 
@@ -402,7 +429,7 @@ async function drawStampBox(
   att: ReportAttachment
 ): Promise<void> {
   const forms = Array.from(new Set(att.covered_forms?.filter(Boolean) ?? []));
-  if (!forms.length) return;
+  if (!forms.length || r.sim) return;
   const line1 = `อ้างอิง: ${forms.join(", ")}`;
   const line2 =
     typeof att.covered_amount === "number" && att.covered_amount > 0
@@ -449,16 +476,27 @@ async function drawImageOrPdf(
 
   if (isPng(view) || isJpeg(view)) {
     try {
-      const img = isPng(view)
-        ? await r.doc.embedPng(att.bytes)
-        : await r.doc.embedJpg(att.bytes);
+      let dims = r.imgDimsByAtt.get(att);
+      if (!dims) {
+        const probe = isPng(view)
+          ? await r.doc.embedPng(att.bytes)
+          : await r.doc.embedJpg(att.bytes);
+        dims = { width: probe.width, height: probe.height };
+        if (r.sim) r.imgDimsByAtt.set(att, dims);
+      }
+      const embed = async () =>
+        isPng(view) ? await r.doc.embedPng(att.bytes) : await r.doc.embedJpg(att.bytes);
+      const img = r.sim ? null : await embed();
+
       let w = targetW;
-      let h = (img.height / img.width) * w;
+      let h = (dims.height / dims.width) * w;
       if (h > maxY) {
         h = maxY;
-        w = (img.width / img.height) * h;
+        w = (dims.width / dims.height) * h;
       }
       r.ensureSpace(h + 18);
+      if (r.sim && !r.slipPageByAtt.has(att))
+        r.slipPageByAtt.set(att, r.pageIndex);
       r.y -= 2;
       await r.text(
         `${ATTACHMENT_KIND_LABELS[att.kind] ?? "ไฟล์แนบ"}: ${att.file_name}${refCaption(att)}`,
@@ -467,12 +505,13 @@ async function drawImageOrPdf(
           color: COLOR_MUTED,
         }
       );
-      r.page.drawImage(img, {
-        x: M + (CONTENT_W - w) / 2,
-        y: r.y - h,
-        width: w,
-        height: h,
-      });
+      if (img)
+        r.page.drawImage(img, {
+          x: M + (CONTENT_W - w) / 2,
+          y: r.y - h,
+          width: w,
+          height: h,
+        });
       await drawStampBox(r, M + (CONTENT_W - w) / 2, r.y, w, att);
       r.y -= h + 14;
       return;
@@ -488,9 +527,16 @@ async function drawImageOrPdf(
   if (isPdfBytes(view)) {
     try {
       const src = await PDFDocument.load(att.bytes, { ignoreEncryption: true });
-      const copied = await r.doc.copyPages(src, src.getPageIndices());
-      for (const p of copied) r.doc.addPage(p);
-      r.newPage();
+      const indices = src.getPageIndices();
+      if (r.sim && !r.slipPageByAtt.has(att))
+        r.slipPageByAtt.set(att, r.doc.getPageCount());
+      if (r.sim) {
+        for (let i = 0; i < indices.length; i++) r.doc.addPage([PAGE_W, PAGE_H]);
+      } else {
+        const copied = await r.doc.copyPages(src, indices);
+        for (const p of copied) r.doc.addPage(p);
+      }
+      r.requestFreshPage();
       return;
     } catch {
       await r.text(`[ไม่สามารถฝังไฟล์ PDF ได้: ${att.file_name}]`, {
@@ -514,7 +560,11 @@ function isPdfBytes(bytes: Uint8Array): boolean {
   );
 }
 
-async function drawCover(r: ReportRenderer, opts: BuildOptions) {
+async function drawCover(
+  r: ReportRenderer,
+  opts: BuildOptions,
+  methodOf: (f: SectionFiling) => string
+) {
   const periodTh = periodToThai(opts.periodLabel);
   const firmName = opts.firmName ?? "Taxwork";
 
@@ -551,38 +601,54 @@ async function drawCover(r: ReportRenderer, opts: BuildOptions) {
 
   const rowPadY = 5;
   const headerH = 22;
-  const colXIdx = M;
-  const colXItem = colXIdx + COL_IDX_W;
-  const colXDues = colXItem + COL_ITEM_W;
-  const colXAmt = colXDues + COL_DUE_W;
-  const tableRight = colXAmt + COL_AMT_W;
+  const fontSize = 9;
+  const lh = fontSize * 1.35;
+
+  const idxX = M;
+  const idxW = 22;
+  const itemX = idxX + idxW;
+  const itemW = 186;
+  const dueX = itemX + itemW;
+  const dueW = 74;
+  const methX = dueX + dueW;
+  const methW = 92;
+  const amtX = methX + methW;
+  const amtW = 62;
+  const remX = amtX + amtW;
+  const remW = CONTENT_W - (remX - M);
+  const tableRight = M + CONTENT_W;
 
   const drawTableHeader = async () => {
     r.ensureSpace(headerH + 30);
-    r.page.drawRectangle({
-      x: M,
-      y: r.y - headerH,
-      width: CONTENT_W,
-      height: headerH,
-      color: COLOR_HEADER_BG,
-    });
+    if (!r.sim)
+      r.page.drawRectangle({
+        x: M,
+        y: r.y - headerH,
+        width: CONTENT_W,
+        height: headerH,
+        color: COLOR_HEADER_BG,
+      });
     const baseline = r.y - 15;
-    await r.drawTextCanvas("ลำดับ", colXIdx + 6, baseline, {
-      size: 9.5,
+    await r.drawTextCanvas("ลำดับ", idxX + 6, baseline, {
+      size: 9,
       bold: true,
     });
-    await r.drawTextCanvas("รายการ", colXItem + 6, baseline, {
-      size: 9.5,
+    await r.drawTextCanvas("รายการ", itemX + 6, baseline, {
+      size: 9,
       bold: true,
     });
-    await r.drawTextCanvas("กำหนดชำระ", colXDues + 6, baseline, {
-      size: 9.5,
+    await r.drawTextCanvas("กำหนดชำระ", dueX + 6, baseline, {
+      size: 9,
+      bold: true,
+    });
+    await r.drawTextCanvas("ชำระผ่าน", methX + 6, baseline, {
+      size: 9,
       bold: true,
     });
     const amtLabel = "จำนวนเงิน";
-    const amtW = r.measureText(amtLabel, 9.5, true);
-    await r.drawTextCanvas(amtLabel, tableRight - 6 - amtW, baseline, {
-      size: 9.5,
+    const aW = r.measureText(amtLabel, 9, true);
+    await r.drawTextCanvas(amtLabel, amtX + amtW - 6 - aW, baseline, {
+      size: 9,
       bold: true,
     });
     r.y -= headerH;
@@ -590,7 +656,7 @@ async function drawCover(r: ReportRenderer, opts: BuildOptions) {
 
   await drawTableHeader();
 
-  const filings = opts.filings;
+  const filings = opts.filings as SectionFiling[];
   let total = 0;
 
   for (let i = 0; i < filings.length; i++) {
@@ -598,12 +664,15 @@ async function drawCover(r: ReportRenderer, opts: BuildOptions) {
     total += Number(f.amount ?? 0);
     const itemText =
       [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
-    const lines = wrapText(
-      itemText,
-      (s) => r.measureText(s, 9.5, false),
-      COL_ITEM_W - 12
-    );
-    const rowH = Math.max(lines.length * 9.5 * 1.4 + rowPadY * 2, 20);
+    const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 10);
+    const methText = methodOf(f);
+    const linesMeth = wrapText(methText, (s) => r.measureText(s, fontSize, false), methW - 10);
+    const remText = f.remark?.trim() || "";
+    const linesRem = remText
+      ? wrapText(remText, (s) => r.measureText(s, fontSize, false), remW - 8)
+      : [""];
+    const maxLines = Math.max(linesItem.length, linesMeth.length, linesRem.length);
+    const rowH = Math.max(maxLines * lh + rowPadY * 2, 20);
 
     if (r.y - rowH < M + 60) {
       await r.hr();
@@ -611,31 +680,39 @@ async function drawCover(r: ReportRenderer, opts: BuildOptions) {
     }
 
     const top = r.y;
-    await r.drawTextCanvas(String(i + 1), colXIdx + 6, top - 14, {
-      size: 9.5,
+    await r.drawTextCanvas(String(i + 1), idxX + 6, top - 14, {
+      size: fontSize,
     });
-    for (let li = 0; li < lines.length; li++) {
-      await r.drawTextCanvas(
-        lines[li],
-        colXItem + 6,
-        top - 14 - li * 9.5 * 1.4,
-        { size: 9.5 }
-      );
+    for (let li = 0; li < linesItem.length; li++) {
+      await r.drawTextCanvas(linesItem[li], itemX + 6, top - 14 - li * lh, {
+        size: fontSize,
+      });
     }
-    await r.drawTextCanvas(formatDateTh(f.due_date), colXDues + 6, top - 14, {
-      size: 9.5,
+    await r.drawTextCanvas(formatDateTh(f.due_date), dueX + 6, top - 14, {
+      size: fontSize,
     });
+    for (let li = 0; li < linesMeth.length; li++) {
+      await r.drawTextCanvas(linesMeth[li], methX + 6, top - 14 - li * lh, {
+        size: fontSize,
+      });
+    }
     const amtText = fmtMoney(Number(f.amount ?? 0));
-    const amtW = r.measureText(amtText, 9.5, false);
-    await r.drawTextCanvas(amtText, tableRight - 6 - amtW, top - 14, {
-      size: 9.5,
+    const amtTw = r.measureText(amtText, fontSize, false);
+    await r.drawTextCanvas(amtText, amtX + amtW - 6 - amtTw, top - 14, {
+      size: fontSize,
     });
-    r.page.drawLine({
-      start: { x: M, y: top - rowH },
-      end: { x: tableRight, y: top - rowH },
-      thickness: 0.5,
-      color: COLOR_BORDER,
-    });
+    for (let li = 0; li < linesRem.length; li++) {
+      await r.drawTextCanvas(linesRem[li], remX + 4, top - 14 - li * lh, {
+        size: fontSize,
+      });
+    }
+    if (!r.sim)
+      r.page.drawLine({
+        start: { x: M, y: top - rowH },
+        end: { x: tableRight, y: top - rowH },
+        thickness: 0.5,
+        color: COLOR_BORDER,
+      });
     r.y -= rowH;
   }
 
@@ -643,13 +720,13 @@ async function drawCover(r: ReportRenderer, opts: BuildOptions) {
   r.y -= 4;
   r.ensureSpace(totalRowH + 40);
   const totalLabel = "ยอดรวมทั้งสิ้น";
-  await r.drawTextCanvas(totalLabel, colXDues + 6, r.y - 15, {
+  await r.drawTextCanvas(totalLabel, dueX + 6, r.y - 15, {
     size: 11,
     bold: true,
   });
   const totalText = fmtMoney(total);
   const totalTextW = r.measureText(totalText, 11, true);
-  await r.drawTextCanvas(totalText, tableRight - 6 - totalTextW, r.y - 15, {
+  await r.drawTextCanvas(totalText, amtX + amtW - 6 - totalTextW, r.y - 15, {
     size: 11,
     bold: true,
   });
@@ -766,13 +843,14 @@ async function drawPaymentSection(
     });
 
     const qrAtt = f.attachments.find((a) => a.kind === "qr");
-    if (qrAtt) {
+    const qrBytes = qrAtt?.bytes ?? f.bank_account?.qr_bytes ?? null;
+    if (qrBytes) {
       try {
-        const view = new Uint8Array(qrAtt.bytes);
+        const view = new Uint8Array(qrBytes);
         const img = isPng(view)
-          ? await r.doc.embedPng(qrAtt.bytes)
+          ? await r.doc.embedPng(qrBytes)
           : isJpeg(view)
-            ? await r.doc.embedJpg(qrAtt.bytes)
+            ? await r.doc.embedJpg(qrBytes)
             : null;
         if (img) {
           const s = Math.min(
@@ -781,12 +859,13 @@ async function drawPaymentSection(
             (img.width / img.height) * qrSize
           );
           const h = (img.height / img.width) * s;
-          r.page.drawImage(img, {
-            x: colXQr + (qrColW - s) / 2,
-            y: top - rowPadY - h,
-            width: s,
-            height: h,
-          });
+          if (!r.sim)
+            r.page.drawImage(img, {
+              x: colXQr + (qrColW - s) / 2,
+              y: top - rowPadY - h,
+              width: s,
+              height: h,
+            });
         } else {
           throw new Error("unsupported qr image");
         }
@@ -812,32 +891,56 @@ async function drawPaymentSection(
   }
 }
 
+function collectEvidenceItems(filings: SectionFiling[]): ReportAttachment[] {
+  const items: ReportAttachment[] = [];
+  for (const f of filings) {
+    for (const att of f.attachments) {
+      if (att.kind === "qr") continue;
+      items.push(att);
+    }
+  }
+  return items;
+}
+
 async function drawEvidencePages(
   r: ReportRenderer,
   filings: SectionFiling[]
 ): Promise<void> {
-  const evidence: ReportAttachment[] = [];
-  const documents: ReportAttachment[] = [];
-  for (const f of filings) {
-    for (const att of f.attachments) {
-      if (att.kind === "qr") continue;
-      if (att.kind === "document") documents.push(att);
-      else evidence.push(att);
-    }
-  }
+  const items = collectEvidenceItems(filings);
+  if (!items.length) return;
+  r.requestFreshPage();
+  for (const att of items) await drawImageOrPdf(r, att);
+}
 
-  const groups = [
-    { items: evidence, title: null as string | null },
-    { items: documents, title: "เอกสารอ้างอิง" },
-  ];
-  for (const g of groups) {
-    if (!g.items.length) continue;
-    r.newPage();
-    if (g.title) {
-      await r.text(g.title, { size: 13, bold: true });
-      r.y -= 4;
+async function drawWatermark(r: ReportRenderer, opts: BuildOptions): Promise<void> {
+  if (!opts.logo?.bytes) return;
+  const view = new Uint8Array(opts.logo.bytes);
+  try {
+    const img = isPng(view)
+      ? await r.doc.embedPng(opts.logo.bytes)
+      : isJpeg(view)
+        ? await r.doc.embedJpg(opts.logo.bytes)
+        : null;
+    if (!img) return;
+    const firstPage = r.doc.getPages()[0];
+    if (!firstPage) return;
+    const maxH = 90;
+    const maxW = CONTENT_W * 0.45;
+    let w = maxW;
+    let h = (img.height / img.width) * w;
+    if (h > maxH) {
+      h = maxH;
+      w = (img.width / img.height) * h;
     }
-    for (const att of g.items) await drawImageOrPdf(r, att);
+    firstPage.drawImage(img, {
+      x: PAGE_W - M - w,
+      y: M + 20,
+      width: w,
+      height: h,
+      opacity: 0.65,
+    });
+  } catch {
+    // ignore invalid logo
   }
 }
 
@@ -846,26 +949,87 @@ type BuildOptions = {
   client: ReportClient;
   periodLabel: string;
   filings: ReportFiling[];
+  logo?: { bytes: ArrayBuffer } | null;
 };
 
 type SectionFiling = ReportFiling & { attachments: ReportAttachment[] };
 
-export async function buildMonthlyReportPdf(
-  opts: BuildOptions
-): Promise<Uint8Array> {
-  const r = new ReportRenderer();
-  await r.init();
+function makeMethodOf(
+  orderedItems: ReportAttachment[],
+  pageByIndex: number[] | null
+) {
+  const indexOf = new Map(orderedItems.map((a, i) => [a, i] as const));
+  return (f: SectionFiling): string => {
+    const slips = f.attachments.filter(
+      (a) => a.kind === "slip" && (a.covered_filings ?? []).includes(f.id)
+    );
+    if (slips.length) {
+      if (
+        pageByIndex &&
+        slips.every((s) => indexOf.has(s)) &&
+        slips.every((s) => (pageByIndex[indexOf.get(s)!] ?? -1) >= 0)
+      ) {
+        const pages = Array.from(
+          new Set(slips.map((s) => pageByIndex[indexOf.get(s)!] + 1))
+        );
+        return `สลิป หน้า ${pages.join(", ")}`;
+      }
+      return "สลิป";
+    }
+    if (
+      f.attachments.some((a) => a.kind === "qr") ||
+      f.bank_account?.qr_bytes
+    )
+      return "QR Code";
+    if (f.bank_account) return `โอนเข้า ${f.bank_account.label}`;
+    return "-";
+  };
+}
 
+function applyDocMeta(r: ReportRenderer, opts: BuildOptions): void {
   r.doc.setTitle(
     `รายงานงานภาษีประจำเดือน ${periodToThai(opts.periodLabel)} - ${opts.client.name}`
   );
   r.doc.setAuthor(opts.firmName ?? "Taxwork");
   r.doc.setCreator(opts.firmName ?? "Taxwork");
   r.doc.setLanguage("th-TH");
+}
 
-  await drawCover(r, opts);
-  await drawPaymentSection(r, opts.filings as SectionFiling[]);
-  await drawEvidencePages(r, opts.filings as SectionFiling[]);
+export async function buildMonthlyReportPdf(
+  opts: BuildOptions
+): Promise<Uint8Array> {
+  const r = new ReportRenderer();
+  const filings = opts.filings as SectionFiling[];
+  const orderedEvidence = collectEvidenceItems(filings);
+
+  let prevSig = "";
+  let pageByIndex: number[] = [];
+
+  // Simulated passes: resolve which report page each slip lands on.
+  for (let iter = 0; iter < 4; iter++) {
+    r.sim = true;
+    r.slipPageByAtt = new WeakMap();
+    await r.init();
+    applyDocMeta(r, opts);
+    await drawCover(r, opts, makeMethodOf(orderedEvidence, iter === 0 ? null : pageByIndex));
+    await drawPaymentSection(r, filings);
+    await drawEvidencePages(r, filings);
+    pageByIndex = orderedEvidence.map(
+      (a) => r.slipPageByAtt.get(a) ?? -1
+    );
+    const sig = `${r.doc.getPageCount()}|${pageByIndex.join(",")}`;
+    if (sig === prevSig) break;
+    prevSig = sig;
+  }
+
+  // Real pass.
+  r.sim = false;
+  await r.init();
+  applyDocMeta(r, opts);
+  await drawCover(r, opts, makeMethodOf(orderedEvidence, pageByIndex));
+  await drawWatermark(r, opts);
+  await drawPaymentSection(r, filings);
+  await drawEvidencePages(r, filings);
   await r.drawFooters();
 
   return r.doc.save();

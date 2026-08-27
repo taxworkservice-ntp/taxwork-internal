@@ -6,6 +6,7 @@ import {
   ATTACHMENT_KIND_LABELS,
   buildMonthlyReportPdf,
   fetchAttachmentBytes,
+  type ReportFiling,
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
 
@@ -25,6 +26,8 @@ type BankAccount = {
   account_no: string;
   account_name: string;
   promptpay_id: string | null;
+  qr_path: string | null;
+  qr_mime_type: string | null;
 };
 
 type Attachment = {
@@ -47,6 +50,7 @@ type Filing = {
   description: string | null;
   amount: number;
   due_date: string | null;
+  remark: string | null;
   bank_account_id: string | null;
   sort_order: number;
   filing_attachments: Attachment[];
@@ -91,6 +95,25 @@ function shiftPeriod(period: string, delta: number): string {
   return `${ny}-${String(nm).padStart(2, "0")}`;
 }
 
+function shiftYmdMonth(ymd: string, delta: number): string | null {
+  const [y, m, d] = ymd.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const total = y * 12 + (m - 1) + delta;
+  const ny = Math.floor(total / 12);
+  const nm = (total % 12) + 1;
+  const daysInMonth = new Date(ny, nm, 0).getDate();
+  const nd = Math.min(d, daysInMonth);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${ny}-${pad(nm)}-${pad(nd)}`;
+}
+
+function sniffImageMime(bytes: ArrayBuffer): string {
+  const v = new Uint8Array(bytes);
+  if (v[0] === 0x89 && v[1] === 0x50) return "image/png";
+  if (v[0] === 0xff && v[1] === 0xd8) return "image/jpeg";
+  return "application/octet-stream";
+}
+
 function periodToThai(period: string): string {
   const [y, m] = period.split("-").map(Number);
   if (!y || !m || m < 1 || m > 12) return period;
@@ -120,6 +143,15 @@ export default function ReportsPage() {
   const [newAmount, setNewAmount] = useState("");
   const [newDueDate, setNewDueDate] = useState("");
   const [adding, setAdding] = useState(false);
+  const [copyingFrom, setCopyingFrom] = useState(false);
+
+  const [showSettings, setShowSettings] = useState(false);
+  const [logoPath, setLogoPath] = useState<string | null>(null);
+  const [logoFileName, setLogoFileName] = useState<string | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
+  const [qrBusyId, setQrBusyId] = useState<string | null>(null);
 
   const [bankLabel, setBankLabel] = useState("");
   const [bankName, setBankName] = useState("");
@@ -225,7 +257,142 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("app_settings")
+        .select("company_logo_path, company_logo_file_name")
+        .eq("id", 1)
+        .maybeSingle();
+      setLogoPath((data as { company_logo_path: string | null } | null)?.company_logo_path ?? null);
+      setLogoFileName(
+        (data as { company_logo_file_name: string | null } | null)
+          ?.company_logo_file_name ?? null
+      );
+      setSettingsLoading(false);
+    })();
+  }, [supabase]);
+
+  async function saveSettingsLogo(path: string | null, fileName: string | null) {
+    const { error } = await supabase.from("app_settings").upsert({
+      id: 1,
+      company_logo_path: path,
+      company_logo_file_name: fileName,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error.message}`);
+  }
+
+  async function handleLogoUpload(file: File) {
+    setLogoBusy(true);
+    try {
+      const path = await uploadObject(file.name, file);
+      const old = logoPath;
+      setLogoPath(path);
+      setLogoFileName(file.name);
+      await saveSettingsLogo(path, file.name);
+      if (old && old !== path) deleteR2Object(old);
+    } catch (err) {
+      alert(`อัปโหลดโลโก้ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setLogoBusy(false);
+    }
+  }
+
+  async function handleLogoRemove() {
+    if (!logoPath || !confirm("ลบโลโก้ออกจากรายงาน?")) return;
+    setLogoBusy(true);
+    try {
+      await deleteR2Object(logoPath);
+      setLogoPath(null);
+      setLogoFileName(null);
+      await saveSettingsLogo(null, null);
+    } finally {
+      setLogoBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!showSettings || !logoPath) {
+      setLogoPreviewUrl(null);
+      return;
+    }
+    let revoked: string | null = null;
+    (async () => {
+      try {
+        const bytes = await fetchAttachmentBytes(logoPath);
+        const url = URL.createObjectURL(
+          new Blob([bytes], { type: sniffImageMime(bytes) })
+        );
+        revoked = url;
+        setLogoPreviewUrl(url);
+      } catch {
+        setLogoPreviewUrl(null);
+      }
+    })();
+    return () => {
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [showSettings, logoPath]);
+
   const total = filings.reduce((sum, f) => sum + Number(f.amount ?? 0), 0);
+
+  async function copyFromLastMonth() {
+    if (!clientId) return;
+    const prevPeriod = shiftPeriod(period, -1);
+    if (
+      filings.length &&
+      !confirm(
+        `มีรายการอยู่แล้ว ${filings.length} รายการ — คัดลอกจาก ${periodToThai(prevPeriod)} เพิ่มเข้าไปหรือไม่? (รายการเดิมจะไม่ถูกลบ)`
+      )
+    )
+      return;
+    setCopyingFrom(true);
+    try {
+      const { data, error } = await supabase
+        .from("monthly_filings")
+        .select(
+          "form_code, description, amount, due_date, bank_account_id, sort_order"
+        )
+        .eq("client_id", clientId)
+        .eq("period_label", prevPeriod)
+        .order("sort_order")
+        .order("created_at");
+      if (error) throw error;
+      if (!data?.length) {
+        alert(`ไม่พบรายการของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
+        return;
+      }
+      const maxSort = filings.reduce((m, f) => Math.max(m, f.sort_order), 0);
+      const { data: inserted, error: insError } = await supabase
+        .from("monthly_filings")
+        .insert(
+          data.map((f, i) => ({
+            client_id: clientId,
+            period_label: period,
+            form_code: f.form_code,
+            description: f.description,
+            amount: Number(f.amount ?? 0),
+            due_date: f.due_date ? shiftYmdMonth(String(f.due_date), 1) : null,
+            bank_account_id: f.bank_account_id,
+            sort_order: maxSort + i + 1,
+          }))
+        )
+        .select();
+      if (insError) throw insError;
+      setFilings((prev) => [
+        ...prev,
+        ...((inserted ?? []) as unknown as Filing[]).map((f) => ({
+          ...f,
+          filing_attachments: [],
+        })),
+      ]);
+    } catch (err) {
+      alert(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setCopyingFrom(false);
+    }
+  }
 
   async function addFiling() {
     if (!clientId || !newFormCode.trim()) {
@@ -284,6 +451,23 @@ export default function ReportsPage() {
     });
   }
 
+  async function uploadObject(fileName: string, file: File): Promise<string> {
+    const signRes = await fetch("/api/files/sign-upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileName }),
+    });
+    if (!signRes.ok) throw new Error("ขอลิงก์อัปโหลดไม่สำเร็จ");
+    const { url, path } = await signRes.json();
+    const putRes = await fetch(url, {
+      method: "PUT",
+      body: file,
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+    });
+    if (!putRes.ok) throw new Error("อัปโหลดไม่สำเร็จ");
+    return path as string;
+  }
+
   async function deleteFiling(filing: Filing) {
     if (!confirm(`ลบรายการ "${filing.form_code}" ?`)) return;
     for (const att of filing.filing_attachments) {
@@ -299,23 +483,11 @@ export default function ReportsPage() {
     file: File,
     covers?: string[]
   ) {
-    const signRes = await fetch("/api/files/sign-upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId, fileName: file.name }),
-    });
-    if (!signRes.ok) {
-      alert("ขอลิงก์อัปโหลดไม่สำเร็จ");
-      return;
-    }
-    const { url, path } = await signRes.json();
-    const putRes = await fetch(url, {
-      method: "PUT",
-      body: file,
-      headers: { "Content-Type": file.type || "application/octet-stream" },
-    });
-    if (!putRes.ok) {
-      alert("อัปโหลดไม่สำเร็จ");
+    let path: string;
+    try {
+      path = await uploadObject(file.name, file);
+    } catch (err) {
+      alert(`อัปโหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       return;
     }
     const { data: inserted, error } = await supabase
@@ -380,9 +552,51 @@ export default function ReportsPage() {
 
   async function deleteBankAccount(id: string) {
     if (!confirm("ลบบัญชีนี้? รายการที่ผูกไว้จะตัดการเชื่อมโยง")) return;
+    const bank = bankAccounts.find((b) => b.id === id);
+    if (bank?.qr_path) deleteR2Object(bank.qr_path);
     await supabase.from("bank_accounts").delete().eq("id", id);
     reloadBanks();
     loadFilings();
+  }
+
+  async function handleBankQrUpload(bankId: string, file: File) {
+    setQrBusyId(bankId);
+    try {
+      const path = await uploadObject(file.name, file);
+      const bank = bankAccounts.find((b) => b.id === bankId);
+      setBankAccounts((prev) =>
+        prev.map((b) => (b.id === bankId ? { ...b, qr_path: path } : b))
+      );
+      const { error } = await supabase
+        .from("bank_accounts")
+        .update({ qr_path: path })
+        .eq("id", bankId);
+      if (error) throw error;
+      if (bank?.qr_path && bank.qr_path !== path) deleteR2Object(bank.qr_path);
+    } catch (err) {
+      alert(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      reloadBanks();
+    } finally {
+      setQrBusyId(null);
+    }
+  }
+
+  async function handleBankQrRemove(bankId: string) {
+    const bank = bankAccounts.find((b) => b.id === bankId);
+    if (!bank?.qr_path || !confirm("ลบ QR ของบัญชีนี้?")) return;
+    setQrBusyId(bankId);
+    try {
+      setBankAccounts((prev) =>
+        prev.map((b) => (b.id === bankId ? { ...b, qr_path: null } : b))
+      );
+      await supabase
+        .from("bank_accounts")
+        .update({ qr_path: null })
+        .eq("id", bankId);
+      deleteR2Object(bank.qr_path);
+    } finally {
+      setQrBusyId(null);
+    }
   }
 
   async function generatePdf() {
@@ -397,7 +611,27 @@ export default function ReportsPage() {
     setStatus("");
     try {
       const filingById = new Map(filings.map((f) => [f.id, f]));
-      const enriched = [];
+      const enriched: ReportFiling[] = [];
+
+      const bankQrCache = new Map<string, ArrayBuffer | null>();
+      const usedBanks = new Set(
+        filings
+          .map((f) => f.bank_account_id)
+          .filter((id): id is string => Boolean(id))
+      );
+      for (const bankId of usedBanks) {
+        const bank = bankAccounts.find((b) => b.id === bankId);
+        if (bank?.qr_path) {
+          try {
+            bankQrCache.set(bankId, await fetchAttachmentBytes(bank.qr_path));
+          } catch {
+            bankQrCache.set(bankId, null);
+          }
+        } else {
+          bankQrCache.set(bankId, null);
+        }
+      }
+
       for (const f of filings) {
         const attachments = [];
         for (const att of f.filing_attachments) {
@@ -420,14 +654,44 @@ export default function ReportsPage() {
               (sum, cf) => sum + Number(cf.amount ?? 0),
               0
             ),
+            covered_filings: [
+              ...new Set(
+                (att.covers?.length ? att.covers : [f.id]).filter(
+                  (cid) => filingById.has(cid)
+                )
+              ),
+            ],
           });
         }
+        const ba = bankAccounts.find((b) => b.id === f.bank_account_id);
         enriched.push({
-          ...f,
-          bank_account:
-            bankAccounts.find((b) => b.id === f.bank_account_id) ?? null,
+          id: f.id,
+          form_code: f.form_code,
+          description: f.description,
+          amount: Number(f.amount ?? 0),
+          due_date: f.due_date,
+          remark: f.remark ?? null,
+          bank_account: ba
+            ? {
+                label: ba.label,
+                bank_name: ba.bank_name,
+                account_no: ba.account_no,
+                account_name: ba.account_name,
+                promptpay_id: ba.promptpay_id,
+                qr_bytes: bankQrCache.get(ba.id) ?? null,
+              }
+            : null,
           attachments,
         });
+      }
+
+      let logoBytes: ArrayBuffer | null = null;
+      if (logoPath) {
+        try {
+          logoBytes = await fetchAttachmentBytes(logoPath);
+        } catch {
+          logoBytes = null;
+        }
       }
 
       const pdfBytes = await buildMonthlyReportPdf({
@@ -440,6 +704,7 @@ export default function ReportsPage() {
         },
         periodLabel: period,
         filings: enriched,
+        logo: logoBytes ? { bytes: logoBytes } : null,
       });
 
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
@@ -505,6 +770,23 @@ export default function ReportsPage() {
           <button className="btn px-2.5" onClick={() => setPeriod((p) => shiftPeriod(p, 1))}>
             →
           </button>
+          <button
+            className="btn px-2.5"
+            title="คัดลอกรายการจากเดือนก่อน"
+            aria-label="คัดลอกรายการจากเดือนก่อน"
+            onClick={copyFromLastMonth}
+            disabled={!clientId || copyingFrom}
+          >
+            {copyingFrom ? <SpinnerIcon /> : <CopyIcon />}
+          </button>
+          <button
+            className="btn px-2.5"
+            title="ตั้งค่ารายงาน (โลโก้บริษัท)"
+            aria-label="ตั้งค่ารายงาน"
+            onClick={() => setShowSettings(true)}
+          >
+            <GearIcon />
+          </button>
         </div>
       </div>
 
@@ -549,8 +831,8 @@ export default function ReportsPage() {
               รายการงานภาษี ประจำเดือน {periodToThai(period)}
             </h2>
 
-            <div className="card grid grid-cols-1 gap-2 sm:grid-cols-[140px_1fr_120px_150px_auto] sm:items-end">
-              <div>
+            <div className="card grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[150px_minmax(0,1.7fr)_135px_170px_auto] lg:items-end lg:gap-x-3">
+              <div className="order-1 lg:order-none">
                 <label className="label">แบบฟอร์ม</label>
                 <input
                   className="input"
@@ -565,16 +847,7 @@ export default function ReportsPage() {
                   ))}
                 </datalist>
               </div>
-              <div>
-                <label className="label">รายละเอียด</label>
-                <input
-                  className="input"
-                  placeholder="เช่น ภาษีมูลค่าเพิ่ม เดือน 7/69"
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                />
-              </div>
-              <div>
+              <div className="order-2 lg:order-none">
                 <label className="label">จำนวนเงิน</label>
                 <input
                   className="input"
@@ -585,7 +858,16 @@ export default function ReportsPage() {
                   onChange={(e) => setNewAmount(e.target.value)}
                 />
               </div>
-              <div>
+              <div className="order-3 col-span-2 lg:order-none lg:col-span-1">
+                <label className="label">รายละเอียด</label>
+                <input
+                  className="input"
+                  placeholder="เช่น ภาษีมูลค่าเพิ่ม เดือน 7/69"
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                />
+              </div>
+              <div className="order-4 lg:order-none">
                 <label className="label">กำหนดชำระ</label>
                 <input
                   className="input"
@@ -594,7 +876,11 @@ export default function ReportsPage() {
                   onChange={(e) => setNewDueDate(e.target.value)}
                 />
               </div>
-              <button className="btn-primary" onClick={addFiling} disabled={adding}>
+              <button
+                className="btn-primary order-5 col-span-2 lg:order-none lg:col-span-1"
+                onClick={addFiling}
+                disabled={adding}
+              >
                 เพิ่มรายการ
               </button>
             </div>
@@ -667,7 +953,7 @@ export default function ReportsPage() {
             {showBankManager && (
               <div className="mt-3 space-y-3">
                 <div className="overflow-x-auto">
-                  <table className="table-base w-full min-w-[600px]">
+                  <table className="table-base w-full min-w-[760px]">
                     <thead>
                       <tr>
                         <th>ชื่อ</th>
@@ -675,6 +961,7 @@ export default function ReportsPage() {
                         <th>เลขบัญชี</th>
                         <th>ชื่อบัญชี</th>
                         <th>PromptPay</th>
+                        <th>QR สำหรับสแกนจ่าย</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -686,6 +973,37 @@ export default function ReportsPage() {
                           <td>{b.account_no}</td>
                           <td>{b.account_name}</td>
                           <td>{b.promptpay_id ?? "-"}</td>
+                          <td>
+                            {b.qr_path ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-neutral-100 px-1.5 py-0.5 text-xs">
+                                QR
+                                <button
+                                  className="text-red-500 hover:text-red-700"
+                                  aria-label="ลบ QR"
+                                  onClick={() => handleBankQrRemove(b.id)}
+                                  disabled={qrBusyId === b.id}
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            ) : (
+                              <label className="btn inline-flex cursor-pointer text-xs">
+                                {qrBusyId === b.id ? "..." : "+QR"}
+                                <input
+                                  type="file"
+                                  accept="image/png,image/jpeg"
+                                  className="hidden"
+                                  disabled={qrBusyId === b.id}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    handleBankQrUpload(b.id, file);
+                                    e.target.value = "";
+                                  }}
+                                />
+                              </label>
+                            )}
+                          </td>
                           <td className="text-right">
                             <button
                               className="btn-danger px-1.5 py-0.5 text-xs"
@@ -698,7 +1016,7 @@ export default function ReportsPage() {
                       ))}
                       {!bankAccounts.length && (
                         <tr>
-                          <td colSpan={6} className="text-neutral-500">
+                          <td colSpan={7} className="text-neutral-500">
                             ยังไม่มีบัญชี
                           </td>
                         </tr>
@@ -751,6 +1069,83 @@ export default function ReportsPage() {
           </section>
         </>
       )}
+
+      {showSettings && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowSettings(false)}
+        >
+          <div
+            className="card w-full max-w-md space-y-4 bg-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold">ตั้งค่ารายงาน</h2>
+              <button
+                className="text-neutral-400 hover:text-neutral-700"
+                onClick={() => setShowSettings(false)}
+                aria-label="ปิด"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="label">โลโก้บริษัท (Watermark หน้าปก)</label>
+              <p className="text-xs text-neutral-500">
+                แสดงมุมขวาล่างของหน้าปกรายงาน PDF (ความทึบ 65%) — รองรับ PNG/JPG
+              </p>
+              {settingsLoading ? (
+                <p className="text-xs text-neutral-500">กำลังโหลด...</p>
+              ) : logoPreviewUrl ? (
+                <div className="flex flex-col items-start gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={logoPreviewUrl}
+                    alt="โลโก้"
+                    className="max-h-24 rounded border border-neutral-200 bg-neutral-50 object-contain p-2"
+                  />
+                  <span className="text-xs text-neutral-500">
+                    {logoFileName}
+                  </span>
+                  <button
+                    className="btn-danger text-xs"
+                    onClick={handleLogoRemove}
+                    disabled={logoBusy}
+                  >
+                    ลบโลโก้
+                  </button>
+                </div>
+              ) : (
+                <label className="btn inline-flex cursor-pointer text-xs">
+                  {logoBusy ? "กำลังอัปโหลด..." : "เลือกไฟล์โลโก้..."}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg"
+                    className="hidden"
+                    disabled={logoBusy}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      handleLogoUpload(file);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                className="btn-primary"
+                onClick={() => setShowSettings(false)}
+              >
+                เสร็จสิ้น
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -785,7 +1180,7 @@ function FilingCard({
   onSlipFiles: (files: File[]) => void;
 }) {
   function blurField(
-    key: "form_code" | "description" | "amount" | "due_date",
+    key: "form_code" | "description" | "amount" | "due_date" | "remark",
     raw: string
   ) {
     if (key === "amount") {
@@ -804,8 +1199,8 @@ function FilingCard({
 
   return (
     <div className="card space-y-3">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[140px_1fr_130px_150px_190px_auto] sm:items-end">
-        <div>
+      <div className="grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,0.85fr)_minmax(0,1.05fr)_minmax(0,1.45fr)_minmax(0,0.95fr)_auto] lg:items-end lg:gap-x-3">
+        <div className="order-1 lg:order-none">
           <label className="label">แบบฟอร์ม</label>
           <input
             className="input"
@@ -814,15 +1209,7 @@ function FilingCard({
             onBlur={(e) => blurField("form_code", e.target.value)}
           />
         </div>
-        <div>
-          <label className="label">รายละเอียด</label>
-          <input
-            className="input"
-            defaultValue={filing.description ?? ""}
-            onBlur={(e) => blurField("description", e.target.value)}
-          />
-        </div>
-        <div>
+        <div className="order-2 lg:order-none">
           <label className="label">จำนวนเงิน</label>
           <input
             className="input"
@@ -833,7 +1220,15 @@ function FilingCard({
             onBlur={(e) => blurField("amount", e.target.value)}
           />
         </div>
-        <div>
+        <div className="order-3 col-span-2 lg:order-none lg:col-span-1">
+          <label className="label">รายละเอียด</label>
+          <input
+            className="input"
+            defaultValue={filing.description ?? ""}
+            onBlur={(e) => blurField("description", e.target.value)}
+          />
+        </div>
+        <div className="order-4 lg:order-none">
           <label className="label">กำหนดชำระ</label>
           <input
             className="input"
@@ -842,7 +1237,16 @@ function FilingCard({
             onBlur={(e) => blurField("due_date", e.target.value)}
           />
         </div>
-        <div>
+        <div className="order-5 lg:order-none">
+          <label className="label">หมายเหตุ</label>
+          <input
+            className="input"
+            defaultValue={filing.remark ?? ""}
+            placeholder="หมายเหตุ"
+            onBlur={(e) => blurField("remark", e.target.value)}
+          />
+        </div>
+        <div className="order-6 col-span-2 lg:order-none lg:col-span-1">
           <label className="label">แนบบัญชีธนาคาร</label>
           <select
             className="input"
@@ -859,7 +1263,10 @@ function FilingCard({
             ))}
           </select>
         </div>
-        <button className="btn-danger" onClick={onDelete}>
+        <button
+          className="btn-danger order-7 justify-self-end self-end lg:order-none"
+          onClick={onDelete}
+        >
           ลบ
         </button>
       </div>
@@ -981,4 +1388,56 @@ function FilingCard({
 
 function truncateName(name: string, max = 28) {
   return name.length > max ? `${name.slice(0, max)}…` : name;
+}
+
+function CopyIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+    >
+      <path d="M21 12a9 9 0 1 1-6.2-8.56" />
+    </svg>
+  );
 }
