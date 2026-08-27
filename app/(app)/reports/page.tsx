@@ -145,6 +145,7 @@ export default function ReportsPage() {
   const [newDueDate, setNewDueDate] = useState("");
   const [adding, setAdding] = useState(false);
   const [copyingFrom, setCopyingFrom] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
   const loadSeq = useRef(0);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -493,6 +494,34 @@ export default function ReportsPage() {
     }
     await supabase.from("monthly_filings").delete().eq("id", filing.id);
     loadFilings();
+  }
+
+  async function clearAllFilings() {
+    if (!clientId || !filings.length) return;
+    if (
+      !confirm(
+        `ลบรายการทั้งหมด ${filings.length} รายการ ของ ${periodToThai(period)} ?\nไฟล์แนบที่เกี่ยวข้องจะถูกลบด้วย — ไม่สามารถกู้คืนได้`
+      )
+    )
+      return;
+    setClearingAll(true);
+    try {
+      const atts = filings.flatMap((f) => f.filing_attachments);
+      for (const att of atts) {
+        await deleteR2Object(att.storage_path);
+      }
+      const { error } = await supabase
+        .from("monthly_filings")
+        .delete()
+        .eq("client_id", clientId)
+        .eq("period_label", period);
+      if (error) throw error;
+      loadFilings();
+    } catch (err) {
+      alert(`ลบรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setClearingAll(false);
+    }
   }
 
   async function uploadAttachment(
@@ -948,6 +977,14 @@ export default function ReportsPage() {
                   {status && (
                     <span className="text-xs text-green-700">{status}</span>
                   )}
+                  <button
+                    className="btn-danger"
+                    onClick={clearAllFilings}
+                    disabled={!filings.length || clearingAll || generating}
+                    title="ลบรายการทั้งหมดของเดือนที่เลือก"
+                  >
+                    {clearingAll ? "กำลังลบ..." : `ลบทั้งหมด (${filings.length})`}
+                  </button>
                   <button
                     className="btn-primary"
                     onClick={generatePdf}
