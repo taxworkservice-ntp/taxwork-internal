@@ -211,13 +211,21 @@ export default function ReportsPage() {
     setLoading(true);
     loadSeq.current += 1;
     const seq = loadSeq.current;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("monthly_filings")
-      .select("*,filing_attachments(*)")
+      .select("*,filing_attachments!filing_attachments_filing_id_fkey(*)")
       .eq("client_id", clientId)
       .eq("period_label", period)
       .order("sort_order")
       .order("created_at");
+    if (error) {
+      console.error("loadFilings failed:", error);
+      setStatus(`โหลดรายการไม่สำเร็จ: ${error.message}`);
+      setFilings([]);
+      setLoadedKey(key);
+      setLoading(false);
+      return;
+    }
     if (seq !== loadSeq.current) return;
     const ordered = (data ?? []) as Filing[];
     if (ordered.length) {
