@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   ATTACHMENT_KIND_LABELS,
@@ -135,6 +135,7 @@ export default function ReportsPage() {
   const [filings, setFilings] = useState<Filing[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [status, setStatus] = useState("");
   const [showBankManager, setShowBankManager] = useState(false);
@@ -144,6 +145,7 @@ export default function ReportsPage() {
   const [newDueDate, setNewDueDate] = useState("");
   const [adding, setAdding] = useState(false);
   const [copyingFrom, setCopyingFrom] = useState(false);
+  const loadSeq = useRef(0);
 
   const [showSettings, setShowSettings] = useState(false);
   const [logoPath, setLogoPath] = useState<string | null>(null);
@@ -201,9 +203,14 @@ export default function ReportsPage() {
   const loadFilings = useCallback(async () => {
     if (!clientId) {
       setFilings([]);
+      setLoadedKey(null);
       return;
     }
+    const key = `${clientId}|${period}`;
+    setLoadedKey((k) => (k === key ? k : null));
     setLoading(true);
+    loadSeq.current += 1;
+    const seq = loadSeq.current;
     const { data } = await supabase
       .from("monthly_filings")
       .select("*,filing_attachments(*)")
@@ -211,6 +218,7 @@ export default function ReportsPage() {
       .eq("period_label", period)
       .order("sort_order")
       .order("created_at");
+    if (seq !== loadSeq.current) return;
     const ordered = (data ?? []) as Filing[];
     if (ordered.length) {
       const { data: links } = await supabase
@@ -220,6 +228,7 @@ export default function ReportsPage() {
           "filing_id",
           ordered.map((f) => f.id)
         );
+      if (seq !== loadSeq.current) return;
       const coverMap = new Map<string, Set<string>>();
       for (const link of links ?? []) {
         if (!coverMap.has(link.attachment_id))
@@ -240,6 +249,7 @@ export default function ReportsPage() {
       }
     }
     setFilings(ordered);
+    setLoadedKey(key);
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, period]);
@@ -885,7 +895,7 @@ export default function ReportsPage() {
               </button>
             </div>
 
-            {loading ? (
+            {loading && loadedKey !== `${clientId}|${period}` ? (
               <p className="text-sm text-neutral-500">กำลังโหลด...</p>
             ) : !filings.length ? (
               <p className="text-sm text-neutral-500">
@@ -1179,22 +1189,76 @@ function FilingCard({
   onToggleSlipCover: (filingId: string) => void;
   onSlipFiles: (files: File[]) => void;
 }) {
-  function blurField(
-    key: "form_code" | "description" | "amount" | "due_date" | "remark",
-    raw: string
+  const editingRef = useRef<string | null>(null);
+  const [draft, setDraft] = useState({
+    form_code: filing.form_code,
+    description: filing.description ?? "",
+    amount: String(Number(filing.amount)),
+    due_date: filing.due_date ?? "",
+    remark: filing.remark ?? "",
+  });
+
+  useEffect(() => {
+    setDraft((prev) => ({
+      form_code:
+        prev.form_code !== filing.form_code && editingRef.current === "form_code"
+          ? prev.form_code
+          : filing.form_code,
+      description:
+        prev.description !== (filing.description ?? "") &&
+        editingRef.current === "description"
+          ? prev.description
+          : filing.description ?? "",
+      amount:
+        Number(prev.amount) !== Number(filing.amount) &&
+        editingRef.current === "amount"
+          ? prev.amount
+          : String(Number(filing.amount)),
+      due_date:
+        prev.due_date !== (filing.due_date ?? "") &&
+        editingRef.current === "due_date"
+          ? prev.due_date
+          : filing.due_date ?? "",
+      remark:
+        prev.remark !== (filing.remark ?? "") &&
+        editingRef.current === "remark"
+          ? prev.remark
+          : filing.remark ?? "",
+    }));
+  }, [filing]);
+
+  function commitField(
+    key: "form_code" | "description" | "amount" | "due_date" | "remark"
   ) {
+    const raw = draft[key];
     if (key === "amount") {
       const num = Number(raw) || 0;
       if (num !== Number(filing.amount)) onPatch(filing.id, { amount: num });
+      else setDraft((p) => ({ ...p, amount: String(Number(filing.amount)) }));
       return;
     }
     if (key === "due_date") {
-      if ((raw || null) !== filing.due_date)
-        onPatch(filing.id, { due_date: raw || null });
+      const val = raw || null;
+      if (val !== filing.due_date) onPatch(filing.id, { due_date: val });
       return;
     }
     const val = raw.trim() || null;
     if (val !== filing[key]) onPatch(filing.id, { [key]: val });
+  }
+
+  function fieldHandlers(key: Parameters<typeof commitField>[0]) {
+    return {
+      value: draft[key],
+      onFocus: () => {
+        editingRef.current = key;
+      },
+      onBlur: () => {
+        editingRef.current = null;
+        commitField(key);
+      },
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+        setDraft((p) => ({ ...p, [key]: e.target.value })),
+    };
   }
 
   return (
@@ -1205,8 +1269,8 @@ function FilingCard({
           <input
             className="input"
             list="form-presets"
-            defaultValue={filing.form_code}
-            onBlur={(e) => blurField("form_code", e.target.value)}
+            placeholder="ภ.พ.30"
+            {...fieldHandlers("form_code")}
           />
         </div>
         <div className="order-2 lg:order-none">
@@ -1216,16 +1280,14 @@ function FilingCard({
             type="number"
             min="0"
             step="0.01"
-            defaultValue={Number(filing.amount)}
-            onBlur={(e) => blurField("amount", e.target.value)}
+            {...fieldHandlers("amount")}
           />
         </div>
         <div className="order-3 col-span-2 lg:order-none lg:col-span-1">
           <label className="label">รายละเอียด</label>
           <input
             className="input"
-            defaultValue={filing.description ?? ""}
-            onBlur={(e) => blurField("description", e.target.value)}
+            {...fieldHandlers("description")}
           />
         </div>
         <div className="order-4 lg:order-none">
@@ -1233,17 +1295,15 @@ function FilingCard({
           <input
             className="input"
             type="date"
-            defaultValue={filing.due_date ?? ""}
-            onBlur={(e) => blurField("due_date", e.target.value)}
+            {...fieldHandlers("due_date")}
           />
         </div>
         <div className="order-5 lg:order-none">
           <label className="label">หมายเหตุ</label>
           <input
             className="input"
-            defaultValue={filing.remark ?? ""}
             placeholder="หมายเหตุ"
-            onBlur={(e) => blurField("remark", e.target.value)}
+            {...fieldHandlers("remark")}
           />
         </div>
         <div className="order-6 col-span-2 lg:order-none lg:col-span-1">
