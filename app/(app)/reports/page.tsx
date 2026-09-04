@@ -146,6 +146,7 @@ export default function ReportsPage() {
   const [adding, setAdding] = useState(false);
   const [copyingFrom, setCopyingFrom] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
+  const [customFormCodes, setCustomFormCodes] = useState<string[]>([]);
   const loadSeq = useRef(0);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -180,6 +181,45 @@ export default function ReportsPage() {
       }
       return next;
     });
+  }
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("form_custom_codes")
+        .select("code")
+        .order("code");
+      setCustomFormCodes((data ?? []).map((d) => d.code));
+    })();
+  }, [supabase]);
+
+  const formPresetList = useMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const p of [
+      ...FORM_PRESETS,
+      ...[...customFormCodes].sort((a, b) => a.localeCompare(b, "th")),
+    ]) {
+      if (!seen.has(p)) {
+        seen.add(p);
+        out.push(p);
+      }
+    }
+    return out;
+  }, [customFormCodes]);
+
+  function rememberFormCode(raw: string) {
+    const code = raw.trim();
+    if (!code || FORM_PRESETS.includes(code)) return;
+    setCustomFormCodes((prev) =>
+      prev.includes(code) ? prev : [...prev, code]
+    );
+    supabase
+      .from("form_custom_codes")
+      .upsert({ code }, { onConflict: "code" })
+      .then(({ error }) => {
+        if (error) console.error("save form code failed:", error);
+      });
   }
 
   const selectedClient = clients.find((c) => c.id === clientId) ?? null;
@@ -399,6 +439,7 @@ export default function ReportsPage() {
         )
         .select();
       if (insError) throw insError;
+      data.forEach((f) => rememberFormCode(f.form_code));
       setFilings((prev) => [
         ...prev,
         ...((inserted ?? []) as unknown as Filing[]).map((f) => ({
@@ -438,6 +479,7 @@ export default function ReportsPage() {
       alert(`บันทึกไม่สำเร็จ: ${error.message}`);
       return;
     }
+    rememberFormCode(newFormCode.trim());
     setFilings((prev) => [
       ...prev,
       { ...(data as unknown as Filing), filing_attachments: [] },
@@ -459,7 +501,9 @@ export default function ReportsPage() {
     if (error) {
       alert(`บันทึกไม่สำเร็จ: ${error.message}`);
       loadFilings();
+      return;
     }
+    if (typeof patch.form_code === "string") rememberFormCode(patch.form_code);
   }
 
   async function deleteR2Object(storagePath: string) {
@@ -889,7 +933,7 @@ export default function ReportsPage() {
                   onChange={(e) => setNewFormCode(e.target.value)}
                 />
                 <datalist id="form-presets">
-                  {FORM_PRESETS.map((p) => (
+                  {formPresetList.map((p) => (
                     <option key={p} value={p} />
                   ))}
                 </datalist>
