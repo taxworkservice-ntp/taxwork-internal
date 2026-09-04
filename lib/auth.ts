@@ -14,6 +14,15 @@ const ALLOWLIST = (process.env.USER_ALLOWLIST ?? "")
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),
   emailAndPassword: { enabled: true },
+  // Production domain + local dev + Vercel previews (branch deployments).
+  // Preview wildcard is acceptable for this 2-user internal app; the
+  // allowlist hook below remains the real gate for account creation.
+  trustedOrigins: [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://internal.taxworkaccount.com",
+    "https://*.vercel.app",
+  ],
   databaseHooks: {
     user: {
       create: {
