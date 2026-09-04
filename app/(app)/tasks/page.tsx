@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { cycleTaskStatus, listMonthTasks } from "@/lib/actions/tasks";
 import { generateDueTasks } from "@/lib/tasks";
 
 type Task = {
@@ -25,7 +25,6 @@ const STATUS_LABELS = {
 } as const;
 
 export default function TasksPage() {
-  const supabase = createClient();
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth());
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -36,14 +35,13 @@ export default function TasksPage() {
   const load = useCallback(async () => {
     const first = new Date(year, normMonth, 1);
     const last = new Date(year, normMonth + 1, 0);
-    const { data } = await supabase
-      .from("task_instances")
-      .select("*, clients(name)")
-      .gte("due_date", `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, "0")}-01`)
-      .lte("due_date", `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, "0")}-${last.getDate()}`)
-      .order("due_date");
-    setTasks(data ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    setTasks(
+      await listMonthTasks(
+        `${first.getFullYear()}-${pad2(first.getMonth() + 1)}-01`,
+        `${last.getFullYear()}-${pad2(last.getMonth() + 1)}-${last.getDate()}`
+      )
+    );
   }, [year, normMonth]);
 
   useEffect(() => {
@@ -60,13 +58,7 @@ export default function TasksPage() {
   async function cycleStatus(task: Task) {
     const idx = (STATUSES as readonly string[]).indexOf(task.status);
     const next = STATUSES[(idx + 1) % STATUSES.length];
-    await supabase
-      .from("task_instances")
-      .update({
-        status: next,
-        completed_at: next === "done" ? new Date().toISOString() : null,
-      })
-      .eq("id", task.id);
+    await cycleTaskStatus(task.id, next);
     load();
   }
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { deleteContact as deleteContactAction, getContact, updateContact } from "@/lib/actions/contacts";
 
 type Contact = {
   id: string;
@@ -32,7 +32,6 @@ const TYPE_LABELS = {
 
 export default function ContactDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const supabase = createClient();
   const [contact, setContact] = useState<Contact | null>(null);
   const [clients, setClients] = useState<ClientRef[]>([]);
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
@@ -43,32 +42,27 @@ export default function ContactDetailPage() {
   const [saved, setSaved] = useState(false);
 
   const load = useCallback(async () => {
-    const [c, cl] = await Promise.all([
-      supabase.from("contacts").select("*").eq("id", id).single(),
-      supabase.from("clients").select("id, name, contact_id").order("name"),
-    ]);
-    if (c.data) {
-      setContact(c.data);
+    const { contact: c, clients: cl } = await getContact(id);
+    if (c) {
+      setContact(c);
       setEdit({
-        name: c.data.name,
-        firm: c.data.firm ?? "",
-        type: c.data.type,
-        tax_id: c.data.tax_id ?? "",
-        license_no: c.data.license_no ?? "",
-        phone: c.data.phone ?? "",
-        email: c.data.email ?? "",
-        line_id: c.data.line_id ?? "",
-        address: c.data.address ?? "",
-        notes: c.data.notes ?? "",
+        name: c.name,
+        firm: c.firm ?? "",
+        type: c.type,
+        tax_id: c.tax_id ?? "",
+        license_no: c.license_no ?? "",
+        phone: c.phone ?? "",
+        email: c.email ?? "",
+        line_id: c.line_id ?? "",
+        address: c.address ?? "",
+        notes: c.notes ?? "",
       });
     }
-    setClients(cl.data ?? []);
-    const assigned = (cl.data ?? [])
-      .filter((cl) => cl.contact_id === id)
-      .map((cl) => cl.id);
+    setClients(cl);
+    const assigned = cl.filter((x) => x.contact_id === id).map((x) => x.id);
     setSelectedClientIds(assigned);
     setInitiallyAssignedIds(assigned);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [id]);
 
   useEffect(() => {
@@ -84,26 +78,20 @@ export default function ContactDetailPage() {
   }
 
   async function save() {
-    await supabase.from("contacts").update(edit).eq("id", id);
     const toAssign = selectedClientIds.filter(
       (cid) => !initiallyAssignedIds.includes(cid)
     );
     const toRelease = initiallyAssignedIds.filter(
       (cid) => !selectedClientIds.includes(cid)
     );
-    if (toAssign.length) {
-      await supabase.from("clients").update({ contact_id: id }).in("id", toAssign);
-    }
-    if (toRelease.length) {
-      await supabase.from("clients").update({ contact_id: null }).in("id", toRelease);
-    }
+    await updateContact(id, edit, toAssign, toRelease);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     load();
   }
 
   async function deleteContact() {
-    await supabase.from("contacts").delete().eq("id", id);
+    await deleteContactAction(id);
     window.location.href = "/contacts";
   }
 

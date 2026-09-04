@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, listClients, listCredentials } from "@/lib/actions/clients";
 import CopyButton from "@/components/copy-button";
 
 type Client = {
@@ -67,7 +67,6 @@ function Th({
 }
 
 export default function ClientsPage() {
-  const supabase = createClient();
   const [clients, setClients] = useState<Client[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
@@ -98,23 +97,17 @@ export default function ClientsPage() {
   }
 
   async function load() {
-    const { data } = await supabase.from("clients").select("*");
-    setClients(data ?? []);
+    setClients(await listClients());
   }
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const loadCredentials = useCallback(async (clientId: string) => {
-    const { data } = await supabase
-      .from("credentials")
-      .select("id, label, username, password")
-      .eq("client_id", clientId)
-      .order("label");
-    setCredCache((prev) => ({ ...prev, [clientId]: data ?? [] }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const creds = await listCredentials(clientId);
+    setCredCache((prev) => ({ ...prev, [clientId]: creds }));
   }, []);
 
   function toggleExpand(id: string) {
@@ -128,7 +121,7 @@ export default function ClientsPage() {
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
-    await supabase.from("clients").insert(form);
+    await createClient(form);
     setForm({ name: "", tax_id: "", email: "", phone: "", address: "" });
     setShowForm(false);
     load();

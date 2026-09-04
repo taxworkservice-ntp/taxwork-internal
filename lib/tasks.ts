@@ -1,4 +1,7 @@
-import { createClient } from "@/lib/supabase/client";
+"use server";
+
+import { sql } from "@/lib/db";
+import { requireUser } from "@/lib/session";
 
 type Template = {
   id: string;
@@ -22,17 +25,14 @@ function fmtDate(d: Date) {
 
 // Returns how many new task instances were generated for the current period.
 export async function generateDueTasks(): Promise<number> {
-  const supabase = createClient();
-  const { data: templates } = await supabase
-    .from("task_templates")
-    .select("*")
-    .eq("active", true);
-  if (!templates?.length) return 0;
+  await requireUser();
+  const templates = (await sql`select * from task_templates where active=true`) as Template[];
+  if (!templates.length) return 0;
 
   const now = new Date();
   let count = 0;
 
-  for (const t of templates as Template[]) {
+  for (const t of templates) {
     let start: Date | null = null;
     let spanMonths = 1;
 
@@ -42,12 +42,14 @@ export async function generateDueTasks(): Promise<number> {
     } else if (t.frequency === "quarterly") {
       spanMonths = 3;
       const qm = Math.floor(now.getMonth() / 3) * 3;
-      if (t.months.includes(qm)) {
+      const months: number[] = Array.isArray(t.months) ? t.months.map(Number) : [];
+      if (months.includes(qm)) {
         start = new Date(now.getFullYear(), qm, 1);
       }
     } else {
       spanMonths = 12;
-      const m = Math.min(...(t.months.length ? t.months : [0]));
+      const months: number[] = Array.isArray(t.months) ? t.months.map(Number) : [];
+      const m = Math.min(...(months.length ? months : [0]));
       // check windows starting this year and last year
       for (const y of [now.getFullYear() - 1, now.getFullYear()]) {
         const s = new Date(y, m, 1);
@@ -63,21 +65,14 @@ export async function generateDueTasks(): Promise<number> {
     const due = new Date(
       start.getFullYear(),
       start.getMonth(),
-      Math.min(t.day_of_period, end.getDate())
+      Math.min(Number(t.day_of_period), end.getDate())
     );
     const label = periodLabel(start, t.frequency);
 
-    const { error } = await supabase.from("task_instances").upsert(
-      {
-        template_id: t.id,
-        client_id: t.client_id,
-        title: t.title,
-        period_label: label,
-        due_date: fmtDate(due),
-      },
-      { onConflict: "template_id,period_label", ignoreDuplicates: true }
-    );
-    if (!error) count++;
+    await sql`insert into task_instances (template_id, client_id, title, period_label, due_date)
+      values (${t.id}, ${t.client_id}, ${t.title}, ${label}, ${fmtDate(due)})
+      on conflict (template_id, period_label) do nothing`;
+    count++;
   }
   return count;
 }

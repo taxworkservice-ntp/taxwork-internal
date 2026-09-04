@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { authClient } from "@/lib/auth-client";
 
 const links = [
   {
@@ -65,7 +65,7 @@ export default function Sidebar() {
 
   async function signOut() {
     if (!confirm("ต้องการออกจากระบบใช่หรือไม่?")) return;
-    await createClient().auth.signOut();
+    await authClient.signOut();
     router.push("/login");
     router.refresh();
   }
@@ -95,6 +95,14 @@ export default function Sidebar() {
         <button onClick={signOut} className="btn mt-auto text-left text-neutral-500">
           ออกจากระบบ
         </button>
+        <Link
+          href="/password"
+          className={`rounded px-2 py-2 text-sm text-neutral-500 hover:bg-neutral-100 ${
+            isActive("/password") ? "bg-neutral-100 font-medium" : ""
+          }`}
+        >
+          เปลี่ยนรหัสผ่าน
+        </Link>
       </aside>
 
       {/* Mobile bottom nav */}

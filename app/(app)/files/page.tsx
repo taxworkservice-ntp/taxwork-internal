@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { deleteFileRecord, listFiles, recordFile } from "@/lib/actions/files";
 import CopyButton from "@/components/copy-button";
 
 type FileRow = {
@@ -29,7 +29,6 @@ function fmtTime(iso: string) {
 }
 
 export default function FilesPage() {
-  const supabase = createClient();
   const [files, setFiles] = useState<FileRow[]>([]);
   const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -42,12 +41,7 @@ export default function FilesPage() {
   const hasFilter = filterYear !== "" || filterMonth !== "" || filterUser !== "";
 
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from("files")
-      .select("*, clients(name)")
-      .order("uploaded_at", { ascending: false });
-    setFiles(data ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setFiles(await listFiles());
   }, []);
 
   useEffect(() => {
@@ -59,9 +53,6 @@ export default function FilesPage() {
     const list = e.target.files;
     if (!list?.length) return;
     setUploading(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
 
     for (const file of Array.from(list)) {
       const signRes = await fetch("/api/files/sign-upload", {
@@ -77,13 +68,12 @@ export default function FilesPage() {
         headers: { "Content-Type": file.type || "application/octet-stream" },
       });
       if (!putRes.ok) continue;
-      await supabase.from("files").insert({
+      await recordFile({
         client_id: null,
         storage_path: path,
         file_name: file.name,
         size_bytes: file.size,
         mime_type: file.type,
-        uploaded_by: user?.email ?? null,
       });
     }
     setUploading(false);
@@ -97,7 +87,7 @@ export default function FilesPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ storagePath: file.storage_path }),
     });
-    await supabase.from("files").delete().eq("id", file.id);
+    await deleteFileRecord(file.id);
     load();
   }
 

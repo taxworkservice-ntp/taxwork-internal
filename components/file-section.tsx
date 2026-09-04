@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { deleteFileRecord, listClientFiles, recordFile } from "@/lib/actions/files";
 
 type FileRow = {
   id: string;
@@ -24,19 +24,12 @@ export default function FileSection({
   clientId: string;
   onChanged?: () => void;
 }) {
-  const supabase = createClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<FileRow[]>([]);
   const [uploading, setUploading] = useState(false);
 
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from("files")
-      .select("*")
-      .eq("client_id", clientId)
-      .order("uploaded_at", { ascending: false });
-    setFiles(data ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setFiles(await listClientFiles(clientId));
   }, [clientId]);
 
   useEffect(() => {
@@ -47,9 +40,6 @@ export default function FileSection({
     const list = e.target.files;
     if (!list?.length) return;
     setUploading(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
 
     for (const file of Array.from(list)) {
       // 1. get a presigned upload URL from our API
@@ -70,13 +60,12 @@ export default function FileSection({
       if (!putRes.ok) continue;
 
       // 3. save metadata
-      await supabase.from("files").insert({
+      await recordFile({
         client_id: clientId,
         storage_path: path,
         file_name: file.name,
         size_bytes: file.size,
         mime_type: file.type,
-        uploaded_by: user?.email ?? null,
       });
     }
     setUploading(false);
@@ -92,7 +81,7 @@ export default function FileSection({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ storagePath: file.storage_path }),
     });
-    await supabase.from("files").delete().eq("id", file.id);
+    await deleteFileRecord(file.id);
     load();
     onChanged?.();
   }

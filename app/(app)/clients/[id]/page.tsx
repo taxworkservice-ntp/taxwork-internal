@@ -2,7 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import {
+  addCredential as addCredentialAction,
+  addShareholder as addShareholderAction,
+  deleteClient as deleteClientAction,
+  deleteCredential as deleteCredentialAction,
+  deleteShareholder as deleteShareholderAction,
+  getClientDetail,
+  setDirector,
+  toggleTaskStatus,
+  updateClient,
+  type Credential,
+} from "@/lib/actions/clients";
 import CredentialRow from "@/components/credential-row";
 import FileSection from "@/components/file-section";
 
@@ -64,11 +75,8 @@ const emptyShareholder = {
 
 export default function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const supabase = createClient();
   const [client, setClient] = useState<Client | null>(null);
-  const [credentials, setCredentials] = useState<
-    (typeof emptyCred & { id: string })[]
-  >([]);
+  const [credentials, setCredentials] = useState<Credential[]>([]);
   const [tasks, setTasks] = useState<TaskInstance[]>([]);
   const [showCredForm, setShowCredForm] = useState(false);
   const [cred, setCred] = useState(emptyCred);
@@ -80,31 +88,22 @@ export default function ClientDetailPage() {
   const [deleteInput, setDeleteInput] = useState("");
 
   const load = useCallback(async () => {
-    const [c, creds, t, shs] = await Promise.all([
-      supabase.from("clients").select("*").eq("id", id).single(),
-      supabase.from("credentials").select("*").eq("client_id", id).order("label"),
-      supabase
-        .from("task_instances")
-        .select("*")
-        .eq("client_id", id)
-        .order("due_date", { ascending: false }),
-      supabase.from("shareholders").select("*").eq("client_id", id).order("name"),
-    ]);
-    if (c.data) {
-      setClient(c.data);
+    const d = await getClientDetail(id);
+    if (d.client) {
+      setClient(d.client);
       setEdit({
-        name: c.data.name,
-        tax_id: c.data.tax_id ?? "",
-        email: c.data.email ?? "",
-        phone: c.data.phone ?? "",
-        address: c.data.address ?? "",
-        notes: c.data.notes ?? "",
+        name: d.client.name,
+        tax_id: d.client.tax_id ?? "",
+        email: d.client.email ?? "",
+        phone: d.client.phone ?? "",
+        address: d.client.address ?? "",
+        notes: d.client.notes ?? "",
       });
     }
-    setCredentials(creds.data ?? []);
-    setTasks(t.data ?? []);
-    setShareholders(shs.data ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setCredentials(d.credentials);
+    setTasks(d.tasks);
+    setShareholders(d.shareholders);
+     
   }, [id]);
 
   useEffect(() => {
@@ -112,18 +111,18 @@ export default function ClientDetailPage() {
   }, [load]);
 
   async function saveClient() {
-    await supabase.from("clients").update(edit).eq("id", id);
+    await updateClient(id, edit);
     load();
   }
 
   async function deleteClient() {
-    await supabase.from("clients").delete().eq("id", id);
+    await deleteClientAction(id);
     window.location.href = "/clients";
   }
 
   async function addCredential(e: React.FormEvent) {
     e.preventDefault();
-    await supabase.from("credentials").insert({ ...cred, client_id: id });
+    await addCredentialAction(id, cred);
     setCred(emptyCred);
     setShowCredForm(false);
     load();
@@ -131,28 +130,13 @@ export default function ClientDetailPage() {
 
   async function deleteCredential(cid: string) {
     if (!confirm("Delete this credential?")) return;
-    await supabase.from("credentials").delete().eq("id", cid);
+    await deleteCredentialAction(cid);
     load();
   }
 
   async function addShareholder(e: React.FormEvent) {
     e.preventDefault();
-    const { data, error } = await supabase
-      .from("shareholders")
-      .insert({
-        ...sh,
-        shares: sh.shares === "" ? null : Number(sh.shares),
-        client_id: id,
-      })
-      .select()
-      .single();
-    if (!error && data && data.is_director) {
-      await supabase
-        .from("shareholders")
-        .update({ is_director: false })
-        .eq("client_id", id)
-        .neq("id", data.id);
-    }
+    await addShareholderAction(id, sh);
     setSh(emptyShareholder);
     setShowShForm(false);
     load();
@@ -160,26 +144,17 @@ export default function ClientDetailPage() {
 
   async function deleteShareholder(sid: string) {
     if (!confirm("Delete this shareholder?")) return;
-    await supabase.from("shareholders").delete().eq("id", sid);
+    await deleteShareholderAction(sid);
     load();
   }
 
   async function toggleDirector(shh: Shareholder) {
-    await supabase.from("shareholders").update({ is_director: true }).eq("id", shh.id);
-    await supabase
-      .from("shareholders")
-      .update({ is_director: false })
-      .eq("client_id", id)
-      .neq("id", shh.id);
+    await setDirector(id, shh.id);
     load();
   }
 
   async function toggleTask(task: TaskInstance) {
-    const status = task.status === "done" ? "todo" : "done";
-    await supabase
-      .from("task_instances")
-      .update({ status, completed_at: status === "done" ? new Date().toISOString() : null })
-      .eq("id", task.id);
+    await toggleTaskStatus(task.id, task.status === "done" ? "todo" : "done");
     load();
   }
 

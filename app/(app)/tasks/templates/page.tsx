@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import {
+  createTemplate,
+  deleteTemplate as deleteTemplateAction,
+  listClientOptions,
+  listTemplates,
+  toggleTemplateActive,
+} from "@/lib/actions/tasks";
 
 type Template = {
   id: string;
@@ -29,23 +35,15 @@ const empty = {
 };
 
 export default function TemplatesPage() {
-  const supabase = createClient();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [form, setForm] = useState(empty);
   const [showForm, setShowForm] = useState(false);
 
   const load = useCallback(async () => {
-    const [t, c] = await Promise.all([
-      supabase
-        .from("task_templates")
-        .select("*, clients(name)")
-        .order("title"),
-      supabase.from("clients").select("id, name").order("name"),
-    ]);
-    setTemplates(t.data ?? []);
-    setClients(c.data ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const [t, c] = await Promise.all([listTemplates(), listClientOptions()]);
+    setTemplates(t);
+    setClients(c);
   }, []);
 
   useEffect(() => {
@@ -63,24 +61,20 @@ export default function TemplatesPage() {
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
-    await supabase.from("task_templates").insert({
-      ...form,
-      description: form.description || null,
-      client_id: form.client_id || null,
-    });
+    await createTemplate(form);
     setForm(empty);
     setShowForm(false);
     load();
   }
 
   async function toggleActive(t: Template) {
-    await supabase.from("task_templates").update({ active: !t.active }).eq("id", t.id);
+    await toggleTemplateActive(t.id, !t.active);
     load();
   }
 
   async function remove(t: Template) {
     if (!confirm(`ลบเทมเพลต "${t.title}" และงานที่สร้างจากเทมเพลตนี้?`)) return;
-    await supabase.from("task_templates").delete().eq("id", t.id);
+    await deleteTemplateAction(t.id);
     load();
   }
 

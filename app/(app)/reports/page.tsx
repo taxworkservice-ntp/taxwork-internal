@@ -1,7 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import {
+  addAttachment as addAttachmentAction,
+  addBankAccount as addBankAccountAction,
+  addFiling as addFilingAction,
+  clearFilings,
+  copyMonthFilings,
+  deleteAttachment as deleteAttachmentAction,
+  deleteBankAccount as deleteBankAccountAction,
+  deleteFiling as deleteFilingAction,
+  getAppSettings,
+  listActiveClients,
+  listBankAccounts,
+  listCustomFormCodes,
+  loadFilings as loadFilingsAction,
+  patchFiling as patchFilingAction,
+  recordReportFile,
+  rememberFormCode as rememberFormCodeAction,
+  saveAppSettings,
+  setBankQr,
+  type Attachment,
+  type BankAccount,
+  type ClientRow,
+  type Filing,
+} from "@/lib/actions/reports";
 import {
   ATTACHMENT_KIND_LABELS,
   buildMonthlyReportPdf,
@@ -9,52 +32,6 @@ import {
   type ReportFiling,
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
-
-type ClientRow = {
-  id: string;
-  name: string;
-  tax_id: string | null;
-  address: string | null;
-  phone: string | null;
-  email: string | null;
-};
-
-type BankAccount = {
-  id: string;
-  label: string;
-  bank_name: string;
-  account_no: string;
-  account_name: string;
-  promptpay_id: string | null;
-  qr_path: string | null;
-  qr_mime_type: string | null;
-};
-
-type Attachment = {
-  id: string;
-  filing_id: string;
-  kind: "slip" | "qr" | "document";
-  storage_path: string;
-  file_name: string;
-  size_bytes: number | null;
-  mime_type: string | null;
-  created_at: string;
-  covers?: string[];
-};
-
-type Filing = {
-  id: string;
-  client_id: string;
-  period_label: string;
-  form_code: string;
-  description: string | null;
-  amount: number;
-  due_date: string | null;
-  remark: string | null;
-  bank_account_id: string | null;
-  sort_order: number;
-  filing_attachments: Attachment[];
-};
 
 const FORM_PRESETS = [
   "ภ.พ.30",
@@ -95,18 +72,6 @@ function shiftPeriod(period: string, delta: number): string {
   return `${ny}-${String(nm).padStart(2, "0")}`;
 }
 
-function shiftYmdMonth(ymd: string, delta: number): string | null {
-  const [y, m, d] = ymd.slice(0, 10).split("-").map(Number);
-  if (!y || !m || !d) return null;
-  const total = y * 12 + (m - 1) + delta;
-  const ny = Math.floor(total / 12);
-  const nm = (total % 12) + 1;
-  const daysInMonth = new Date(ny, nm, 0).getDate();
-  const nd = Math.min(d, daysInMonth);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${ny}-${pad(nm)}-${pad(nd)}`;
-}
-
 function sniffImageMime(bytes: ArrayBuffer): string {
   const v = new Uint8Array(bytes);
   if (v[0] === 0x89 && v[1] === 0x50) return "image/png";
@@ -128,7 +93,6 @@ function fmtMoney(n: number): string {
 }
 
 export default function ReportsPage() {
-  const supabase = useMemo(() => createClient(), []);
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [clientId, setClientId] = useState("");
   const [period, setPeriod] = useState(currentPeriod());
@@ -185,13 +149,9 @@ export default function ReportsPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("form_custom_codes")
-        .select("code")
-        .order("code");
-      setCustomFormCodes((data ?? []).map((d) => d.code));
+      setCustomFormCodes(await listCustomFormCodes());
     })();
-  }, [supabase]);
+  }, []);
 
   const formPresetList = useMemo(() => {
     const out: string[] = [];
@@ -214,32 +174,26 @@ export default function ReportsPage() {
     setCustomFormCodes((prev) =>
       prev.includes(code) ? prev : [...prev, code]
     );
-    supabase
-      .from("form_custom_codes")
-      .upsert({ code }, { onConflict: "code" })
-      .then(({ error }) => {
-        if (error) console.error("save form code failed:", error);
-      });
+    rememberFormCodeAction(code).catch((err) => {
+      console.error("save form code failed:", err);
+    });
   }
 
   const selectedClient = clients.find((c) => c.id === clientId) ?? null;
 
   useEffect(() => {
     (async () => {
-      const [clientsRes, banksRes] = await Promise.all([
-        supabase
-          .from("clients")
-          .select("id, name, tax_id, address, phone, email")
-          .eq("status", "active"),
-        supabase.from("bank_accounts").select("*").order("created_at"),
+      const [clientRows, bankRows] = await Promise.all([
+        listActiveClients(),
+        listBankAccounts(),
       ]);
-      const sorted = ((clientsRes.data ?? []) as ClientRow[]).sort((a, b) =>
+      const sorted = [...clientRows].sort((a, b) =>
         a.name.localeCompare(b.name, "th")
       );
       setClients(sorted);
-      setBankAccounts(banksRes.data ?? []);
+      setBankAccounts(bankRows);
     })();
-  }, [supabase]);
+  }, []);
 
   const loadFilings = useCallback(async () => {
     if (!clientId) {
@@ -252,55 +206,18 @@ export default function ReportsPage() {
     setLoading(true);
     loadSeq.current += 1;
     const seq = loadSeq.current;
-    const { data, error } = await supabase
-      .from("monthly_filings")
-      .select("*,filing_attachments!filing_attachments_filing_id_fkey(*)")
-      .eq("client_id", clientId)
-      .eq("period_label", period)
-      .order("sort_order")
-      .order("created_at");
-    if (error) {
-      console.error("loadFilings failed:", error);
-      setStatus(`โหลดรายการไม่สำเร็จ: ${error.message}`);
-      setFilings([]);
-      setLoadedKey(key);
-      setLoading(false);
-      return;
-    }
-    if (seq !== loadSeq.current) return;
-    const ordered = (data ?? []) as Filing[];
-    if (ordered.length) {
-      const { data: links } = await supabase
-        .from("attachment_filings")
-        .select("attachment_id, filing_id")
-        .in(
-          "filing_id",
-          ordered.map((f) => f.id)
-        );
+    try {
+      const ordered = await loadFilingsAction(clientId, period);
       if (seq !== loadSeq.current) return;
-      const coverMap = new Map<string, Set<string>>();
-      for (const link of links ?? []) {
-        if (!coverMap.has(link.attachment_id))
-          coverMap.set(link.attachment_id, new Set());
-        coverMap.get(link.attachment_id)!.add(link.filing_id);
-      }
-      for (const f of ordered) {
-        f.filing_attachments?.sort(
-          (a, b) =>
-            new Date(a.created_at).getTime() -
-            new Date(b.created_at).getTime()
-        );
-        for (const att of f.filing_attachments ?? []) {
-          const set = coverMap.get(att.id);
-          set?.add(att.filing_id);
-          att.covers = Array.from(set ?? [att.filing_id]);
-        }
-      }
+      setFilings(ordered);
+    } catch (error) {
+      console.error("loadFilings failed:", error);
+      setStatus(`โหลดรายการไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      setFilings([]);
     }
-    setFilings(ordered);
     setLoadedKey(key);
     setLoading(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [clientId, period]);
 
   useEffect(() => {
@@ -308,38 +225,25 @@ export default function ReportsPage() {
   }, [loadFilings]);
 
   const reloadBanks = useCallback(async () => {
-    const { data } = await supabase
-      .from("bank_accounts")
-      .select("*")
-      .order("created_at");
-    setBankAccounts(data ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setBankAccounts(await listBankAccounts());
+     
   }, []);
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("app_settings")
-        .select("company_logo_path, company_logo_file_name")
-        .eq("id", 1)
-        .maybeSingle();
-      setLogoPath((data as { company_logo_path: string | null } | null)?.company_logo_path ?? null);
-      setLogoFileName(
-        (data as { company_logo_file_name: string | null } | null)
-          ?.company_logo_file_name ?? null
-      );
+      const data = await getAppSettings();
+      setLogoPath(data?.company_logo_path ?? null);
+      setLogoFileName(data?.company_logo_file_name ?? null);
       setSettingsLoading(false);
     })();
-  }, [supabase]);
+  }, []);
 
   async function saveSettingsLogo(path: string | null, fileName: string | null) {
-    const { error } = await supabase.from("app_settings").upsert({
-      id: 1,
-      company_logo_path: path,
-      company_logo_file_name: fileName,
-      updated_at: new Date().toISOString(),
-    });
-    if (error) alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error.message}`);
+    try {
+      await saveAppSettings(path, fileName);
+    } catch (error) {
+      alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+    }
   }
 
   async function handleLogoUpload(file: File) {
@@ -408,45 +312,13 @@ export default function ReportsPage() {
       return;
     setCopyingFrom(true);
     try {
-      const { data, error } = await supabase
-        .from("monthly_filings")
-        .select(
-          "form_code, description, amount, due_date, bank_account_id, sort_order"
-        )
-        .eq("client_id", clientId)
-        .eq("period_label", prevPeriod)
-        .order("sort_order")
-        .order("created_at");
-      if (error) throw error;
-      if (!data?.length) {
+      const inserted = await copyMonthFilings(clientId, prevPeriod, period);
+      if (!inserted.length) {
         alert(`ไม่พบรายการของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
         return;
       }
-      const maxSort = filings.reduce((m, f) => Math.max(m, f.sort_order), 0);
-      const { data: inserted, error: insError } = await supabase
-        .from("monthly_filings")
-        .insert(
-          data.map((f, i) => ({
-            client_id: clientId,
-            period_label: period,
-            form_code: f.form_code,
-            description: f.description,
-            amount: Number(f.amount ?? 0),
-            due_date: f.due_date ? shiftYmdMonth(String(f.due_date), 1) : null,
-            bank_account_id: f.bank_account_id,
-            sort_order: maxSort + i + 1,
-          }))
-        )
-        .select();
-      if (insError) throw insError;
-      data.forEach((f) => rememberFormCode(f.form_code));
-      setFilings((prev) => [
-        ...prev,
-        ...((inserted ?? []) as unknown as Filing[]).map((f) => ({
-          ...f,
-          filing_attachments: [],
-        })),
-      ]);
+      inserted.forEach((f) => rememberFormCode(f.form_code));
+      setFilings((prev) => [...prev, ...inserted]);
     } catch (err) {
       alert(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -460,46 +332,34 @@ export default function ReportsPage() {
       return;
     }
     setAdding(true);
-    const maxSort = filings.reduce((m, f) => Math.max(m, f.sort_order), 0);
-    const { data, error } = await supabase
-      .from("monthly_filings")
-      .insert({
-        client_id: clientId,
-        period_label: period,
+    try {
+      const created = await addFilingAction(clientId, period, {
         form_code: newFormCode.trim(),
         description: newDescription.trim() || null,
         amount: Number(newAmount) || 0,
         due_date: newDueDate || null,
-        sort_order: maxSort + 1,
-      })
-      .select()
-      .single();
-    setAdding(false);
-    if (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error.message}`);
-      return;
+      });
+      rememberFormCode(newFormCode.trim());
+      setFilings((prev) => [...prev, created]);
+      setNewFormCode("");
+      setNewDescription("");
+      setNewAmount("");
+      setNewDueDate("");
+    } catch (error) {
+      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setAdding(false);
     }
-    rememberFormCode(newFormCode.trim());
-    setFilings((prev) => [
-      ...prev,
-      { ...(data as unknown as Filing), filing_attachments: [] },
-    ]);
-    setNewFormCode("");
-    setNewDescription("");
-    setNewAmount("");
-    setNewDueDate("");
   }
 
   async function patchFiling(id: string, patch: Partial<Filing>) {
     setFilings((prev) =>
       prev.map((f) => (f.id === id ? { ...f, ...patch } : f))
     );
-    const { error } = await supabase
-      .from("monthly_filings")
-      .update(patch)
-      .eq("id", id);
-    if (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error.message}`);
+    try {
+      await patchFilingAction(id, patch);
+    } catch (error) {
+      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
       loadFilings();
       return;
     }
@@ -536,7 +396,7 @@ export default function ReportsPage() {
     for (const att of filing.filing_attachments) {
       await deleteR2Object(att.storage_path);
     }
-    await supabase.from("monthly_filings").delete().eq("id", filing.id);
+    await deleteFilingAction(filing.id);
     loadFilings();
   }
 
@@ -554,12 +414,7 @@ export default function ReportsPage() {
       for (const att of atts) {
         await deleteR2Object(att.storage_path);
       }
-      const { error } = await supabase
-        .from("monthly_filings")
-        .delete()
-        .eq("client_id", clientId)
-        .eq("period_label", period);
-      if (error) throw error;
+      await clearFilings(clientId, period);
       loadFilings();
     } catch (err) {
       alert(`ลบรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
@@ -581,31 +436,20 @@ export default function ReportsPage() {
       alert(`อัปโหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       return;
     }
-    const { data: inserted, error } = await supabase
-      .from("filing_attachments")
-      .insert({
-        filing_id: filingId,
+    try {
+      await addAttachmentAction(
+        filingId,
         kind,
-        storage_path: path,
-        file_name: file.name,
-        size_bytes: file.size,
-        mime_type: file.type || null,
-      })
-      .select("id")
-      .single();
-    if (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error.message}`);
-      loadFilings();
-      return;
-    }
-    const extras = (covers ?? []).filter((cid) => cid !== filingId);
-    if (kind === "slip" && extras.length && inserted) {
-      const { error: linkError } = await supabase
-        .from("attachment_filings")
-        .insert(
-          extras.map((fid) => ({ attachment_id: inserted.id, filing_id: fid }))
-        );
-      if (linkError) alert(`ผูกฟอร์มไม่สำเร็จ: ${linkError.message}`);
+        {
+          storage_path: path,
+          file_name: file.name,
+          size_bytes: file.size,
+          mime_type: file.type || null,
+        },
+        covers ?? []
+      );
+    } catch (error) {
+      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     }
     loadFilings();
   }
@@ -613,7 +457,7 @@ export default function ReportsPage() {
   async function deleteAttachment(att: Attachment) {
     if (!confirm(`ลบไฟล์ ${att.file_name}?`)) return;
     await deleteR2Object(att.storage_path);
-    await supabase.from("filing_attachments").delete().eq("id", att.id);
+    await deleteAttachmentAction(att.id);
     loadFilings();
   }
 
@@ -622,15 +466,16 @@ export default function ReportsPage() {
       alert("กรอก label, ธนาคาร, เลขบัญชี และชื่อบัญชีให้ครบ");
       return;
     }
-    const { error } = await supabase.from("bank_accounts").insert({
-      label: bankLabel.trim(),
-      bank_name: bankName.trim(),
-      account_no: bankNo.trim(),
-      account_name: bankAcctName.trim(),
-      promptpay_id: bankPromptpay.trim() || null,
-    });
-    if (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error.message}`);
+    try {
+      await addBankAccountAction({
+        label: bankLabel.trim(),
+        bank_name: bankName.trim(),
+        account_no: bankNo.trim(),
+        account_name: bankAcctName.trim(),
+        promptpay_id: bankPromptpay.trim() || null,
+      });
+    } catch (error) {
+      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
       return;
     }
     setBankLabel("");
@@ -645,7 +490,7 @@ export default function ReportsPage() {
     if (!confirm("ลบบัญชีนี้? รายการที่ผูกไว้จะตัดการเชื่อมโยง")) return;
     const bank = bankAccounts.find((b) => b.id === id);
     if (bank?.qr_path) deleteR2Object(bank.qr_path);
-    await supabase.from("bank_accounts").delete().eq("id", id);
+    await deleteBankAccountAction(id);
     reloadBanks();
     loadFilings();
   }
@@ -658,11 +503,7 @@ export default function ReportsPage() {
       setBankAccounts((prev) =>
         prev.map((b) => (b.id === bankId ? { ...b, qr_path: path } : b))
       );
-      const { error } = await supabase
-        .from("bank_accounts")
-        .update({ qr_path: path })
-        .eq("id", bankId);
-      if (error) throw error;
+      await setBankQr(bankId, path);
       if (bank?.qr_path && bank.qr_path !== path) deleteR2Object(bank.qr_path);
     } catch (err) {
       alert(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
@@ -680,10 +521,7 @@ export default function ReportsPage() {
       setBankAccounts((prev) =>
         prev.map((b) => (b.id === bankId ? { ...b, qr_path: null } : b))
       );
-      await supabase
-        .from("bank_accounts")
-        .update({ qr_path: null })
-        .eq("id", bankId);
+      await setBankQr(bankId, null);
       deleteR2Object(bank.qr_path);
     } finally {
       setQrBusyId(null);
@@ -823,18 +661,12 @@ export default function ReportsPage() {
       });
       if (!putRes.ok) throw new Error("อัปโหลดสำเนาไป R2 ไม่สำเร็จ");
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      await supabase.from("files").insert({
-        client_id: clientId,
-        storage_path: path,
-        file_name: `รายงานภาษี ${periodToThai(period)}.pdf`,
-        size_bytes: blob.size,
-        mime_type: "application/pdf",
-        category: "monthly-report",
-        uploaded_by: user?.email ?? null,
-      });
+      await recordReportFile(
+        clientId,
+        path,
+        `รายงานภาษี ${periodToThai(period)}.pdf`,
+        blob.size
+      );
 
       setStatus("สร้างรายงานสำเร็จ — ดาวน์โหลดแล้ว และบันทึกสำเนาในไฟล์ของลูกค้าแล้ว");
     } catch (err) {

@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { createContact, listContacts } from "@/lib/actions/contacts";
 import CopyButton from "@/components/copy-button";
 
 type Contact = {
@@ -77,7 +77,6 @@ function Th({
 }
 
 export default function ContactsPage() {
-  const supabase = createClient();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -106,18 +105,17 @@ export default function ContactsPage() {
   }
 
   async function load() {
-    const { data } = await supabase.from("contacts").select("*");
-    setContacts(data ?? []);
+    setContacts(await listContacts());
   }
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
-    await supabase.from("contacts").insert(form);
+    await createContact(form);
     setForm(emptyForm);
     setShowForm(false);
     load();

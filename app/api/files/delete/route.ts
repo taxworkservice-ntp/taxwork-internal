@@ -1,13 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireUserApi } from "@/lib/session";
 import { R2_BUCKET, signedUrl } from "@/lib/r2";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await requireUserApi();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { storagePath } = await request.json();

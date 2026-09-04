@@ -22,11 +22,11 @@ Single-user tool (the owner) used daily to:
 |---|---|---|
 | Framework | Next.js 15 (App Router) + TypeScript | Vercel-native |
 | Styling | Tailwind CSS v4 + small custom component classes in `app/globals.css` | `.btn`, `.btn-primary`, `.btn-danger`, `.input`, `.label`, `.card`, `.table-base` |
-| Database/Auth/Storage | Supabase (Postgres + Auth + Storage) | Project ref: `bcftfhhnrmsblgbvmjnd` |
+| Database/Auth/Storage | Neon Postgres + better-auth (email/password) + Cloudflare R2 | No RLS — auth enforced in Server Actions / API routes via `requireUser()` |
 | PDF tools | pdf-lib (client-side only) | Thai text rendered to canvas (browser shapes it correctly) then embedded as images; Sarabun via `public/fonts/`; files never leave the browser |
 | Hosting | Vercel → https://internal.taxworkaccount.com | Auto-deploys on push to `main` |
 
-**Runtime deps kept minimal:** `@supabase/ssr`, `@supabase/supabase-js`, `pdf-lib`.
+**Runtime deps kept minimal:** `better-auth`, `drizzle-orm` (auth adapter only), `@neondatabase/serverless`, `pdf-lib`.
 
 ## 3. Language & locale
 
@@ -38,7 +38,8 @@ Single-user tool (the owner) used daily to:
 
 ```
 app/
-  login/page.tsx              Email+password sign-in (Supabase Auth)
+  login/page.tsx              Email+password sign-in (better-auth)
+   password/page.tsx           Change password (signed-in users)
   page.tsx                    Redirects to /clients
   (app)/layout.tsx            Shell: desktop sidebar / mobile bottom nav
   (app)/clients/page.tsx      Client list: sortable, copy icons, expandable credential rows
@@ -58,16 +59,22 @@ components/
   credential-row.tsx          Platform/user/password row (passwords always visible)
   file-section.tsx            Per-client upload/list/delete/download
 lib/
-  supabase/client.ts          Browser Supabase client (@supabase/ssr)
-  supabase/server.ts          Server Supabase client
-  tasks.ts                    generateDueTasks() — idempotent task generation
+  auth.ts                     better-auth server config (drizzle adapter, allowlisted emails)
+  auth-client.ts              better-auth React client
+  session.ts                  requireUser()/requireUserApi() session gates
+  db/index.ts                 Neon client (drizzle for auth, raw SQL for app)
+  db/auth-schema.ts           Drizzle schema for better-auth tables
+  actions/                    Server Actions per domain (contacts, clients, files, tasks, reports, account)
+  tasks.ts                    generateDueTasks() — idempotent task generation (server action)
   report-pdf.ts               Client-side monthly report PDF builder (Sarabun embedded, slips/QR/invoice blocks)
   thai-baht-text.ts           Number → Thai baht words ("...บาทถ้วน")
 middleware.ts                Auth guard: no user → /login; logged in on /login → /clients
 supabase/migrations/         Schema applied to production via Management API
 ```
 
-## 5. Database schema (Supabase)
+## 5. Database schema (Neon Postgres)
+
+Migrated from Supabase 2026-09-04 (branch `migrate/neon`): schema rebuilt from `supabase/migrations/` minus Supabase-only bits (storage bucket, RLS/`authenticated` policies). better-auth tables (`user`, `session`, `account`, `verification`) added via `auth-tables.sql` equivalent. Dev database: `neondev` (same project).
 
 ```sql
 clients      id, name, tax_id, email, phone, address, notes,
@@ -111,7 +118,7 @@ filing_attachments id, filing_id → monthly_filings (CASCADE),
 ```
 
 - **RLS enabled on every table**: all policies are simply `to authenticated using (true)`.
-- **File storage: Cloudflare R2** (bucket `internal-waxwork`, S3-compatible). Uploads go browser → presigned PUT (`/api/files/sign-upload`) → straight to R2. Downloads use presigned GETs (`/api/files/sign-download`); deletes via `/api/files/delete`. The monthly-report builder loads attachment bytes server-side via `/api/files/fetch` (authenticated proxy — avoids R2 CORS entirely; R2 omits CORS headers on error responses, which makes presigned-URL fetches undebuggable in the browser). All four API routes require an authenticated Supabase session. Metadata stays in the Supabase `files` table. Legacy Supabase Storage bucket `client-files` still exists but is no longer used.
+- **File storage: Cloudflare R2** (bucket `internal-waxwork`, S3-compatible). Uploads go browser → presigned PUT (`/api/files/sign-upload`) → straight to R2. Downloads use presigned GETs (`/api/files/sign-download`); deletes via `/api/files/delete`. The monthly-report builder loads attachment bytes server-side via `/api/files/fetch` (authenticated proxy — avoids R2 CORS entirely; R2 omits CORS headers on error responses, which makes presigned-URL fetches undebuggable in the browser). All four API routes require an authenticated better-auth session. Metadata stays in the Neon `files` table.
 - **R2 env vars**: `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (set in `.env.local` and Vercel).
 
 ## 6. Business rules & UX conventions
@@ -129,27 +136,31 @@ filing_attachments id, filing_id → monthly_filings (CASCADE),
 
 ## 7. Auth flow
 
-- Supabase email/password. Single user created manually in Supabase dashboard (Auto Confirm).
-- `middleware.ts` protects every route: unauthenticated → `/login`; authenticated hitting `/login` → `/clients`.
-- Login redirects to `/clients` (the landing page). Dashboard/tasks/templates are hidden from nav but still routable.
+- better-auth email/password. Two users (owner + mom), allowlisted via `USER_ALLOWLIST`; public sign-up is rejected server-side and no sign-up UI exists.
+- `middleware.ts` checks for the session cookie: unauthenticated → `/login`; authenticated hitting `/login` → `/clients`. Server Actions / API routes re-verify the session via `requireUser()` / `requireUserApi()`.
+- Passwords can be changed at `/password` (linked in sidebar).
 
 ## 8. Environment variables
 
 `.env.local` (git-ignored) and Vercel Environment Variables must contain:
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://bcftfhhnrmsblgbvmjnd.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
+DATABASE_URL=postgresql://... (Neon pooled connection, server-only — never NEXT_PUBLIC_)
+BETTER_AUTH_SECRET=<generated secret>
+BETTER_AUTH_URL=https://internal.taxworkaccount.com (http://localhost:3000 for local dev)
+USER_ALLOWLIST=<email1>,<email2>
 ```
 
-⚠️ The production domain once pointed at the wrong Supabase project (`fbhoqcpqqtbiorzbuqcl`) causing "Invalid login credentials". If login breaks on production, verify which project URL is embedded in the deployed JS chunks first.
+ Login redirects to `/clients` after sign-in. Dashboard/tasks/templates are hidden from nav but still routable.
+
+⚠️ If login breaks on production, check that Vercel env vars (`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`) match the current Neon project — a stale `DATABASE_URL` is the most likely cause.
 
 ## 9. Deployment
 
 - GitHub: `https://github.com/taxworkservice-ntp/taxwork-internal` (branch `main`)
 - Vercel auto-deploys every push to `main`
 - Domain: `internal.taxworkaccount.com` (hostatom DNS: CNAME `internal` → `cname.vercel-dns.com.`). Root domain + email (MX/mail A records) intentionally untouched.
-- Supabase Auth URL Configuration: Site URL + Redirect URLs include `https://internal.taxworkaccount.com`
+- `BETTER_AUTH_URL` must equal the production origin (`https://internal.taxworkaccount.com`).
 
 ## 10. Local development
 
@@ -161,7 +172,7 @@ npx eslint .         # lint
 npm run build        # production build check
 ```
 
-Supabase CLI is installed locally and linked (project `bcftfhhnrmsblgbvmjnd`). Migrations in `supabase/migrations/` were pushed via the Management API (`POST /v1/projects/{ref}/database/query`) because `db push` needed Docker. To apply future schema changes, either add a migration file and push the same way, or run SQL in the dashboard editor.
+Local `.env.local` points at the `neondev` database (safe to write test data there). To apply schema changes, add a migration file under `supabase/migrations/` and run it against Neon directly (psql or the Neon SQL editor); keep the file as the record. The old Supabase project (`bcftfhhnrmsblgbvmjnd`) is retained read-only as rollback until decommissioned.
 
 ## 11. Known data facts
 
