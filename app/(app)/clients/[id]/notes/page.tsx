@@ -63,14 +63,26 @@ export default function ClientNotesPage() {
   const [form, setForm] = useState<ClientNoteForm>(emptyForm);
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [clientData, noteData] = await Promise.all([
-      getClientForNotes(id),
-      listClientNotes(id),
-    ]);
-    setClient(clientData);
-    setNotes(noteData);
+    setError("");
+    try {
+      const clientData = await getClientForNotes(id);
+      setClient(clientData);
+
+      try {
+        setNotes(await listClientNotes(id));
+      } catch {
+        setNotes([]);
+        setError("ยังโหลดโน้ตไม่ได้ กรุณาตรวจสอบว่า database migration ถูก apply แล้ว");
+      }
+    } catch {
+      setError("โหลดข้อมูลลูกค้าไม่ได้");
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
   useEffect(() => {
@@ -120,6 +132,8 @@ export default function ClientNotesPage() {
       setEditingId(null);
       setForm(emptyForm);
       await load();
+    } catch {
+      setError("บันทึกโน้ตไม่ได้ กรุณาตรวจสอบ database migration");
     } finally {
       setSaving(false);
     }
@@ -134,7 +148,8 @@ export default function ClientNotesPage() {
     load();
   }
 
-  if (!client) return <p className="text-sm text-neutral-500">กำลังโหลด...</p>;
+  if (loading) return <p className="text-sm text-neutral-500">กำลังโหลด...</p>;
+  if (!client) return <p className="text-sm text-neutral-500">{error || "ไม่พบลูกค้า"}</p>;
 
   if (isEditing) {
     return (
@@ -196,6 +211,12 @@ export default function ClientNotesPage() {
       </div>
 
       <div className="space-y-2 py-4">
+        {error && (
+          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            {error}
+          </div>
+        )}
+
         {filtered.map((note) => (
             <button
               key={note.id}

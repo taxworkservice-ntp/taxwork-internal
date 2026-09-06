@@ -35,13 +35,26 @@ export default function NotesPage() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   async function load() {
-    const [clientData, noteData] = await Promise.all([listClients(), listRecentClientNotes()]);
-    setClients(clientData);
-    setNotes(noteData);
-    setClientId((current) => current || clientData[0]?.id || "");
-    setLoading(false);
+    setError("");
+    try {
+      const clientData = await listClients();
+      setClients(clientData);
+      setClientId((current) => current || clientData[0]?.id || "");
+
+      try {
+        setNotes(await listRecentClientNotes());
+      } catch {
+        setNotes([]);
+        setError("ยังโหลดโน้ตไม่ได้ กรุณาตรวจสอบว่า database migration ถูก apply แล้ว");
+      }
+    } catch {
+      setError("โหลดรายชื่อลูกค้าไม่ได้");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -71,6 +84,8 @@ export default function NotesPage() {
       setBody("- ");
       setSearch("");
       await load();
+    } catch {
+      setError("บันทึกโน้ตไม่ได้ กรุณาตรวจสอบ database migration");
     } finally {
       setSaving(false);
     }
@@ -110,6 +125,12 @@ export default function NotesPage() {
 
       <div className="space-y-2 py-4">
         {loading && <p className="text-sm text-neutral-500">กำลังโหลด...</p>}
+
+        {error && (
+          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            {error}
+          </div>
+        )}
 
         {!loading &&
           notes.map((note) => (
