@@ -15,5 +15,10 @@ create index if not exists idx_client_notes_client_updated
 
 alter table public.client_notes enable row level security;
 
-create policy "authenticated full access client notes" on public.client_notes
-  for all to authenticated using (true) with check (true);
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create policy "authenticated full access client notes" on public.client_notes
+      for all to authenticated using (true) with check (true);
+  end if;
+end $$;
