@@ -30,6 +30,10 @@ export type ClientNoteClient = {
   name: string;
 };
 
+export type ClientNoteListItem = ClientNote & {
+  client_name: string;
+};
+
 function str(v: unknown): string {
   if (v instanceof Date) return v.toISOString();
   return String(v ?? "");
@@ -67,6 +71,21 @@ export async function listClientNotes(clientId: string): Promise<ClientNote[]> {
     order by pinned desc, updated_at desc
   `) as ClientNote[];
   return rows.map(normalizeNote);
+}
+
+export async function listRecentClientNotes(): Promise<ClientNoteListItem[]> {
+  await requireUser();
+  const rows = (await sql`
+    select client_notes.*, clients.name as client_name
+    from client_notes
+    join clients on clients.id = client_notes.client_id
+    order by client_notes.pinned desc, client_notes.updated_at desc
+    limit 100
+  `) as ClientNoteListItem[];
+  return rows.map((row) => ({
+    ...normalizeNote(row),
+    client_name: row.client_name,
+  }));
 }
 
 export async function createClientNote(clientId: string, form: ClientNoteForm): Promise<string> {
