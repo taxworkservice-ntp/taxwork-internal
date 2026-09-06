@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import {
   addCredential as addCredentialAction,
   addShareholder as addShareholderAction,
@@ -163,7 +164,12 @@ export default function ClientDetailPage() {
   return (
     <>
       <div className="mb-6 max-w-xl">
-        <h1 className="mb-3 text-lg font-semibold">{client.name}</h1>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold">{client.name}</h1>
+          <Link className="btn-primary shrink-0" href={`/clients/${id}/notes`}>
+            Notes
+          </Link>
+        </div>
         <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="label">ชื่อบริษัท</label>
