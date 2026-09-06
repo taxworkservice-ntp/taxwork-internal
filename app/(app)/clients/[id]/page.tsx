@@ -17,6 +17,7 @@ import {
 } from "@/lib/actions/clients";
 import CredentialRow from "@/components/credential-row";
 import FileSection from "@/components/file-section";
+import CopyButton from "@/components/copy-button";
 
 type Client = {
   id: string;
@@ -74,6 +75,16 @@ const emptyShareholder = {
   notes: "",
 };
 
+function ValueRow({ label, value }: { label: string; value: string | null | undefined }) {
+  const text = value || "—";
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-neutral-100 py-2 last:border-b-0">
+      <span className="shrink-0 text-xs font-medium text-neutral-500">{label}</span>
+      <span className="min-w-0 text-right text-sm text-neutral-800">{text}</span>
+    </div>
+  );
+}
+
 export default function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [client, setClient] = useState<Client | null>(null);
@@ -85,6 +96,7 @@ export default function ClientDetailPage() {
   const [showShForm, setShowShForm] = useState(false);
   const [sh, setSh] = useState(emptyShareholder);
   const [edit, setEdit] = useState<Partial<Client>>({});
+  const [showEditForm, setShowEditForm] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteInput, setDeleteInput] = useState("");
 
@@ -113,6 +125,7 @@ export default function ClientDetailPage() {
 
   async function saveClient() {
     await updateClient(id, edit);
+    setShowEditForm(false);
     load();
   }
 
@@ -161,87 +174,110 @@ export default function ClientDetailPage() {
 
   if (!client) return <p className="text-sm text-neutral-500">กำลังโหลด...</p>;
 
+  const todoTasks = tasks.filter((task) => task.status !== "done");
+  const doneTasks = tasks.length - todoTasks.length;
+  const director = shareholders.find((s) => s.is_director);
+
   return (
-    <>
-      <div className="mb-6 max-w-xl">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h1 className="text-lg font-semibold">{client.name}</h1>
-          <Link className="btn-primary shrink-0" href={`/clients/${id}/notes`}>
-            Notes
+    <div className="mx-auto max-w-3xl space-y-5">
+      <section className="-mx-4 border-b border-neutral-200 bg-white px-4 pb-4 pt-2 sm:mx-0 sm:rounded sm:border sm:p-4">
+        <Link href="/clients" className="mb-3 inline-block text-sm text-neutral-500">
+          ← ลูกค้า
+        </Link>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="break-words text-xl font-semibold leading-snug">{client.name}</h1>
+            <p className="mt-1 text-sm text-neutral-500">
+              {client.tax_id ? `เลขภาษี ${client.tax_id}` : "ยังไม่มีเลขผู้เสียภาษี"}
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full bg-green-50 px-2 py-1 text-xs text-green-700">
+            {client.status === "active" ? "ใช้งาน" : "เก็บถาวร"}
+          </span>
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {client.phone ? (
+            <a className="btn text-center" href={`tel:${client.phone}`}>โทร</a>
+          ) : (
+            <button className="btn text-center" disabled>โทร</button>
+          )}
+          {client.email ? (
+            <a className="btn text-center" href={`mailto:${client.email}`}>อีเมล</a>
+          ) : (
+            <button className="btn text-center" disabled>อีเมล</button>
+          )}
+          <Link className="btn-primary text-center" href={`/clients/${id}/notes`}>
+            โน้ต
           </Link>
         </div>
-        <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label className="label">ชื่อบริษัท</label>
-            <input className="input" value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
+
+        <div className="mt-4 grid grid-cols-3 gap-2 rounded border border-neutral-200 bg-neutral-50 p-2">
+          <div className="text-center">
+            <p className="text-lg font-semibold">{todoTasks.length}</p>
+            <p className="text-xs text-neutral-500">งานค้าง</p>
           </div>
-          <div>
-            <label className="label">เลขผู้เสียภาษี</label>
-            <input className="input" value={edit.tax_id ?? ""} onChange={(e) => setEdit({ ...edit, tax_id: e.target.value })} />
+          <div className="text-center">
+            <p className="text-lg font-semibold">{doneTasks}</p>
+            <p className="text-xs text-neutral-500">งานเสร็จ</p>
           </div>
-          <div>
-            <label className="label">อีเมล</label>
-            <input className="input" value={edit.email ?? ""} onChange={(e) => setEdit({ ...edit, email: e.target.value })} />
+          <div className="text-center">
+            <p className="text-lg font-semibold">{credentials.length}</p>
+            <p className="text-xs text-neutral-500">Login</p>
           </div>
-          <div>
-            <label className="label">โทรศัพท์</label>
-            <input className="input" value={edit.phone ?? ""} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} />
-          </div>
-          <div className="col-span-2">
-            <label className="label">ที่อยู่</label>
-            <input className="input" value={edit.address ?? ""} onChange={(e) => setEdit({ ...edit, address: e.target.value })} />
-          </div>
-          <div className="col-span-2">
-            <label className="label">หมายเหตุ</label>
-            <textarea className="input" rows={2} value={edit.notes ?? ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} />
-          </div>
-          <button className="btn-primary col-span-2 w-fit" onClick={saveClient}>
-            บันทึกการแก้ไข
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h2 className="font-medium">ภาพรวม</h2>
+          <button className="btn" onClick={() => setShowEditForm(!showEditForm)}>
+            {showEditForm ? "ปิด" : "แก้ไข"}
           </button>
         </div>
-
-        {/* Danger zone */}
-        <div className="mt-4">
-          {!confirmingDelete ? (
-            <button className="btn-danger" onClick={() => setConfirmingDelete(true)}>
-              ลบลูกค้านี้
-            </button>
-          ) : (
-            <div className="rounded border border-red-200 bg-red-50 p-3">
-              <p className="mb-2 text-sm text-red-700">
-                จะลบ <strong>{client.name}</strong> พร้อมข้อมูลเข้าระบบ ไฟล์ และงานทั้งหมดของลูกค้านี้ ไม่สามารถกู้คืนได้
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  className="input min-w-0 flex-1 border-red-300 bg-white"
-                  placeholder={`พิมพ์ "${client.name}" เพื่อยืนยัน`}
-                  value={deleteInput}
-                  onChange={(e) => setDeleteInput(e.target.value)}
-                />
-                <button
-                  className="rounded bg-red-600 px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={deleteInput !== client.name}
-                  onClick={deleteClient}
-                >
-                  ลบถาวร
-                </button>
-                <button
-                  className="btn"
-                  onClick={() => {
-                    setConfirmingDelete(false);
-                    setDeleteInput("");
-                  }}
-                >
-                  ยกเลิก
-                </button>
-              </div>
+        {!showEditForm ? (
+          <div>
+            <ValueRow label="โทรศัพท์" value={client.phone} />
+            <ValueRow label="อีเมล" value={client.email} />
+            <ValueRow label="ที่อยู่" value={client.address} />
+            <ValueRow label="หมายเหตุ" value={client.notes} />
+            <ValueRow label="กรรมการ" value={director?.name} />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="label">ชื่อบริษัท</label>
+              <input className="input" value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
             </div>
-          )}
-        </div>
-      </div>
+            <div>
+              <label className="label">เลขผู้เสียภาษี</label>
+              <input className="input" value={edit.tax_id ?? ""} onChange={(e) => setEdit({ ...edit, tax_id: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">อีเมล</label>
+              <input className="input" value={edit.email ?? ""} onChange={(e) => setEdit({ ...edit, email: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">โทรศัพท์</label>
+              <input className="input" value={edit.phone ?? ""} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label">ที่อยู่</label>
+              <input className="input" value={edit.address ?? ""} onChange={(e) => setEdit({ ...edit, address: e.target.value })} />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label">หมายเหตุ</label>
+              <textarea className="input" rows={2} value={edit.notes ?? ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} />
+            </div>
+            <button className="btn-primary w-fit sm:col-span-2" onClick={saveClient}>
+              บันทึกการแก้ไข
+            </button>
+          </div>
+        )}
+      </section>
 
       {/* Credentials */}
-      <section className="mb-8 max-w-xl">
+      <section className="card">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-medium">ข้อมูลเข้าระบบ</h2>
           <button className="btn" onClick={() => setShowCredForm(!showCredForm)}>
@@ -287,7 +323,36 @@ export default function ClientDetailPage() {
             <button className="btn-primary">บันทึก</button>
           </form>
         )}
-        <table className="table-base">
+        <div className="space-y-2 md:hidden">
+          {credentials.map((c) => (
+            <div key={c.id} className="rounded border border-neutral-200 bg-neutral-50 p-3">
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <h3 className="text-sm font-medium">{c.label}</h3>
+                <button className="text-xs text-red-600 underline" onClick={() => deleteCredential(c.id)}>
+                  ลบ
+                </button>
+              </div>
+              <div className="space-y-1 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-neutral-500">ผู้ใช้</span>
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="truncate">{c.username || "—"}</span>
+                    {c.username && <CopyButton text={c.username} />}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-neutral-500">รหัสผ่าน</span>
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="truncate">{c.password || "—"}</span>
+                    {c.password && <CopyButton text={c.password} />}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+          {!credentials.length && <p className="text-sm text-neutral-500">ไม่มีข้อมูล</p>}
+        </div>
+        <table className="table-base hidden md:table">
           <thead>
             <tr><th>แพลตฟอร์ม</th><th>ผู้ใช้</th><th>รหัสผ่าน</th><th></th></tr>
           </thead>
@@ -303,7 +368,7 @@ export default function ClientDetailPage() {
       </section>
 
       {/* Shareholders */}
-      <section className="mb-8 max-w-3xl">
+      <section className="card">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-medium">ผู้ถือหุ้น</h2>
           <button className="btn" onClick={() => setShowShForm(!showShForm)}>
@@ -387,7 +452,34 @@ export default function ClientDetailPage() {
             <button className="btn-primary w-fit">บันทึก</button>
           </form>
         )}
-        <table className="table-base">
+        <div className="space-y-2 md:hidden">
+          {shareholders.map((s) => (
+            <div key={s.id} className="rounded border border-neutral-200 bg-neutral-50 p-3">
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-medium">{s.name}</h3>
+                  {s.is_director && <p className="text-xs text-blue-700">กรรมการผู้จัดการ / ผู้มีอำนาจลงนาม</p>}
+                </div>
+                <button className="text-xs text-red-600 underline" onClick={() => deleteShareholder(s.id)}>
+                  ลบ
+                </button>
+              </div>
+              <div className="space-y-1 text-sm text-neutral-700">
+                <p>เลขภาษี: {s.tax_id || "—"}</p>
+                <p>โทร: {s.phone || "—"}</p>
+                <p>อีเมล: {s.email || "—"}</p>
+                <p>หุ้น: {s.shares ?? "—"}%</p>
+              </div>
+              {!s.is_director && (
+                <button className="mt-3 text-xs text-blue-700 underline" onClick={() => toggleDirector(s)}>
+                  ตั้งเป็นกรรมการ
+                </button>
+              )}
+            </div>
+          ))}
+          {!shareholders.length && <p className="text-sm text-neutral-500">ไม่มีข้อมูล</p>}
+        </div>
+        <table className="table-base hidden md:table">
           <thead>
             <tr>
               <th>กรรมการ</th>
@@ -436,9 +528,25 @@ export default function ClientDetailPage() {
       <FileSection clientId={id} onChanged={load} />
 
       {/* Tasks */}
-      <section className="mt-8 max-w-xl">
+      <section className="card">
         <h2 className="mb-2 font-medium">งานของลูกค้านี้</h2>
-        <table className="table-base">
+        <div className="space-y-2 md:hidden">
+          {tasks.map((t) => (
+            <label key={t.id} className="flex gap-3 rounded border border-neutral-200 bg-neutral-50 p-3">
+              <input type="checkbox" checked={t.status === "done"} onChange={() => toggleTask(t)} />
+              <span className="min-w-0 flex-1">
+                <span className={`block text-sm font-medium ${t.status === "done" ? "text-neutral-400 line-through" : ""}`}>
+                  {t.title}
+                </span>
+                <span className="mt-1 block text-xs text-neutral-500">
+                  {t.period_label} · {t.due_date}
+                </span>
+              </span>
+            </label>
+          ))}
+          {!tasks.length && <p className="text-sm text-neutral-500">ไม่มีงาน</p>}
+        </div>
+        <table className="table-base hidden md:table">
           <thead>
             <tr><th>เสร็จ</th><th>งาน</th><th>งวด</th><th>กำหนดส่ง</th></tr>
           </thead>
@@ -459,6 +567,45 @@ export default function ClientDetailPage() {
           </tbody>
         </table>
       </section>
-    </>
+
+      <section className="card">
+        <h2 className="mb-2 font-medium">จัดการลูกค้า</h2>
+        {!confirmingDelete ? (
+          <button className="btn-danger" onClick={() => setConfirmingDelete(true)}>
+            ลบลูกค้านี้
+          </button>
+        ) : (
+          <div className="rounded border border-red-200 bg-red-50 p-3">
+            <p className="mb-2 text-sm text-red-700">
+              จะลบ <strong>{client.name}</strong> พร้อมข้อมูลเข้าระบบ ไฟล์ และงานทั้งหมดของลูกค้านี้ ไม่สามารถกู้คืนได้
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className="input min-w-0 flex-1 border-red-300 bg-white"
+                placeholder={`พิมพ์ "${client.name}" เพื่อยืนยัน`}
+                value={deleteInput}
+                onChange={(e) => setDeleteInput(e.target.value)}
+              />
+              <button
+                className="rounded bg-red-600 px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={deleteInput !== client.name}
+                onClick={deleteClient}
+              >
+                ลบถาวร
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  setConfirmingDelete(false);
+                  setDeleteInput("");
+                }}
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
