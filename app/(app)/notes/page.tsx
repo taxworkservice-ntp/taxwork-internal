@@ -19,7 +19,9 @@ function cleanBullets(value: string) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => (line.startsWith("-") ? line : `- ${line}`))
+    .map((line) => line.replace(/^([\-•*]+)\s*/, "").trim())
+    .filter(Boolean)
+    .map((line) => `- ${line}`)
     .join("\n");
 }
 
@@ -38,11 +40,14 @@ export default function NotesPage() {
   const [error, setError] = useState("");
 
   async function load() {
+    setLoading(true);
     setError("");
     try {
       const clientData = await listClients();
       setClients(clientData);
-      setClientId((current) => current || clientData[0]?.id || "");
+      setClientId((current) =>
+        clientData.some((c) => c.id === current) ? current : clientData[0]?.id || "",
+      );
 
       try {
         setNotes(await listRecentClientNotes());
@@ -67,12 +72,23 @@ export default function NotesPage() {
     return clients.filter((client) => client.name.toLowerCase().includes(q));
   }, [clients, search]);
 
+  const filteredNotes = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return notes;
+    return notes.filter((note) =>
+      `${note.client_name} ${note.body}`.toLowerCase().includes(q),
+    );
+  }, [notes, search]);
+
+  const canSave = Boolean(clientId && cleanBullets(body) && !saving);
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     const cleanBody = cleanBullets(body);
-    if (!clientId || !cleanBody) return;
+    if (!clientId || !cleanBody || saving) return;
 
     setSaving(true);
+    setError("");
     try {
       await createClientNote(clientId, {
         title: "",
@@ -82,8 +98,11 @@ export default function NotesPage() {
         pinned: false,
       });
       setBody("- ");
-      setSearch("");
-      await load();
+      try {
+        setNotes(await listRecentClientNotes());
+      } catch {
+        setError("บันทึกแล้ว แต่โหลดรายการโน้ตไม่ได้");
+      }
     } catch {
       setError("บันทึกโน้ตไม่ได้ กรุณาตรวจสอบ database migration");
     } finally {
@@ -100,24 +119,32 @@ export default function NotesPage() {
         <div className="mt-3 space-y-2">
           <input
             className="input"
-            placeholder="ค้นหาลูกค้า..."
+            placeholder="ค้นหาลูกค้า / โน้ต..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <select className="input" value={clientId} onChange={(e) => setClientId(e.target.value)}>
-            {filteredClients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.name}
-              </option>
-            ))}
-          </select>
+          {clients.length > 0 ? (
+            <select className="input" value={clientId} onChange={(e) => setClientId(e.target.value)}>
+              {filteredClients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            !loading && (
+              <p className="text-sm text-neutral-500">
+                ยังไม่มีรายชื่อลูกค้า — <Link className="text-blue-600 underline" href="/clients">เพิ่มลูกค้าก่อน</Link>
+              </p>
+            )
+          )}
           <textarea
             className="min-h-36 w-full resize-none rounded border border-neutral-300 bg-white px-3 py-3 text-base leading-7 outline-none focus:border-blue-500"
             placeholder={"- โทรคุยเรื่องเอกสาร ภ.พ.30\n- ลูกค้าจะส่ง statement ภายในศุกร์นี้"}
             value={body}
             onChange={(e) => setBody(e.target.value)}
           />
-          <button className="btn-primary w-full py-2" disabled={saving || !clientId}>
+          <button className="btn-primary w-full py-2" disabled={!canSave}>
             {saving ? "กำลังบันทึก" : "บันทึกโน้ต"}
           </button>
         </div>
@@ -133,7 +160,7 @@ export default function NotesPage() {
         )}
 
         {!loading &&
-          notes.map((note) => (
+          filteredNotes.map((note) => (
             <Link
               key={note.id}
               href={`/clients/${note.client_id}/notes`}
@@ -147,10 +174,17 @@ export default function NotesPage() {
             </Link>
           ))}
 
-        {!loading && !notes.length && (
+        {!loading && !notes.length && !error && (
           <div className="rounded border border-dashed border-neutral-300 bg-white p-6 text-center">
             <p className="text-sm font-medium">ยังไม่มีโน้ต</p>
             <p className="mt-1 text-sm text-neutral-500">เลือกชื่อลูกค้า แล้วจด bullet แรกได้เลย</p>
+          </div>
+        )}
+
+        {!loading && Boolean(notes.length) && !filteredNotes.length && (
+          <div className="rounded border border-dashed border-neutral-300 bg-white p-6 text-center">
+            <p className="text-sm font-medium">ไม่พบโน้ตที่ค้นหา</p>
+            <p className="mt-1 text-sm text-neutral-500">ลองเปลี่ยนคำค้น</p>
           </div>
         )}
       </div>

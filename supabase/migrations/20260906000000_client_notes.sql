@@ -1,3 +1,6 @@
+-- Neon needs pgcrypto for gen_random_uuid()
+create extension if not exists pgcrypto;
+
 create table if not exists public.client_notes (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,

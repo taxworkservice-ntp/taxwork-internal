@@ -68,7 +68,7 @@ const CLIENT_EDITABLE = ["name", "tax_id", "email", "phone", "address", "notes"]
 
 export async function listClients(): Promise<Client[]> {
   await requireUser();
-  const rows = (await sql`select * from clients`) as Client[];
+  const rows = (await sql`select * from clients order by name`) as Client[];
   return rows.map((r) => ({ ...r, created_at: str(r.created_at) }));
 }
 

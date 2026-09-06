@@ -47,6 +47,18 @@ function cleanTags(tags: string): string[] {
     .slice(0, 8);
 }
 
+/** Normalize bullet lines server-side; drops lines that are only a bullet marker. */
+function cleanBullets(body: string): string {
+  return body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^([\-•*]+)\s*/, "").trim())
+    .filter(Boolean)
+    .map((line) => `- ${line}`)
+    .join("\n");
+}
+
 function normalizeNote(row: ClientNote): ClientNote {
   return {
     ...row,
@@ -90,9 +102,11 @@ export async function listRecentClientNotes(): Promise<ClientNoteListItem[]> {
 
 export async function createClientNote(clientId: string, form: ClientNoteForm): Promise<string> {
   await requireUser();
+  const body = cleanBullets(form.body);
+  if (!clientId || !body) throw new Error("empty note");
   const rows = (await sql`
     insert into client_notes (client_id, title, body, note_type, tags, pinned)
-    values (${clientId}, ${form.title}, ${form.body}, ${form.note_type}, ${cleanTags(form.tags)}, ${form.pinned})
+    values (${clientId}, ${form.title}, ${body}, ${form.note_type}, ${cleanTags(form.tags)}, ${form.pinned})
     returning id
   `) as { id: string }[];
   return rows[0].id;
@@ -100,13 +114,13 @@ export async function createClientNote(clientId: string, form: ClientNoteForm): 
 
 export async function updateClientNote(noteId: string, form: ClientNoteForm): Promise<void> {
   await requireUser();
+  const body = cleanBullets(form.body);
+  if (!body) throw new Error("empty note");
+  // Only body is editable from the simplified UI — preserve legacy
+  // title/tags/pinned/note_type instead of wiping them.
   await sql`
     update client_notes
-    set title=${form.title},
-        body=${form.body},
-        note_type=${form.note_type},
-        tags=${cleanTags(form.tags)},
-        pinned=${form.pinned},
+    set body=${body},
         updated_at=now()
     where id=${noteId}
   `;
