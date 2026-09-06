@@ -2,18 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {
-  listRecentClientNotes,
-  type ClientNoteListItem,
-  type ClientNoteType,
-} from "@/lib/actions/client-notes";
-
-const NOTE_TYPE_LABELS: Record<ClientNoteType, string> = {
-  general: "ทั่วไป",
-  call: "โทร",
-  meeting: "ประชุม",
-  follow_up: "ติดตาม",
-};
+import { createClientNote, listRecentClientNotes, type ClientNoteListItem } from "@/lib/actions/client-notes";
+import { listClients, type Client } from "@/lib/actions/clients";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("th-TH", {
@@ -24,92 +14,122 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function cleanBullets(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => (line.startsWith("-") ? line : `- ${line}`))
+    .join("\n");
+}
+
 function preview(note: ClientNoteListItem) {
-  return note.body.trim() || note.title.trim() || "ไม่มีรายละเอียด";
+  return note.body.trim() || "ไม่มีรายละเอียด";
 }
 
 export default function NotesPage() {
+  const [clients, setClients] = useState<Client[]>([]);
   const [notes, setNotes] = useState<ClientNoteListItem[]>([]);
+  const [clientId, setClientId] = useState("");
+  const [body, setBody] = useState("- ");
   const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  async function load() {
+    const [clientData, noteData] = await Promise.all([listClients(), listRecentClientNotes()]);
+    setClients(clientData);
+    setNotes(noteData);
+    setClientId((current) => current || clientData[0]?.id || "");
+    setLoading(false);
+  }
+
   useEffect(() => {
-    listRecentClientNotes()
-      .then(setNotes)
-      .finally(() => setLoading(false));
+    load();
   }, []);
 
-  const filtered = useMemo(() => {
+  const filteredClients = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return notes;
-    return notes.filter((note) => {
-      const haystack = [
-        note.title,
-        note.body,
-        note.client_name,
-        NOTE_TYPE_LABELS[note.note_type],
-        ...note.tags,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
-    });
-  }, [notes, search]);
+    if (!q) return clients;
+    return clients.filter((client) => client.name.toLowerCase().includes(q));
+  }, [clients, search]);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    const cleanBody = cleanBullets(body);
+    if (!clientId || !cleanBody) return;
+
+    setSaving(true);
+    try {
+      await createClientNote(clientId, {
+        title: "",
+        body: cleanBody,
+        note_type: "general",
+        tags: "",
+        pinned: false,
+      });
+      setBody("- ");
+      setSearch("");
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-xl">
-      <div className="sticky top-0 z-10 -mx-4 border-b border-neutral-200 bg-[#fafafa]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+      <form onSubmit={save} className="sticky top-0 z-10 -mx-4 border-b border-neutral-200 bg-[#fafafa]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
         <h1 className="text-lg font-semibold">โน้ต</h1>
-        <p className="mt-1 text-sm text-neutral-500">โน้ตล่าสุดจากทุกลูกค้า</p>
-        <input
-          className="input mt-3"
-          placeholder="ค้นหาโน้ตหรือลูกค้า..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
+        <p className="mt-1 text-sm text-neutral-500">เลือกลูกค้า แล้วจดเป็น bullet point</p>
+
+        <div className="mt-3 space-y-2">
+          <input
+            className="input"
+            placeholder="ค้นหาลูกค้า..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <select className="input" value={clientId} onChange={(e) => setClientId(e.target.value)}>
+            {filteredClients.map((client) => (
+              <option key={client.id} value={client.id}>
+                {client.name}
+              </option>
+            ))}
+          </select>
+          <textarea
+            className="min-h-36 w-full resize-none rounded border border-neutral-300 bg-white px-3 py-3 text-base leading-7 outline-none focus:border-blue-500"
+            placeholder={"- โทรคุยเรื่องเอกสาร ภ.พ.30\n- ลูกค้าจะส่ง statement ภายในศุกร์นี้"}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+          />
+          <button className="btn-primary w-full py-2" disabled={saving || !clientId}>
+            {saving ? "กำลังบันทึก" : "บันทึกโน้ต"}
+          </button>
+        </div>
+      </form>
 
       <div className="space-y-2 py-4">
         {loading && <p className="text-sm text-neutral-500">กำลังโหลด...</p>}
 
         {!loading &&
-          filtered.map((note) => (
+          notes.map((note) => (
             <Link
               key={note.id}
               href={`/clients/${note.client_id}/notes`}
               className="block rounded border border-neutral-200 bg-white p-3 active:bg-neutral-50"
             >
               <div className="mb-1 flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h2 className="truncate text-sm font-medium">
-                    {note.pinned ? "★ " : ""}
-                    {note.title || preview(note)}
-                  </h2>
-                  <p className="truncate text-xs text-neutral-500">{note.client_name}</p>
-                </div>
+                <p className="min-w-0 truncate text-sm font-medium">{note.client_name}</p>
                 <span className="shrink-0 text-xs text-neutral-400">{formatDate(note.updated_at)}</span>
               </div>
-              <p className="line-clamp-2 text-sm leading-6 text-neutral-600">{preview(note)}</p>
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                  {NOTE_TYPE_LABELS[note.note_type]}
-                </span>
-                {note.tags.map((tag) => (
-                  <span key={tag} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
-                    {tag}
-                  </span>
-                ))}
-              </div>
+              <p className="whitespace-pre-line text-sm leading-6 text-neutral-700">{preview(note)}</p>
             </Link>
           ))}
 
-        {!loading && !filtered.length && (
+        {!loading && !notes.length && (
           <div className="rounded border border-dashed border-neutral-300 bg-white p-6 text-center">
             <p className="text-sm font-medium">ยังไม่มีโน้ต</p>
-            <p className="mt-1 text-sm text-neutral-500">เข้าไปที่หน้าลูกค้าเพื่อเพิ่มโน้ตแรก</p>
-            <Link className="btn-primary mt-4" href="/clients">
-              เลือกลูกค้า
-            </Link>
+            <p className="mt-1 text-sm text-neutral-500">เลือกชื่อลูกค้า แล้วจด bullet แรกได้เลย</p>
           </div>
         )}
       </div>
