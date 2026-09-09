@@ -10,7 +10,7 @@ import {
   saveExpressBackupConfig,
   type BackupDetail,
 } from "@/lib/actions/express-backup";
-import { STATUS_TH, thaiError, type ExpressBackupStatus } from "@/lib/express-backup";
+import { STATUS_TH, thaiError, type ExpressBackupStatus } from "@/lib/express-backup-ui";
 
 function formatBytes(n: number | null): string {
   if (n === null || n === undefined) return "—";

@@ -1,15 +1,12 @@
-// Shared Express Backup domain logic (server-only: imports sql).
-// Never import from client components — UI talks via lib/actions/express-backup.ts.
+// Shared Express Backup domain logic (server-only: imports sql/crypto).
+// Never import this file from client components — import UI constants
+// from "@/lib/express-backup-ui" instead (no Node/DB imports there).
 import { createHash, randomBytes } from "crypto";
 import { sql } from "@/lib/db";
+import type { ExpressBackupStatus } from "./express-backup-ui";
 
-export type ExpressBackupStatus =
-  | "healthy"
-  | "pending"
-  | "running"
-  | "late"
-  | "failed"
-  | "unconfigured";
+export type { ExpressBackupStatus } from "./express-backup-ui";
+export { BACKUP_ERROR_TH, STATUS_TH, thaiError } from "./express-backup-ui";
 
 export type ExpressBackupConfig = {
   id: string;
@@ -67,24 +64,6 @@ export const LATE_AFTER_MS = 26 * 60 * 60 * 1000;
 /** R2 prefix for all Express backups (single shared bucket from lib/r2.ts). */
 export const BACKUP_R2_PREFIX = "express-backups";
 
-export const BACKUP_ERROR_TH: Record<string, string> = {
-  SOURCE_NOT_FOUND: "ไม่พบโฟลเดอร์ข้อมูล Express",
-  ACCESS_DENIED: "ไม่มีสิทธิ์เข้าถึงโฟลเดอร์ข้อมูล",
-  DISK_FULL: "พื้นที่ดิสก์ไม่เพียงพอ",
-  ARCHIVE_FAILED: "สร้างไฟล์สำรองข้อมูลไม่สำเร็จ",
-  NETWORK_ERROR: "เครือข่ายขัดข้อง",
-  UPLOAD_FAILED: "อัปโหลดไฟล์สำรองข้อมูลไม่สำเร็จ",
-  CHECKSUM_ERROR: "ตรวจสอบไฟล์ไม่ผ่าน",
-  JOB_EXPIRED: "งานหมดอายุ",
-  AUTH_FAILED: "ยืนยันตัวตนเครื่องไม่สำเร็จ",
-  UNKNOWN_ERROR: "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ",
-};
-
-export function thaiError(code: string | null | undefined): string {
-  if (!code) return "";
-  return BACKUP_ERROR_TH[code] ?? BACKUP_ERROR_TH.UNKNOWN_ERROR;
-}
-
 export function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
@@ -134,15 +113,6 @@ export function computeStatus(opts: {
   }
   return "late";
 }
-
-export const STATUS_TH: Record<ExpressBackupStatus, string> = {
-  healthy: "ปกติ",
-  pending: "รอดำเนินการ",
-  running: "กำลังสำรอง",
-  late: "ล่าช้า",
-  failed: "ล้มเหลว",
-  unconfigured: "ยังไม่ได้ตั้งค่า",
-};
 
 export type AgentAuth =
   | { ok: true; agentId: string; agentName: string }

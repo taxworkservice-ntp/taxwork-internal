@@ -12,7 +12,7 @@ import {
   revokeAgent,
   type OverviewRow,
 } from "@/lib/actions/express-backup";
-import { STATUS_TH, type ExpressBackupStatus } from "@/lib/express-backup";
+import { STATUS_TH, type ExpressBackupStatus } from "@/lib/express-backup-ui";
 
 function formatBytes(n: number | null): string {
   if (n === null || n === undefined) return "—";
