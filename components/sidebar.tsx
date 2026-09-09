@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
 const links = [
   {
     href: "/clients",
     label: "ลูกค้า",
+    mobileLabel: "ลูกค้า",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -19,6 +21,7 @@ const links = [
   {
     href: "/files",
     label: "ไฟล์",
+    mobileLabel: "ไฟล์",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -27,18 +30,9 @@ const links = [
     ),
   },
   {
-    href: "/notes",
-    label: "โน้ต",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-        <path d="M4 4h16v16H4z" />
-        <path d="M8 8h8M8 12h8M8 16h5" />
-      </svg>
-    ),
-  },
-  {
     href: "/reports",
     label: "รายงานรายเดือน",
+    mobileLabel: "รายงาน",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -50,6 +44,7 @@ const links = [
   {
     href: "/contacts",
     label: "ผู้เกี่ยวข้อง",
+    mobileLabel: "ผู้เกี่ยวข้อง",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
         <rect x="2" y="5" width="20" height="15" rx="2" />
@@ -61,6 +56,7 @@ const links = [
   {
     href: "/tools",
     label: "เครื่องมือ",
+    mobileLabel: "เครื่องมือ",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
         <path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14.5 12l-2.5-2.5z" />
@@ -72,6 +68,26 @@ const links = [
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const visibleLinks = links.slice(0, 4);
+  const overflowLinks = links.slice(4);
+  const isOverflowActive = overflowLinks.some((l) => isActive(l.href));
+
+  // Close popover on navigation
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [pathname]);
+
+  // Close popover on Escape
+  useEffect(() => {
+    if (!moreOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMoreOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [moreOpen]);
 
   async function signOut() {
     if (!confirm("ต้องการออกจากระบบใช่หรือไม่?")) return;
@@ -115,9 +131,17 @@ export default function Sidebar() {
         </Link>
       </aside>
 
-      {/* Mobile bottom nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
-        {links.map((l) => (
+      {/* Mobile bottom nav: 4 icons + overflow */}
+      {moreOpen && (
+        <button
+          aria-hidden
+          tabIndex={-1}
+          onClick={() => setMoreOpen(false)}
+          className="fixed inset-0 z-40 cursor-default bg-transparent md:hidden"
+        />
+      )}
+      <nav className="fixed inset-x-0 bottom-0 z-50 flex border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
+        {visibleLinks.map((l) => (
           <Link
             key={l.href}
             href={l.href}
@@ -126,18 +150,59 @@ export default function Sidebar() {
             }`}
           >
             {l.icon}
-            {l.label}
+            {l.mobileLabel}
           </Link>
         ))}
-        <button
-          onClick={signOut}
-          className="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] text-neutral-500 active:text-red-600"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-          </svg>
-          ออกจากระบบ
-        </button>
+        <div className="relative flex flex-1">
+          <button
+            onClick={() => setMoreOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            aria-label="เมนูเพิ่มเติม"
+            className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] ${
+              isOverflowActive || moreOpen ? "text-blue-600" : "text-neutral-500"
+            }`}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+              <circle cx="5" cy="12" r="1.6" />
+              <circle cx="12" cy="12" r="1.6" />
+              <circle cx="19" cy="12" r="1.6" />
+            </svg>
+            เพิ่มเติม
+          </button>
+          {moreOpen && (
+            <div
+              role="menu"
+              className="absolute bottom-full right-1 mb-2 w-48 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg"
+            >
+              {overflowLinks.map((l) => (
+                <Link
+                  key={l.href}
+                  href={l.href}
+                  role="menuitem"
+                  onClick={() => setMoreOpen(false)}
+                  className={`flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-neutral-100 ${
+                    isActive(l.href) ? "font-medium text-blue-600" : "text-neutral-700"
+                  }`}
+                >
+                  {l.icon}
+                  {l.label}
+                </Link>
+              ))}
+              <div className="border-t border-neutral-100" />
+              <button
+                onClick={signOut}
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-neutral-500 hover:bg-neutral-100 active:text-red-600"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+                </svg>
+                ออกจากระบบ
+              </button>
+            </div>
+          )}
+        </div>
       </nav>
     </>
   );
