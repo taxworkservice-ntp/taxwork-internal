@@ -43,3 +43,8 @@ next-env.d.ts
 # sensitive files
 *.xlsx
 import.sql
+
+# express backup agent (local credential + test zips, never commit)
+agent/config.json
+agent/pending/
+*.zip

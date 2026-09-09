@@ -1,0 +1,9 @@
+{
+  "server_url": "http://localhost:3000",
+  "agent_id": "PASTE_AGENT_UUID_HERE",
+  "agent_secret": "PASTE_SECRET_FROM_REGISTRATION_HERE",
+  "poll_interval": 30,
+  "heartbeat_interval": 60,
+  "version": "1.0.0",
+  "test_source_path": "C:\\TaxworkAgentTest\\SampleData"
+}
