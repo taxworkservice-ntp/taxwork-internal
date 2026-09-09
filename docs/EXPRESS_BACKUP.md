@@ -11,7 +11,7 @@ Windows agent ──HTTPS Bearer──▶ Taxwork Internal ──presigned PUT�
         └─ heartbeat / claim / complete / fail              └─ Neon metadata (jobs/configs/agents)
 ```
 
-## Database (Neon, migration `supabase/migrations/20260909000000_express_backup.sql`)
+## Database (Neon, migration `db/migrations/20260909000000_express_backup.sql`)
 
 - `express_backup_configs` — one row per client (`client_id UNIQUE → clients.id CASCADE`):
   `source_path` (Windows path, e.g. `D:\ExpressData\ABC`), `enabled`, `schedule_type='daily'` (V1),

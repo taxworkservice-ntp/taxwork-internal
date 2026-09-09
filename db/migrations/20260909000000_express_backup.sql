@@ -1,6 +1,6 @@
 -- Express Backup module (Neon Postgres).
--- Record-only migration; no Supabase-specific features, no RLS (Neon convention:
--- auth enforced in Server Actions / API routes via requireUser()).
+-- Record-only migration. No RLS (Neon convention: auth enforced in
+-- Server Actions / API routes via requireUser()).
 -- Reuses public.clients(id uuid). Test on neondev before production.
 
 -- 1. Per-client backup configuration (one row per client)

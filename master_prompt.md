@@ -18,7 +18,7 @@ auto-deploys to `https://internal.taxworkaccount.com`).
   fast cookie-presence check only — never the real gate.
 - **Raw SQL** via `@neondatabase/serverless` for app tables; `drizzle-orm` is used
   only for the better-auth adapter (`lib/db/auth-schema.ts`).
-- **Files:** Cloudflare R2 via presigned URLs (`/api/files/*`). Never Supabase Storage.
+- **Files:** Cloudflare R2 via presigned URLs (`/api/files/*`).
 - **Env (server-only):** `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
   `USER_ALLOWLIST`, `R2_*`. Nothing database-related may be `NEXT_PUBLIC_`.
 
@@ -27,7 +27,7 @@ auto-deploys to `https://internal.taxworkaccount.com`).
 1. Read `MASTER.md` first — it is the source of truth for schema, flows, and conventions.
 2. All UI text in Thai. No new UI component libraries — extend `app/globals.css`.
 3. Every new data access path must call `requireUser()` / `requireUserApi()`.
-4. New tables: plain Postgres, no RLS; keep `supabase/migrations/` file naming for records.
+4. New tables: plain Postgres, no RLS; keep `db/migrations/` file naming for records.
 5. Dates cross the server/client boundary as ISO strings, not `Date` objects.
    Numeric/bigint columns arrive as strings over HTTP — coerce with `num()`.
 6. Local dev uses the `neondev` database (safe for test writes). Never write test

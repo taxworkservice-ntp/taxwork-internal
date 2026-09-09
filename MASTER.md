@@ -69,12 +69,12 @@ lib/
   report-pdf.ts               Client-side monthly report PDF builder (Sarabun embedded, slips/QR/invoice blocks)
   thai-baht-text.ts           Number → Thai baht words ("...บาทถ้วน")
 middleware.ts                Auth guard: no user → /login; logged in on /login → /clients
-supabase/migrations/         Schema applied to production via Management API
+ db/migrations/              Neon schema record (applied manually, see §10)
 ```
 
 ## 5. Database schema (Neon Postgres)
 
-Migrated from Supabase 2026-09-04 (branch `migrate/neon`): schema rebuilt from `supabase/migrations/` minus Supabase-only bits (storage bucket, RLS/`authenticated` policies). better-auth tables (`user`, `session`, `account`, `verification`) added via `auth-tables.sql` equivalent. Dev database: `neondev` (same project).
+Postgres schema on Neon (tables defined in `db/migrations/`). better-auth tables (`user`, `session`, `account`, `verification`) were added alongside the app tables. Dev database: `neondev` (same project).
 
 ```sql
 clients      id, name, tax_id, email, phone, address, notes,
@@ -172,7 +172,7 @@ npx eslint .         # lint
 npm run build        # production build check
 ```
 
-Local `.env.local` points at the `neondev` database (safe to write test data there). To apply schema changes, add a migration file under `supabase/migrations/` and run it against Neon directly (psql or the Neon SQL editor); keep the file as the record. The old Supabase project (`bcftfhhnrmsblgbvmjnd`) is retained read-only as rollback until decommissioned.
+Local `.env.local` points at the `neondev` database (safe to write test data there). To apply schema changes, add a migration file under `db/migrations/` and run it against Neon directly (psql or the Neon SQL editor); keep the file as the record.
 
 ## 11. Known data facts
 
