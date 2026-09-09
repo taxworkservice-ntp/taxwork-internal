@@ -127,6 +127,14 @@ export async function deleteCredential(cid: string): Promise<void> {
   await sql`delete from credentials where id=${cid}`;
 }
 
+const CRED_EDITABLE = ["label", "username", "password", "portal_url", "notes"];
+
+export async function updateCredential(cid: string, cred: CredentialForm): Promise<void> {
+  await requireUser();
+  const { text, params } = buildUpdate("credentials", cid, cred as Record<string, unknown>, CRED_EDITABLE);
+  await sql.query(text, params);
+}
+
 export async function addShareholder(clientId: string, sh: ShareholderForm): Promise<void> {
   await requireUser();
   const shares = sh.shares === "" ? null : Number(sh.shares);

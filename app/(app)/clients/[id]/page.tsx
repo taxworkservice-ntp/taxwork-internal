@@ -13,6 +13,7 @@ import {
   setDirector,
   toggleTaskStatus,
   updateClient,
+  updateCredential as updateCredentialAction,
   type Credential,
 } from "@/lib/actions/clients";
 import CredentialRow from "@/components/credential-row";
@@ -92,6 +93,7 @@ export default function ClientDetailPage() {
   const [tasks, setTasks] = useState<TaskInstance[]>([]);
   const [showCredForm, setShowCredForm] = useState(false);
   const [cred, setCred] = useState(emptyCred);
+  const [editingCredId, setEditingCredId] = useState<string | null>(null);
   const [shareholders, setShareholders] = useState<Shareholder[]>([]);
   const [showShForm, setShowShForm] = useState(false);
   const [sh, setSh] = useState(emptyShareholder);
@@ -134,12 +136,35 @@ export default function ClientDetailPage() {
     window.location.href = "/clients";
   }
 
-  async function addCredential(e: React.FormEvent) {
+  async function saveCredential(e: React.FormEvent) {
     e.preventDefault();
-    await addCredentialAction(id, cred);
+    if (editingCredId) {
+      await updateCredentialAction(editingCredId, cred);
+    } else {
+      await addCredentialAction(id, cred);
+    }
     setCred(emptyCred);
+    setEditingCredId(null);
     setShowCredForm(false);
     load();
+  }
+
+  function startEditCredential(c: Credential) {
+    setCred({
+      label: c.label ?? "",
+      username: c.username ?? "",
+      password: c.password ?? "",
+      portal_url: c.portal_url ?? "",
+      notes: c.notes ?? "",
+    });
+    setEditingCredId(c.id);
+    setShowCredForm(true);
+  }
+
+  function cancelCredForm() {
+    setCred(emptyCred);
+    setEditingCredId(null);
+    setShowCredForm(false);
   }
 
   async function deleteCredential(cid: string) {
@@ -280,12 +305,18 @@ export default function ClientDetailPage() {
       <section className="card">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-medium">ข้อมูลเข้าระบบ</h2>
-          <button className="btn" onClick={() => setShowCredForm(!showCredForm)}>
+          <button
+            className="btn"
+            onClick={() => {
+              if (showCredForm) cancelCredForm();
+              else setShowCredForm(true);
+            }}
+          >
             {showCredForm ? "ยกเลิก" : "เพิ่มข้อมูลเข้าระบบ"}
           </button>
         </div>
         {showCredForm && (
-          <form onSubmit={addCredential} className="card mb-3 space-y-3">
+          <form onSubmit={saveCredential} className="card mb-3 space-y-3">
             <div>
               <label className="label">แพลตฟอร์ม * (เลือกหรือพิมพ์เอง)</label>
               <input
@@ -320,7 +351,7 @@ export default function ClientDetailPage() {
               <label className="label">หมายเหตุ</label>
               <input className="input" value={cred.notes} onChange={(e) => setCred({ ...cred, notes: e.target.value })} />
             </div>
-            <button className="btn-primary">บันทึก</button>
+            <button className="btn-primary">{editingCredId ? "บันทึกการแก้ไข" : "บันทึก"}</button>
           </form>
         )}
         <div className="space-y-2 md:hidden">
@@ -328,9 +359,14 @@ export default function ClientDetailPage() {
             <div key={c.id} className="rounded border border-neutral-200 bg-neutral-50 p-3">
               <div className="mb-2 flex items-start justify-between gap-2">
                 <h3 className="text-sm font-medium">{c.label}</h3>
-                <button className="text-xs text-red-600 underline" onClick={() => deleteCredential(c.id)}>
-                  ลบ
-                </button>
+                <div className="flex shrink-0 items-center gap-3">
+                  <button className="text-xs text-blue-600 underline" onClick={() => startEditCredential(c)}>
+                    แก้ไข
+                  </button>
+                  <button className="text-xs text-red-600 underline" onClick={() => deleteCredential(c.id)}>
+                    ลบ
+                  </button>
+                </div>
               </div>
               <div className="space-y-1 text-sm">
                 <div className="flex items-center justify-between gap-2">
@@ -358,7 +394,12 @@ export default function ClientDetailPage() {
           </thead>
           <tbody>
             {credentials.map((c) => (
-              <CredentialRow key={c.id} credential={c} onDelete={() => deleteCredential(c.id)} />
+              <CredentialRow
+                key={c.id}
+                credential={c}
+                onDelete={() => deleteCredential(c.id)}
+                onEdit={() => startEditCredential(c)}
+              />
             ))}
             {!credentials.length && (
               <tr><td colSpan={4} className="text-neutral-500">ไม่มีข้อมูล</td></tr>

@@ -13,9 +13,11 @@ type Credential = {
 export default function CredentialRow({
   credential,
   onDelete,
+  onEdit,
 }: {
   credential: Credential;
   onDelete: () => void;
+  onEdit: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -49,7 +51,10 @@ export default function CredentialRow({
           </button>
         )}
       </td>
-      <td className="text-right">
+      <td className="whitespace-nowrap text-right">
+        <button className="btn mr-1 px-1.5 py-0.5 text-xs" onClick={onEdit}>
+          แก้ไข
+        </button>
         <button className="btn-danger px-1.5 py-0.5 text-xs" onClick={onDelete}>
           ลบ
         </button>

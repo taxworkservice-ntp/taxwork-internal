@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { deleteFileRecord, listFiles, recordFile } from "@/lib/actions/files";
 import CopyButton from "@/components/copy-button";
@@ -28,13 +28,35 @@ function fmtTime(iso: string) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+const THAI_MONTHS = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function getFileGroup(iso: string, now = new Date()): { label: string; order: number } {
+  const d = new Date(iso);
+  const diff = Math.floor((startOfDay(now).getTime() - startOfDay(d).getTime()) / 86400000);
+  if (diff <= 0) return { label: "วันนี้", order: 0 };
+  if (diff === 1) return { label: "เมื่อวาน", order: 1 };
+  if (diff <= 7) return { label: "7 วันที่ผ่านมา", order: 2 };
+  if (diff <= 30) return { label: "30 วันที่ผ่านมา", order: 3 };
+  const label = `${THAI_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  const order = 100000 - (d.getFullYear() * 12 + d.getMonth());
+  return { label, order };
+}
+
 export default function FilesPage() {
   const [files, setFiles] = useState<FileRow[]>([]);
   const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [filterYear, setFilterYear] = useState("");
   const [filterMonth, setFilterMonth] = useState("");
   const [filterUser, setFilterUser] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const years = [...new Set(files.map((f) => new Date(f.uploaded_at).getFullYear()))].sort((a, b) => b - a);
   const users = [...new Set(files.map((f) => f.uploaded_by ?? "").filter(Boolean))].sort();
@@ -49,35 +71,42 @@ export default function FilesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
-    const list = e.target.files;
-    if (!list?.length) return;
+  async function uploadFiles(list: FileList | File[]) {
+    const arr = Array.from(list);
+    if (!arr.length) return;
     setUploading(true);
-
-    for (const file of Array.from(list)) {
-      const signRes = await fetch("/api/files/sign-upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientId: "", fileName: file.name }),
-      });
-      if (!signRes.ok) continue;
-      const { url, path } = await signRes.json();
-      const putRes = await fetch(url, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-      });
-      if (!putRes.ok) continue;
-      await recordFile({
-        client_id: null,
-        storage_path: path,
-        file_name: file.name,
-        size_bytes: file.size,
-        mime_type: file.type,
-      });
+    try {
+      for (const file of arr) {
+        const signRes = await fetch("/api/files/sign-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientId: "", fileName: file.name }),
+        });
+        if (!signRes.ok) continue;
+        const { url, path } = await signRes.json();
+        const putRes = await fetch(url, {
+          method: "PUT",
+          body: file,
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+        });
+        if (!putRes.ok) continue;
+        await recordFile({
+          client_id: null,
+          storage_path: path,
+          file_name: file.name,
+          size_bytes: file.size,
+          mime_type: file.type,
+        });
+      }
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+      load();
     }
-    setUploading(false);
-    load();
+  }
+
+  function upload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files) uploadFiles(e.target.files);
   }
 
   async function remove(file: FileRow) {
@@ -119,15 +148,53 @@ export default function FilesPage() {
     return true;
   });
 
+  const grouped = useMemo(() => {
+    const now = new Date();
+    const sorted = [...filtered].sort(
+      (a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime()
+    );
+    const map = new Map<string, { label: string; order: number; rows: FileRow[] }>();
+    for (const f of sorted) {
+      const g = getFileGroup(f.uploaded_at, now);
+      const entry = map.get(g.label);
+      if (entry) entry.rows.push(f);
+      else map.set(g.label, { ...g, rows: [f] });
+    }
+    return [...map.values()].sort((a, b) => a.order - b.order);
+  }, [filtered]);
+
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">ไฟล์</h1>
-        <div className="flex-grow" />
-        <label className={`btn-primary ${uploading ? "opacity-50" : ""}`}>
-          {uploading ? "กำลังอัปโหลด..." : "อัปโหลด"}
-          <input type="file" multiple className="hidden" onChange={upload} disabled={uploading} />
-        </label>
+      </div>
+
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
+        }}
+        className={`mb-4 flex cursor-pointer flex-col items-center justify-center gap-1 rounded border-2 border-dashed px-4 py-6 text-center transition-colors ${
+          dragging ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:border-neutral-400"
+        } ${uploading ? "pointer-events-none opacity-60" : ""}`}
+      >
+        <p className="text-sm font-medium text-neutral-700">
+          {uploading ? "กำลังอัปโหลด..." : dragging ? "วางไฟล์เพื่ออัปโหลด" : "ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์"}
+        </p>
+        <p className="text-xs text-neutral-500">รองรับหลายไฟล์พร้อมกัน</p>
+        <input ref={inputRef} type="file" multiple className="hidden" onChange={upload} disabled={uploading} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -197,45 +264,54 @@ export default function FilesPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((f) => (
-              <tr key={f.id}>
-                <td className="overflow-hidden">
-                  {f.uploaded_by ? (
-                    <span className="inline-flex items-center">
-                      <CopyButton text={f.uploaded_by} />
-                      <span className="ml-1 truncate">{f.uploaded_by}</span>
-                    </span>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td>
-                  <button className="text-blue-600 underline" onClick={() => download(f)}>
-                    {f.file_name}
-                  </button>
-                </td>
-                <td>
-                  {f.clients ? (
-                    <Link href={`/clients/${f.client_id}`} className="text-blue-600 underline">
-                      {f.clients.name}
-                    </Link>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td className="whitespace-nowrap">
-                  {f.size_bytes > 1048576
-                    ? `${(f.size_bytes / 1048576).toFixed(1)} MB`
-                    : `${Math.ceil(f.size_bytes / 1024)} KB`}
-                </td>
-                <td className="whitespace-nowrap">{fmtDate(f.uploaded_at)}</td>
-                <td className="whitespace-nowrap">{fmtTime(f.uploaded_at)}</td>
-                <td className="text-right">
-                  <button className="btn-danger px-1.5 py-0.5 text-xs" onClick={() => remove(f)}>
-                    ลบ
-                  </button>
-                </td>
-              </tr>
+            {grouped.map((g) => (
+              <Fragment key={`group-${g.label}`}>
+                <tr className="bg-neutral-100">
+                  <td colSpan={7} className="py-1.5 text-xs font-semibold text-neutral-600">
+                    {g.label} <span className="ml-1 font-normal text-neutral-400">({g.rows.length})</span>
+                  </td>
+                </tr>
+                {g.rows.map((f) => (
+                  <tr key={f.id}>
+                    <td className="overflow-hidden">
+                      {f.uploaded_by ? (
+                        <span className="inline-flex items-center">
+                          <CopyButton text={f.uploaded_by} />
+                          <span className="ml-1 truncate">{f.uploaded_by}</span>
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>
+                      <button className="text-blue-600 underline" onClick={() => download(f)}>
+                        {f.file_name}
+                      </button>
+                    </td>
+                    <td>
+                      {f.clients ? (
+                        <Link href={`/clients/${f.client_id}`} className="text-blue-600 underline">
+                          {f.clients.name}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap">
+                      {f.size_bytes > 1048576
+                        ? `${(f.size_bytes / 1048576).toFixed(1)} MB`
+                        : `${Math.ceil(f.size_bytes / 1024)} KB`}
+                    </td>
+                    <td className="whitespace-nowrap">{fmtDate(f.uploaded_at)}</td>
+                    <td className="whitespace-nowrap">{fmtTime(f.uploaded_at)}</td>
+                    <td className="text-right">
+                      <button className="btn-danger px-1.5 py-0.5 text-xs" onClick={() => remove(f)}>
+                        ลบ
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
             ))}
             {!filtered.length && (
               <tr>
