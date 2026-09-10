@@ -1,9 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, degrees } from "pdf-lib";
 import { PDFDocument as SecurePDFDocument } from "@cantoo/pdf-lib";
 import JSZip from "jszip";
+import { thaiBahtText } from "@/lib/thai-baht-text";
 
 type UnlockItem = {
   id: string;
@@ -32,6 +33,32 @@ export default function ToolsPage() {
   const [splitMode, setSplitMode] = useState<"ranges" | "every-page">("ranges");
   const [splitAsZip, setSplitAsZip] = useState(true);
   const [splitTotal, setSplitTotal] = useState<number | null>(null);
+  // --- VAT / WHT / baht text ---
+  const [vatInput, setVatInput] = useState("");
+  const [vatMode, setVatMode] = useState<"exclusive" | "inclusive">("exclusive");
+  const [whtInput, setWhtInput] = useState("");
+  const [whtRate, setWhtRate] = useState("3");
+  const [bahtInput, setBahtInput] = useState("");
+  // --- Tax ID check ---
+  const [taxIds, setTaxIds] = useState("");
+  // --- Fix pages (rotate/delete/reorder) ---
+  const [fixFile, setFixFile] = useState<File | null>(null);
+  const [fixTotal, setFixTotal] = useState<number | null>(null);
+  const [fixRotate, setFixRotate] = useState(0);
+  const [fixDeleteInput, setFixDeleteInput] = useState("");
+  const [fixOrderInput, setFixOrderInput] = useState("");
+  const [fixBusy, setFixBusy] = useState(false);
+  const [fixDragActive, setFixDragActive] = useState(false);
+  const fixInputRef = useRef<HTMLInputElement>(null);
+  // --- Batch rename + inventory ---
+  const [renameFiles, setRenameFiles] = useState<File[]>([]);
+  const [renamePages, setRenamePages] = useState<(number | null)[]>([]);
+  const [renamePrefix, setRenamePrefix] = useState("");
+  const [renameStart, setRenameStart] = useState("1");
+  const [renamePad, setRenamePad] = useState("2");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameDragActive, setRenameDragActive] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   function isPdf(f: File) {
     return f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
@@ -323,6 +350,173 @@ export default function ToolsPage() {
   }
 
   const okCount = unlockItems.filter((i) => i.status === "ok").length;
+
+  // --- VAT / WHT / baht ---
+  function num(s: string) {
+    const n = parseFloat(s.replace(/,/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  }
+  const vatAmt = num(vatInput);
+  const vatBase = vatMode === "exclusive" ? vatAmt : vatAmt / 1.07;
+  const vatTax = vatMode === "exclusive" ? vatAmt * 0.07 : vatAmt - vatAmt / 1.07;
+  const vatTotal = vatMode === "exclusive" ? vatAmt * 1.07 : vatAmt;
+  const whtAmt = num(whtInput);
+  const whtR = num(whtRate) / 100;
+  const whtTax = whtAmt * whtR;
+  const bahtAmt = num(bahtInput);
+  const bahtText = bahtInput.trim() === "" ? "" : thaiBahtText(bahtAmt);
+
+  // --- Tax ID ---
+  function checkTaxId(raw: string) {
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length !== 13) return { digits, ok: false, reason: "ต้องมี 13 หลัก" };
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += parseInt(digits[i], 10) * (13 - i);
+    const check = (11 - (sum % 11)) % 10;
+    if (check !== parseInt(digits[12], 10)) return { digits, ok: false, reason: "checksum ไม่ผ่าน" };
+    return { digits, ok: true, reason: "" };
+  }
+  function formatTaxId(d: string) {
+    return `${d[0]}-${d.slice(1, 5)}-${d.slice(5, 10)}-${d.slice(10, 12)}-${d[12]}`;
+  }
+  const taxRows = taxIds
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((raw) => ({ raw, ...checkTaxId(raw) }));
+  const taxOkCount = taxRows.filter((r) => r.ok).length;
+
+  // --- Fix pages ---
+  async function setFixFileWithInfo(f: File | null) {
+    setFixFile(f);
+    setFixTotal(null);
+    if (!f) return;
+    try {
+      const src = await PDFDocument.load(await f.arrayBuffer(), { ignoreEncryption: true });
+      setFixTotal(src.getPageCount());
+    } catch {
+      setFixTotal(null);
+      setMessage("เปิดไฟล์ไม่สำเร็จ — อาจติดรหัสผ่าน ให้ปลดล็อกก่อน");
+    }
+  }
+  function parsePageList(input: string, total: number): number[] {
+    const out = new Set<number>();
+    for (const part of input.split(",")) {
+      const t = part.trim();
+      if (!t) continue;
+      const m = t.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (m) {
+        const a = Math.min(parseInt(m[1], 10), parseInt(m[2], 10));
+        const b = Math.max(parseInt(m[1], 10), parseInt(m[2], 10));
+        for (let i = a; i <= b; i++) if (i >= 1 && i <= total) out.add(i - 1);
+      } else {
+        const n = parseInt(t, 10);
+        if (Number.isFinite(n) && n >= 1 && n <= total) out.add(n - 1);
+      }
+    }
+    return [...out];
+  }
+  async function fixExport() {
+    if (!fixFile || fixTotal === null) {
+      setMessage("เลือกไฟล์ PDF ที่จะแก้ก่อน");
+      return;
+    }
+    setFixBusy(true);
+    try {
+      const src = await PDFDocument.load(await fixFile.arrayBuffer(), { ignoreEncryption: true });
+      const total = src.getPageCount();
+      const del = new Set(parsePageList(fixDeleteInput, total));
+      const order = parsePageList(fixOrderInput.replace(/-/g, ","), total);
+      let indices = order.length ? order.filter((i) => !del.has(i)) : src.getPageIndices().filter((i) => !del.has(i));
+      // If order input given but partial, append remaining pages in order
+      if (order.length) {
+        const rest = src.getPageIndices().filter((i) => !del.has(i) && !order.includes(i));
+        indices = [...indices, ...rest];
+      }
+      if (!indices.length) {
+        setMessage("ไม่เหลือหน้าไหนเลย — ตรวจหน้าที่จะลบ/ลำดับใหม่");
+        return;
+      }
+      const out = await PDFDocument.create();
+      const pages = await out.copyPages(src, indices);
+      const rot = ((fixRotate % 360) + 360) % 360;
+      pages.forEach((p) => {
+        if (rot) p.setRotation(degrees(rot));
+        out.addPage(p);
+      });
+      downloadBytes(await out.save(), `${baseName(fixFile.name)}-fixed.pdf`);
+      setMessage(`บันทึกแล้ว ${indices.length}/${total} หน้า${rot ? ` (หมุน ${rot}°)` : ""}`);
+    } catch {
+      setMessage("แก้ไฟล์ไม่สำเร็จ — ไฟล์อาจติดรหัสผ่าน");
+    } finally {
+      setFixBusy(false);
+    }
+  }
+
+  // --- Batch rename ---
+  async function addRenameFiles(files: File[] | FileList) {
+    const arr = Array.from(files);
+    if (!arr.length) return;
+    const start = renameFiles.length;
+    setRenameFiles((prev) => [...prev, ...arr]);
+    setRenamePages((prev) => [...prev, ...arr.map(() => null)]);
+    setMessage(null);
+    arr.forEach(async (f, k) => {
+      if (!isPdf(f)) return;
+      try {
+        const src = await PDFDocument.load(await f.arrayBuffer(), { ignoreEncryption: true });
+        const n = src.getPageCount();
+        setRenamePages((prev) => {
+          const next = [...prev];
+          next[start + k] = n;
+          return next;
+        });
+      } catch {
+        /* locked/broken — leave null */
+      }
+    });
+  }
+  function extOf(name: string) {
+    const m = name.match(/(\.[A-Za-z0-9]+)$/);
+    return m ? m[1].toLowerCase() : "";
+  }
+  function previewName(i: number, orig: string) {
+    const pad = Math.max(0, parseInt(renamePad, 10) || 0);
+    const start = parseInt(renameStart, 10) || 1;
+    const seq = String(start + i).padStart(pad, "0");
+    const pre = renamePrefix.trim() ? `${renamePrefix.trim()}-` : "";
+    return `${pre}${seq}${extOf(orig) || ".pdf"}`;
+  }
+  async function renameZip() {
+    if (!renameFiles.length) {
+      setMessage("เพิ่มไฟล์ก่อน");
+      return;
+    }
+    setRenameBusy(true);
+    try {
+      const used = new Set<string>();
+      const files: { name: string; bytes: Uint8Array }[] = [];
+      for (let i = 0; i < renameFiles.length; i++) {
+        const f = renameFiles[i];
+        let name = previewName(i, f.name);
+        let n = 1;
+        while (used.has(name)) {
+          const ext = extOf(name);
+          name = `${name.replace(/(\.[A-Za-z0-9]+)?$/, "")}_${n}${ext}`;
+          n++;
+        }
+        used.add(name);
+        files.push({ name, bytes: new Uint8Array(await f.arrayBuffer()) });
+      }
+      const stamp = new Date().toISOString().slice(0, 10);
+      await downloadZipBlob(files, `${renamePrefix.trim() || "renamed"}-${stamp}.zip`);
+      setMessage(`ส่งออก ZIP แล้ว ${files.length} ไฟล์`);
+    } catch {
+      setMessage("ส่งออก ZIP ไม่สำเร็จ");
+    } finally {
+      setRenameBusy(false);
+    }
+  }
 
   return (
     <>
@@ -625,6 +819,251 @@ export default function ToolsPage() {
           </button>
         </div>
       </section>
+
+      <div className="grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
+        <section className="card mt-6">
+          <h2 className="mb-1 font-medium">VAT / หัก ณ ที่จ่าย / ตัวอักษร</h2>
+          <p className="mb-3 text-xs text-neutral-500">คำนวณในเบราว์เซอร์ ไม่บันทึกข้อมูล</p>
+          <label className="label">ยอดเงิน</label>
+          <input className="input mb-2" inputMode="decimal" placeholder="เช่น 10000" value={vatInput} onChange={(e) => setVatInput(e.target.value)} />
+          <div className="mb-2 flex gap-2 text-sm">
+            <label className="flex items-center gap-1">
+              <input type="radio" checked={vatMode === "exclusive"} onChange={() => setVatMode("exclusive")} />
+              ยังไม่รวม VAT
+            </label>
+            <label className="flex items-center gap-1">
+              <input type="radio" checked={vatMode === "inclusive"} onChange={() => setVatMode("inclusive")} />
+              รวม VAT แล้ว
+            </label>
+          </div>
+          <div className="mb-3 rounded bg-neutral-50 p-2 text-sm">
+            <div>ฐานภาษี: {vatBase.toLocaleString("th-TH", { maximumFractionDigits: 2 })}</div>
+            <div>VAT 7%: {vatTax.toLocaleString("th-TH", { maximumFractionDigits: 2 })}</div>
+            <div className="font-medium">รวม: {vatTotal.toLocaleString("th-TH", { maximumFractionDigits: 2 })}</div>
+          </div>
+          <div className="mb-2 flex gap-2">
+            <div className="flex-1">
+              <label className="label">ยอดก่อนหักภาษี</label>
+              <input className="input" inputMode="decimal" placeholder="เช่น 50000" value={whtInput} onChange={(e) => setWhtInput(e.target.value)} />
+            </div>
+            <div className="w-28">
+              <label className="label">อัตรา %</label>
+              <input className="input" inputMode="decimal" list="wht-rates" value={whtRate} onChange={(e) => setWhtRate(e.target.value)} />
+              <datalist id="wht-rates">
+                <option value="1" />
+                <option value="1.5" />
+                <option value="2" />
+                <option value="3" />
+                <option value="5" />
+                <option value="10" />
+                <option value="15" />
+              </datalist>
+            </div>
+          </div>
+          <div className="mb-3 rounded bg-neutral-50 p-2 text-sm">
+            <div>ภาษีหัก: {whtTax.toLocaleString("th-TH", { maximumFractionDigits: 2 })}</div>
+            <div className="font-medium">จ่ายสุทธิ: {(whtAmt - whtTax).toLocaleString("th-TH", { maximumFractionDigits: 2 })}</div>
+          </div>
+          <label className="label">จำนวนเงิน → ตัวอักษร</label>
+          <input className="input mb-1" inputMode="decimal" placeholder="เช่น 12345.50" value={bahtInput} onChange={(e) => setBahtInput(e.target.value)} />
+          {bahtText && <p className="rounded bg-neutral-50 p-2 text-sm">{bahtText}</p>}
+        </section>
+
+        <section className="card mt-6">
+          <h2 className="mb-1 font-medium">เช็คเลขผู้เสียภาษี 13 หลัก</h2>
+          <p className="mb-3 text-xs text-neutral-500">วางได้หลายเลข (บรรทัดละเลข หรือคั่นด้วยจุลภาค)</p>
+          <textarea
+            className="input mb-2 h-24 font-mono"
+            placeholder={"1234567890123\n3100600123456"}
+            value={taxIds}
+            onChange={(e) => setTaxIds(e.target.value)}
+          />
+          {taxRows.length > 0 && (
+            <>
+              <p className="mb-2 text-sm">ผ่าน {taxOkCount}/{taxRows.length}</p>
+              <div className="mb-2 max-h-48 overflow-y-auto">
+                <table className="table-base">
+                  <tbody>
+                    {taxRows.map((r, i) => (
+                      <tr key={`${i}-${r.raw}`}>
+                        <td className="font-mono text-xs">{r.digits.length === 13 ? formatTaxId(r.digits) : r.raw}</td>
+                        <td className="text-xs">{r.ok ? <span className="text-green-600">✓ ถูกต้อง</span> : <span className="text-red-600">✕ {r.reason}</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                className="btn"
+                onClick={() => {
+                  const ok = taxRows.filter((r) => r.ok).map((r) => formatTaxId(r.digits));
+                  navigator.clipboard?.writeText(ok.join("\n")).then(
+                    () => setMessage(`คัดลอกเลขที่ถูก ${ok.length} เลขแล้ว`),
+                    () => setMessage("คัดลอกไม่สำเร็จ")
+                  );
+                }}
+              >
+                คัดลอกเลขที่ถูก ({taxOkCount})
+              </button>
+            </>
+          )}
+        </section>
+      </div>
+
+      <div className="grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
+        <section className="card mt-6">
+          <h2 className="mb-1 font-medium">หมุน / ลบ / จัดหน้า PDF</h2>
+          <p className="mb-3 text-xs text-neutral-500">แก้สแกนเอียง ตัดหน้าว่าง แล้วบันทึกเป็นไฟล์เดียว</p>
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setFixDragActive(true);
+            }}
+            onDragLeave={() => setFixDragActive(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setFixDragActive(false);
+              const f = Array.from(e.dataTransfer.files ?? []).find(isPdf);
+              if (f) setFixFileWithInfo(f);
+            }}
+            onClick={() => fixInputRef.current?.click()}
+            className={`mb-3 cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+              fixDragActive ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+            }`}
+          >
+            <input
+              ref={fixInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) setFixFileWithInfo(f);
+                e.target.value = "";
+              }}
+            />
+            {fixFile ? fixFile.name : "ลากไฟล์มาวาง หรือคลิกเพื่อเลือก"}
+            {fixTotal !== null && <div className="mt-1 text-xs text-neutral-500">{fixTotal} หน้า</div>}
+          </div>
+          <label className="label">หมุนทุกหน้า (องศา)</label>
+          <div className="mb-3 flex gap-1">
+            {[0, 90, 180, 270].map((d) => (
+              <button key={d} className={fixRotate === d ? "btn-primary" : "btn"} onClick={() => setFixRotate(d)}>
+                {d}°
+              </button>
+            ))}
+          </div>
+          <label className="label">ลบหน้า (เช่น 2, 5-6)</label>
+          <input className="input mb-3" placeholder="เว้นว่าง = ไม่ลบ" value={fixDeleteInput} onChange={(e) => setFixDeleteInput(e.target.value)} />
+          <label className="label">ลำดับใหม่ (เช่น 3,1,2 — เว้นว่าง = เดิม)</label>
+          <input className="input mb-3" placeholder="เว้นว่าง = ลำดับเดิม" value={fixOrderInput} onChange={(e) => setFixOrderInput(e.target.value)} />
+          <div className="flex gap-2">
+            <button className="btn-primary" onClick={fixExport} disabled={fixBusy || !fixFile}>
+              {fixBusy ? "กำลังทำ…" : "บันทึกไฟล์"}
+            </button>
+            {fixFile && (
+              <button
+                className="btn-danger"
+                disabled={fixBusy}
+                onClick={() => {
+                  setFixFile(null);
+                  setFixTotal(null);
+                }}
+              >
+                ล้าง
+              </button>
+            )}
+          </div>
+        </section>
+
+        <section className="card mt-6">
+          <h2 className="mb-1 font-medium">เปลี่ยนชื่อเป็นชุด → ZIP</h2>
+          <p className="mb-3 text-xs text-neutral-500">ลากไฟล์หลายไฟล์ ดูนับหน้า แล้วส่งออกชื่อใหม่เป็น ZIP</p>
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setRenameDragActive(true);
+            }}
+            onDragLeave={() => setRenameDragActive(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setRenameDragActive(false);
+              if (e.dataTransfer.files?.length) addRenameFiles(e.dataTransfer.files);
+            }}
+            onClick={() => renameInputRef.current?.click()}
+            className={`mb-3 cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+              renameDragActive ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+            }`}
+          >
+            <input
+              ref={renameInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) addRenameFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            ลากไฟล์มาวาง หรือคลิกเพื่อเลือก ({renameFiles.length} ไฟล์)
+          </div>
+          <div className="mb-3 grid grid-cols-3 gap-2">
+            <div>
+              <label className="label">คำนำหน้า</label>
+              <input className="input" placeholder="เช่น ACME-2026-08" value={renamePrefix} onChange={(e) => setRenamePrefix(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">เริ่มที่</label>
+              <input className="input" inputMode="numeric" value={renameStart} onChange={(e) => setRenameStart(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">หลักเลข</label>
+              <input className="input" inputMode="numeric" value={renamePad} onChange={(e) => setRenamePad(e.target.value)} />
+            </div>
+          </div>
+          {renameFiles.length > 0 && (
+            <div className="mb-3 max-h-48 overflow-y-auto">
+              <table className="table-base">
+                <thead>
+                  <tr>
+                    <th>เดิม</th>
+                    <th>ชื่อใหม่</th>
+                    <th className="w-14">หน้า</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {renameFiles.map((f, i) => (
+                    <tr key={`${i}-${f.name}-${f.size}`}>
+                      <td className="max-w-28 truncate text-xs" title={f.name}>
+                        {f.name}
+                      </td>
+                      <td className="font-mono text-xs">{previewName(i, f.name)}</td>
+                      <td className="text-center text-xs">{isPdf(f) ? (renamePages[i] ?? "…") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button className="btn-primary" onClick={renameZip} disabled={renameBusy || !renameFiles.length}>
+              {renameBusy ? "กำลังทำ…" : `ส่งออก ZIP (${renameFiles.length})`}
+            </button>
+            {renameFiles.length > 0 && (
+              <button
+                className="btn-danger"
+                disabled={renameBusy}
+                onClick={() => {
+                  setRenameFiles([]);
+                  setRenamePages([]);
+                }}
+              >
+                ล้าง
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
 
       {message && <p className="mt-4 text-sm">{message}</p>}
     </>
