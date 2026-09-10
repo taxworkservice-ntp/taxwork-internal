@@ -15,6 +15,24 @@ type UnlockItem = {
   bytes?: Uint8Array;
 };
 
+function OtherTool({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
+  return (
+    <details className="card group">
+      <summary className="cursor-pointer list-none">
+        <span className="flex items-center justify-between gap-2">
+          <span>
+            <span className="block font-medium">{title}</span>
+            <span className="block text-xs text-neutral-500">{desc}</span>
+          </span>
+          <span className="btn shrink-0 group-open:hidden">เปิด</span>
+          <span className="btn hidden shrink-0 group-open:inline-block">ปิด</span>
+        </span>
+      </summary>
+      <div className="mt-3 border-t border-neutral-100 pt-3">{children}</div>
+    </details>
+  );
+}
+
 export default function ToolsPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -820,10 +838,9 @@ export default function ToolsPage() {
         </div>
       </section>
 
-      <div className="grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
-        <section className="card mt-6">
-          <h2 className="mb-1 font-medium">VAT / หัก ณ ที่จ่าย / ตัวอักษร</h2>
-          <p className="mb-3 text-xs text-neutral-500">คำนวณในเบราว์เซอร์ ไม่บันทึกข้อมูล</p>
+      <h2 className="mb-3 mt-8 max-w-3xl font-medium text-neutral-600">เครื่องมืออื่น ๆ</h2>
+      <div className="grid max-w-3xl grid-cols-1 gap-4">
+        <OtherTool title="VAT / หัก ณ ที่จ่าย / ตัวอักษร" desc="คำนวณในเบราว์เซอร์ ไม่บันทึกข้อมูล">
           <label className="label">ยอดเงิน</label>
           <input className="input mb-2" inputMode="decimal" placeholder="เช่น 10000" value={vatInput} onChange={(e) => setVatInput(e.target.value)} />
           <div className="mb-2 flex gap-2 text-sm">
@@ -867,11 +884,9 @@ export default function ToolsPage() {
           <label className="label">จำนวนเงิน → ตัวอักษร</label>
           <input className="input mb-1" inputMode="decimal" placeholder="เช่น 12345.50" value={bahtInput} onChange={(e) => setBahtInput(e.target.value)} />
           {bahtText && <p className="rounded bg-neutral-50 p-2 text-sm">{bahtText}</p>}
-        </section>
+        </OtherTool>
 
-        <section className="card mt-6">
-          <h2 className="mb-1 font-medium">เช็คเลขผู้เสียภาษี 13 หลัก</h2>
-          <p className="mb-3 text-xs text-neutral-500">วางได้หลายเลข (บรรทัดละเลข หรือคั่นด้วยจุลภาค)</p>
+        <OtherTool title="เช็คเลขผู้เสียภาษี 13 หลัก" desc="วางได้หลายเลข (บรรทัดละเลข หรือคั่นด้วยจุลภาค)">
           <textarea
             className="input mb-2 h-24 font-mono"
             placeholder={"1234567890123\n3100600123456"}
@@ -907,13 +922,9 @@ export default function ToolsPage() {
               </button>
             </>
           )}
-        </section>
-      </div>
+        </OtherTool>
 
-      <div className="grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
-        <section className="card mt-6">
-          <h2 className="mb-1 font-medium">หมุน / ลบ / จัดหน้า PDF</h2>
-          <p className="mb-3 text-xs text-neutral-500">แก้สแกนเอียง ตัดหน้าว่าง แล้วบันทึกเป็นไฟล์เดียว</p>
+        <OtherTool title="หมุน / ลบ / จัดหน้า PDF" desc="แก้สแกนเอียง ตัดหน้าว่าง แล้วบันทึกเป็นไฟล์เดียว">
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -974,11 +985,9 @@ export default function ToolsPage() {
               </button>
             )}
           </div>
-        </section>
+        </OtherTool>
 
-        <section className="card mt-6">
-          <h2 className="mb-1 font-medium">เปลี่ยนชื่อเป็นชุด → ZIP</h2>
-          <p className="mb-3 text-xs text-neutral-500">ลากไฟล์หลายไฟล์ ดูนับหน้า แล้วส่งออกชื่อใหม่เป็น ZIP</p>
+        <OtherTool title="เปลี่ยนชื่อเป็นชุด → ZIP" desc="ลากไฟล์หลายไฟล์ ดูนับหน้า แล้วส่งออกชื่อใหม่เป็น ZIP">
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -1062,7 +1071,7 @@ export default function ToolsPage() {
               </button>
             )}
           </div>
-        </section>
+        </OtherTool>
       </div>
 
       {message && <p className="mt-4 text-sm">{message}</p>}
