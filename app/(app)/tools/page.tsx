@@ -1042,6 +1042,116 @@ export default function ToolsPage() {
         </div>
       </section>
 
+      <section className="card mt-6 max-w-3xl">
+        <h2 className="mb-1 font-medium">จับคู่ยอดรวม (Subset Sum)</h2>
+        <p className="mb-3 text-xs text-neutral-500">
+          วางรายการหลายยอด + ยอดเป้าหมาย หาชุดที่รวมกันได้ตรง (หรือใกล้เคียง)
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">รายการยอดเงิน (บรรทัดละยอด หรือคั่นด้วยจุลภาค)</label>
+            <textarea
+              className="input h-40 font-mono"
+              placeholder={"12,500\n3,200.50\n8,750"}
+              value={subInput}
+              onChange={(e) => {
+                setSubInput(e.target.value);
+                setSubResult(null);
+              }}
+            />
+          </div>
+          <div>
+            <label className="label">ยอดเป้าหมาย</label>
+            <input
+              className="input mb-3 font-mono"
+              inputMode="decimal"
+              placeholder="เช่น 25,450"
+              value={subTarget}
+              onChange={(e) => {
+                setSubTarget(e.target.value);
+                setSubResult(null);
+              }}
+            />
+            <div className="flex gap-2">
+              <button className="btn-primary" onClick={subsetSearch} disabled={subBusy}>
+                {subBusy ? "กำลังค้นหา…" : "ค้นหาชุดยอด"}
+              </button>
+              {(subInput || subTarget || subResult) && (
+                <button
+                  className="btn-danger"
+                  disabled={subBusy}
+                  onClick={() => {
+                    setSubInput("");
+                    setSubTarget("");
+                    setSubResult(null);
+                  }}
+                >
+                  ล้าง
+                </button>
+              )}
+            </div>
+            <p className="mt-2 text-xs text-neutral-500">
+              ตรงเป๊ะระดับสตางค์ก่อน ถ้าไม่มีจะแสดงชุดใกล้เคียง + ส่วนต่าง สูงสุด 60 รายการ แสดงไม่เกิน 20 ชุด
+            </p>
+          </div>
+        </div>
+        {subResult && (
+          <div className="mt-3 space-y-3">
+            <p className="text-xs text-neutral-500">
+              อ่าน {subResult.values.length} รายการ{subResult.invalid > 0 ? ` (ข้าม ${subResult.invalid} บรรทัดที่ไม่ใช่ตัวเลข)` : ""}
+              {subResult.partial ? " • ค้นหาบางส่วน (รายการเยอะ/หมดเวลา)" : ""}
+            </p>
+            {subResult.exact.length > 0 ? (
+              <div>
+                <p className="mb-1 text-sm font-medium text-green-700">ตรงเป๊ะ {subResult.exact.length} ชุด ✓</p>
+                <div className="max-h-64 space-y-1 overflow-y-auto">
+                  {subResult.exact.map((idxs, k) => (
+                    <div key={k} className="flex items-start gap-2 rounded border border-green-200 bg-green-50 px-2 py-1 text-sm">
+                      <span className="text-xs text-neutral-400">{k + 1}.</span>
+                      <span className="flex-1 font-mono text-xs">
+                        {idxs.map((i) => fmtMoney(subResult.values[i] ?? 0)).join(" + ")} ={" "}
+                        {fmtMoney(subResult.target)}
+                      </span>
+                      <button
+                        className="btn !px-1.5 !py-0.5 text-xs"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(idxs.map((i) => String(subResult.values[i])).join("\n")).then(
+                            () => setMessage(`คัดลอกชุดที่ ${k + 1} แล้ว (${idxs.length} รายการ)`),
+                            () => setMessage("คัดลอกไม่สำเร็จ")
+                          );
+                        }}
+                      >
+                        คัดลอก
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-neutral-500">ไม่เจอชุดตรงเป๊ะ</p>
+            )}
+            {subResult.closest.length > 0 && (
+              <div>
+                <p className="mb-1 text-sm font-medium">ใกล้เคียง (ไม่ตรงเป๊ะ)</p>
+                <div className="max-h-48 space-y-1 overflow-y-auto">
+                  {subResult.closest.map((c, k) => (
+                    <div key={k} className="rounded border border-neutral-200 px-2 py-1 text-sm">
+                      <span className="font-mono text-xs">
+                        {c.indices.map((i) => fmtMoney(subResult.values[i] ?? 0)).join(" + ")} ={" "}
+                        {fmtMoney(c.sum / 100)}
+                      </span>{" "}
+                      <span className={`text-xs ${c.diff > 0 ? "text-orange-600" : "text-blue-600"}`}>
+                        ({c.diff > 0 ? `เกิน ${fmtMoney(c.diff / 100)}` : `ขาด ${fmtMoney(-c.diff / 100)}`})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
       <h2 className="mb-3 mt-8 max-w-3xl font-medium text-neutral-600">เครื่องมืออื่น ๆ</h2>
       <div className="grid max-w-3xl grid-cols-1 gap-4">
         <OtherTool title="VAT / หัก ณ ที่จ่าย / ตัวอักษร" desc="คำนวณในเบราว์เซอร์ ไม่บันทึกข้อมูล">
@@ -1277,96 +1387,6 @@ export default function ToolsPage() {
           </div>
         </OtherTool>
 
-        <OtherTool title="จับคู่ยอดรวม (Subset Sum)" desc="วางรายการหลายยอด + ยอดเป้าหมาย หาชุดที่รวมกันได้ตรง (หรือใกล้เคียง)">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="label">รายการยอดเงิน (บรรทัดละยอด หรือคั่นด้วยจุลภาค)</label>
-              <textarea
-                className="input h-40 font-mono"
-                placeholder={"12,500\n3,200.50\n8,750"}
-                value={subInput}
-                onChange={(e) => {
-                  setSubInput(e.target.value);
-                  setSubResult(null);
-                }}
-              />
-            </div>
-            <div>
-              <label className="label">ยอดเป้าหมาย</label>
-              <input
-                className="input mb-3 font-mono"
-                inputMode="decimal"
-                placeholder="เช่น 25,450"
-                value={subTarget}
-                onChange={(e) => {
-                  setSubTarget(e.target.value);
-                  setSubResult(null);
-                }}
-              />
-              <button className="btn-primary" onClick={subsetSearch} disabled={subBusy}>
-                {subBusy ? "กำลังค้นหา…" : "ค้นหาชุดยอด"}
-              </button>
-              <p className="mt-2 text-xs text-neutral-500">
-                ตรงเป๊ะระดับสตางค์ก่อน ถ้าไม่มีจะแสดงชุดใกล้เคียง + ส่วนต่าง สูงสุด 60 รายการ แสดงไม่เกิน 20 ชุด
-              </p>
-            </div>
-          </div>
-          {subResult && (
-            <div className="mt-3 space-y-3">
-              <p className="text-xs text-neutral-500">
-                อ่าน {subResult.values.length} รายการ{subResult.invalid > 0 ? ` (ข้าม ${subResult.invalid} บรรทัดที่ไม่ใช่ตัวเลข)` : ""}
-                {subResult.partial ? " • ค้นหาบางส่วน (รายการเยอะ/หมดเวลา)" : ""}
-              </p>
-              {subResult.exact.length > 0 ? (
-                <div>
-                  <p className="mb-1 text-sm font-medium text-green-700">ตรงเป๊ะ {subResult.exact.length} ชุด ✓</p>
-                  <div className="max-h-64 space-y-1 overflow-y-auto">
-                    {subResult.exact.map((idxs, k) => (
-                      <div key={k} className="flex items-start gap-2 rounded border border-green-200 bg-green-50 px-2 py-1 text-sm">
-                        <span className="text-xs text-neutral-400">{k + 1}.</span>
-                        <span className="flex-1 font-mono text-xs">
-                          {idxs.map((i) => fmtMoney(subResult.values[i] ?? 0)).join(" + ")} ={" "}
-                          {fmtMoney(subResult.target)}
-                        </span>
-                        <button
-                          className="btn !px-1.5 !py-0.5 text-xs"
-                          onClick={() => {
-                            navigator.clipboard?.writeText(idxs.map((i) => String(subResult.values[i])).join("\n")).then(
-                              () => setMessage(`คัดลอกชุดที่ ${k + 1} แล้ว (${idxs.length} รายการ)`),
-                              () => setMessage("คัดลอกไม่สำเร็จ")
-                            );
-                          }}
-                        >
-                          คัดลอก
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-neutral-500">ไม่เจอชุดตรงเป๊ะ</p>
-              )}
-              {subResult.closest.length > 0 && (
-                <div>
-                  <p className="mb-1 text-sm font-medium">ใกล้เคียง (ไม่ตรงเป๊ะ)</p>
-                  <div className="max-h-48 space-y-1 overflow-y-auto">
-                    {subResult.closest.map((c, k) => (
-                      <div key={k} className="rounded border border-neutral-200 px-2 py-1 text-sm">
-                        <span className="font-mono text-xs">
-                          {c.indices.map((i) => fmtMoney(subResult.values[i] ?? 0)).join(" + ")} ={" "}
-                          {fmtMoney(c.sum / 100)}
-                        </span>{" "}
-                        <span className={`text-xs ${c.diff > 0 ? "text-orange-600" : "text-blue-600"}`}>
-                          ({c.diff > 0 ? `เกิน ${fmtMoney(c.diff / 100)}` : `ขาด ${fmtMoney(-c.diff / 100)}`})
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </OtherTool>
       </div>
 
       {message && <p className="mt-4 text-sm">{message}</p>}
