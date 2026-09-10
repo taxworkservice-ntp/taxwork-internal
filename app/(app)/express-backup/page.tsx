@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import CopyButton from "@/components/copy-button";
 import {
   createBackupAllJobs,
   createManualBackupJob,
@@ -218,11 +219,29 @@ export default function ExpressBackupPage() {
       )}
 
       {newToken && (
-        <div className="card border-yellow-300 bg-yellow-50">
-          <p className="text-sm font-medium">รหัสลงทะเบียนเครื่อง (แสดงครั้งเดียว):</p>
-          <p className="my-2 font-mono text-xl font-bold tracking-widest">{newToken.token}</p>
+        <div className="card space-y-2 border-yellow-300 bg-yellow-50">
+          <p className="text-sm font-medium">ลงทะเบียนเครื่องสำเร็จ (รหัสแสดงครั้งเดียว):</p>
           <p className="text-xs text-neutral-600">
-            นำรหัสนี้ไปกรอกใน Windows agent เพื่อลงทะเบียน หลังจากนั้นรหัสจะใช้ไม่ได้อีก
+            รหัสเครื่อง (agent ID)
+            <span className="ml-1 inline-flex min-w-0 items-center gap-1 align-middle">
+              <span className="inline-block max-w-[280px] truncate font-mono text-xs sm:max-w-[360px]">
+                {newToken.id}
+              </span>
+              <CopyButton text={newToken.id} />
+            </span>
+          </p>
+          <p className="text-xs text-neutral-600">
+            รหัสลงทะเบียน
+            <span className="ml-1 inline-flex min-w-0 items-center gap-1 align-middle">
+              <span className="inline-block max-w-[280px] truncate font-mono text-xl font-bold tracking-widest sm:max-w-[360px]">
+                {newToken.token}
+              </span>
+              <CopyButton text={newToken.token} />
+            </span>
+          </p>
+          <p className="text-xs text-neutral-600">
+            ใส่ทั้งสองค่านี้ใน config.json แล้วรัน python main.py --register บนเครื่อง Windows
+            หลังจากนั้นรหัสลงทะเบียนจะใช้ไม่ได้อีก
           </p>
           <button className="btn mt-2" onClick={() => setNewToken(null)}>
             ปิด
@@ -332,6 +351,12 @@ export default function ExpressBackupPage() {
                     <td>
                       <span className="font-medium">{a.agent_name}</span>
                       <div className="text-xs text-neutral-500">{a.machine_name}</div>
+                      <div className="flex min-w-0 items-center gap-1 text-xs text-neutral-500">
+                        <span className="min-w-0 max-w-[160px] truncate font-mono sm:max-w-[220px]">
+                          {a.id}
+                        </span>
+                        <CopyButton text={a.id} />
+                      </div>
                     </td>
                     <td>{a.version ?? "—"}</td>
                     <td className="whitespace-nowrap">{formatThaiDateTime(a.last_seen_at)}</td>
