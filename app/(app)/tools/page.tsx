@@ -152,6 +152,7 @@ export default function ToolsPage() {
   // --- Subset sum (match amounts to target) ---
   const [subInput, setSubInput] = useState("");
   const [subTarget, setSubTarget] = useState("");
+  const [subMode, setSubMode] = useState<"any" | "max" | "min">("any");
   const [subBusy, setSubBusy] = useState(false);
   const [subResult, setSubResult] = useState<{
     exact: number[][];
@@ -502,6 +503,8 @@ export default function ToolsPage() {
             seen.add("e" + key);
             exact.push(chosen.map((p) => order[p].i).sort((a, b) => a - b));
           } else {
+            if (subMode === "max" && diff > 0) return;
+            if (subMode === "min" && diff < 0) return;
             if (seen.has("c" + key)) return;
             seen.add("c" + key);
             const entry = {
@@ -565,9 +568,12 @@ export default function ToolsPage() {
           let best: number | null = null;
           let bestDiff = Infinity;
           for (const s of dp.keys()) {
-            const d = Math.abs(s - t);
-            if (d < bestDiff && d !== 0) {
-              bestDiff = d;
+            const d = s - t;
+            if (d === 0) continue;
+            if (subMode === "max" && d > 0) continue;
+            if (subMode === "min" && d < 0) continue;
+            if (Math.abs(d) < bestDiff) {
+              bestDiff = Math.abs(d);
               best = s;
             }
           }
@@ -617,9 +623,17 @@ export default function ToolsPage() {
           dfs(0, 0);
         }
         setSubResult({ exact, closest, values, target, invalid, partial });
+        const modeHint = subMode === "max" ? " (ไม่เกินเป้า)" : subMode === "min" ? " (เกินได้)" : "";
         if (exact.length) setMessage(`เจอชุดที่ตรงเป๊ะ ${exact.length} ชุด จาก ${values.length} รายการ`);
-        else if (closest.length) setMessage(`ไม่เจอชุดตรงเป๊ะ — แสดง ${closest.length} ชุดใกล้เคียง`);
-        else setMessage("ไม่เจอชุดใดเลย");
+        else if (closest.length) setMessage(`ไม่เจอชุดตรงเป๊ะ — แสดง ${closest.length} ชุดใกล้เคียง${modeHint}`);
+        else
+          setMessage(
+            subMode === "max"
+              ? "ไม่เจอชุดที่ไม่เกินเป้าหมายเลย"
+              : subMode === "min"
+                ? "ไม่เจอชุดที่ถึงเป้าหมายเลย"
+                : "ไม่เจอชุดใดเลย"
+          );
       } finally {
         setSubBusy(false);
       }
@@ -1131,6 +1145,42 @@ export default function ToolsPage() {
                 setSubResult(null);
               }}
             />
+            <label className="label">เงื่อนไขยอดรวม</label>
+            <div className="mb-3 flex flex-col gap-1 text-sm">
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  checked={subMode === "any"}
+                  onChange={() => {
+                    setSubMode("any");
+                    setSubResult(null);
+                  }}
+                />
+                ตรงเป๊ะก่อน ถ้าไม่มีขอใกล้เคียง
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  checked={subMode === "max"}
+                  onChange={() => {
+                    setSubMode("max");
+                    setSubResult(null);
+                  }}
+                />
+                ห้ามเกินเป้าหมาย (เอาชุดที่รวมได้มากสุด)
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  checked={subMode === "min"}
+                  onChange={() => {
+                    setSubMode("min");
+                    setSubResult(null);
+                  }}
+                />
+                เกินได้ (เอาชุดที่ถึงเป้าด้วยส่วนเกินน้อยสุด)
+              </label>
+            </div>
             <div className="flex gap-2">
               <button className="btn-primary" onClick={subsetSearch} disabled={subBusy}>
                 {subBusy ? "กำลังค้นหา…" : "ค้นหาชุดยอด"}
@@ -1189,9 +1239,15 @@ export default function ToolsPage() {
             ) : (
               <p className="text-sm text-neutral-500">ไม่เจอชุดตรงเป๊ะ</p>
             )}
-            {subResult.closest.length > 0 && (
-              <div>
-                <p className="mb-1 text-sm font-medium">ใกล้เคียง (ไม่ตรงเป๊ะ)</p>
+              {subResult.closest.length > 0 && (
+                <div>
+                  <p className="mb-1 text-sm font-medium">
+                    {subMode === "max"
+                      ? "ใกล้เคียง (ไม่เกินเป้าหมาย)"
+                      : subMode === "min"
+                        ? "ใกล้เคียง (ถึงเป้าหมาย เกินน้อยสุด)"
+                        : "ใกล้เคียง (ไม่ตรงเป๊ะ)"}
+                  </p>
                 <div className="max-h-48 space-y-1 overflow-y-auto">
                   {subResult.closest.map((c, k) => (
                     <div key={k} className="rounded border border-neutral-200 px-2 py-1 text-sm">
