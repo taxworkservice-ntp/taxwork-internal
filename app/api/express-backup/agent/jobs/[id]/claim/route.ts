@@ -14,17 +14,29 @@ export async function POST(
   const rows = (await sql`update express_backup_jobs
     set status='running', agent_id=${auth.agentId}, started_at=now()
     where id=${id} and status='pending'
+      and (target_agent_id is null or target_agent_id=${auth.agentId})
     returning id, client_id`) as { id: string; client_id: string }[];
   const job = rows[0];
   if (!job) return NextResponse.json({ error: "job not available" }, { status: 409 });
 
-  const cfg = (await sql`select source_path, retention_days from express_backup_configs
-    where client_id=${job.client_id}`) as { source_path: string; retention_days: number }[];
+  const cfg = (await sql`select coalesce(ap.source_path, cfg.source_path) as source_path,
+      cfg.retention_days
+    from express_backup_configs cfg
+    left join express_backup_agent_paths ap
+      on ap.client_id = cfg.client_id and ap.agent_id = ${auth.agentId}
+    where cfg.client_id=${job.client_id}`) as {
+    source_path: string;
+    retention_days: number;
+  }[];
+  const usedPath = cfg[0]?.source_path;
+  if (usedPath) {
+    await sql`update express_backup_jobs set source_path_used=${usedPath} where id=${id}`;
+  }
 
   return NextResponse.json({
     id: String(job.id),
     clientId: String(job.client_id),
-    sourcePath: cfg[0]?.source_path,
+    sourcePath: usedPath,
     retentionDays: cfg[0] ? Number(cfg[0].retention_days) : 30,
   });
 }

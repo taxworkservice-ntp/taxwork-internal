@@ -6,9 +6,13 @@ import { useParams } from "next/navigation";
 import {
   cancelBackupJob,
   createManualBackupJob,
+  deleteAgentPath,
   deleteBackupJob,
   getExpressBackupDetail,
+  saveAgentPath,
   saveExpressBackupConfig,
+  setPrimaryAgentPath,
+  type AgentPath,
   type BackupDetail,
 } from "@/lib/actions/express-backup";
 import { STATUS_TH, thaiError, type ExpressBackupStatus } from "@/lib/express-backup-ui";
@@ -86,6 +90,8 @@ export default function ExpressBackupDetailPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
+  const [pathDrafts, setPathDrafts] = useState<Record<string, string>>({});
+  const [pathBusy, setPathBusy] = useState<string | null>(null);
   const [form, setForm] = useState({
     source_path: "",
     schedule_time: "23:00",
@@ -100,6 +106,12 @@ export default function ExpressBackupDetailPage() {
     try {
       const d = await getExpressBackupDetail(clientId);
       setDetail(d);
+      const drafts: Record<string, string> = {};
+      for (const p of d.agent_paths) drafts[p.agent_id] = p.source_path;
+      for (const a of d.agents) {
+        if (a.status !== "revoked" && !(a.id in drafts)) drafts[a.id] = "";
+      }
+      setPathDrafts(drafts);
       if (d.config) {
         setForm({
           source_path: d.config.source_path,
@@ -146,8 +158,10 @@ export default function ExpressBackupDetailPage() {
     setBusy(true);
     setMessage("");
     try {
-      await createManualBackupJob(clientId);
-      setMessage("สร้างงานแล้ว รอเครื่องดำเนินการ");
+      const r = await createManualBackupJob(clientId);
+      setMessage(
+        r.ids.length > 1 ? `สร้างงาน ${r.ids.length} งาน รอเครื่องดำเนินการ` : "สร้างงานแล้ว รอเครื่องดำเนินการ"
+      );
       await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "สร้างงานไม่สำเร็จ");
@@ -163,6 +177,48 @@ export default function ExpressBackupDetailPage() {
       await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "ยกเลิกไม่สำเร็จ");
+    }
+  }
+
+  async function handleSavePath(agentId: string) {
+    const path = (pathDrafts[agentId] ?? "").trim();
+    if (!path) {
+      alert("กรุณาระบุพาธของเครื่องนี้");
+      return;
+    }
+    setPathBusy(agentId);
+    try {
+      await saveAgentPath(agentId, clientId, path);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "บันทึกพาธไม่สำเร็จ");
+    } finally {
+      setPathBusy(null);
+    }
+  }
+
+  async function handleDeletePath(agentId: string, agentName: string) {
+    if (!confirm(`ลบพาธของเครื่อง "${agentName}"? เครื่องนี้จะใช้ค่าเริ่มต้นแทน`)) return;
+    setPathBusy(agentId);
+    try {
+      await deleteAgentPath(agentId, clientId);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "ลบพาธไม่สำเร็จ");
+    } finally {
+      setPathBusy(null);
+    }
+  }
+
+  async function handlePrimary(agentId: string | null) {
+    setPathBusy(agentId ?? "primary");
+    try {
+      await setPrimaryAgentPath(agentId, clientId);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "ตั้งเครื่องหลักไม่สำเร็จ");
+    } finally {
+      setPathBusy(null);
     }
   }
 
@@ -214,7 +270,10 @@ export default function ExpressBackupDetailPage() {
     );
   }
 
-  const { client, config, status, latest_success, jobs } = detail;
+  const { client, config, status, latest_success, jobs, agents, agent_paths } = detail;
+  const activeAgents = agents.filter((a) => a.status !== "revoked");
+  const pathByAgent: Record<string, AgentPath | undefined> = {};
+  for (const p of agent_paths) pathByAgent[p.agent_id] = p;
 
   return (
     <div className="space-y-4">
@@ -313,6 +372,74 @@ export default function ExpressBackupDetailPage() {
       )}
 
       <div className="card">
+        <h2 className="mb-1 font-medium">พาธตามเครื่อง</h2>
+        <p className="mb-3 text-xs text-neutral-500">
+          ลูกค้านี้อยู่หลายเครื่องและโฟลเดอร์ต่างกัน ให้ระบุพาธของแต่ละเครื่อง
+          เครื่องที่ไม่มีพาธจะใช้ค่าเริ่มต้นด้านบน กดสำรองข้อมูลจะสร้างงานให้ทุกเครื่องที่มีพาธ
+        </p>
+        {activeAgents.length === 0 ? (
+          <p className="text-sm text-neutral-500">ยังไม่มีเครื่อง เพิ่มเครื่องที่หน้า Express Backup ก่อน</p>
+        ) : (
+          <div className="space-y-3">
+            {activeAgents.map((a) => {
+              const saved = pathByAgent[a.id];
+              return (
+                <div key={a.id} className="grid grid-cols-1 gap-2 border-t pt-3 first:border-t-0 first:pt-0 sm:grid-cols-[1fr_auto]">
+                  <div className="min-w-0">
+                    <p className="flex min-w-0 items-center gap-1 text-sm">
+                      <span className="truncate font-medium">{a.agent_name}</span>
+                      <span className="truncate text-xs text-neutral-500">({a.machine_name})</span>
+                      {saved?.is_primary && (
+                        <span className="inline-flex shrink-0 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800">
+                          ★ หลัก
+                        </span>
+                      )}
+                    </p>
+                    <div className="mt-1 flex min-w-0 items-center gap-1">
+                      <input
+                        className="input min-w-0 flex-1 font-mono"
+                        value={pathDrafts[a.id] ?? ""}
+                        onChange={(e) => setPathDrafts({ ...pathDrafts, [a.id]: e.target.value })}
+                        placeholder="D:\ExpressData\ABC"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button
+                      className="btn px-2 py-1 text-xs"
+                      disabled={pathBusy === a.id}
+                      onClick={() => handleSavePath(a.id)}
+                    >
+                      {pathBusy === a.id ? "…" : "บันทึก"}
+                    </button>
+                    {saved && (
+                      <>
+                        <button
+                          className="btn px-2 py-1 text-xs"
+                          disabled={pathBusy !== null}
+                          title="เครื่องหลักคือต้นฉบับความจริงไว้ใช้อ้างอิงตอนกู้คืน"
+                          onClick={() => handlePrimary(saved.is_primary ? null : a.id)}
+                        >
+                          {saved.is_primary ? "เลิกเป็นหลัก" : "ตั้งเป็นหลัก"}
+                        </button>
+                        <button
+                          className="btn-danger px-2 py-1 text-xs"
+                          disabled={pathBusy === a.id}
+                          onClick={() => handleDeletePath(a.id, a.agent_name)}
+                        >
+                          ลบ
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
         <h2 className="mb-2 font-medium">ประวัติการสำรองข้อมูล ({jobs.length})</h2>
         {jobs.length === 0 ? (
           <p className="text-sm text-neutral-500">ยังไม่มีประวัติการสำรองข้อมูล</p>
@@ -390,6 +517,18 @@ export default function ExpressBackupDetailPage() {
                             {j.agent_name && (
                               <p>
                                 <span className="text-neutral-500">เครื่อง:</span> {j.agent_name}
+                              </p>
+                            )}
+                            {j.target_agent_name && j.target_agent_name !== j.agent_name && (
+                              <p>
+                                <span className="text-neutral-500">เครื่องเป้าหมาย:</span>{" "}
+                                {j.target_agent_name}
+                              </p>
+                            )}
+                            {j.source_path_used && (
+                              <p className="break-all">
+                                <span className="text-neutral-500">โฟลเดอร์ที่ใช้:</span>{" "}
+                                <span className="font-mono">{j.source_path_used}</span>
                               </p>
                             )}
                             {j.checksum && (

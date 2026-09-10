@@ -64,6 +64,10 @@ Set in `config.json`:
 The agent backs up the dummy folder instead of every job's `source_path`.
 Never point tests at real accounting data. Remove the key for production.
 
+Note: when the same client exists on several machines at different folders, each
+machine gets its own path in the web UI (client page → พาธตามเครื่อง). The server
+sends this machine's folder with every job — no agent config needed for that.
+
 ## 5. Manual backup check
 
 1. Web: open a client → **สำรองข้อมูลตอนนี้** → status becomes รอดำเนินการ.

@@ -25,6 +25,8 @@ export type ExpressBackupJob = {
   id: string;
   client_id: string;
   agent_id: string | null;
+  target_agent_id: string | null;
+  source_path_used: string | null;
   status: string;
   trigger_type: string;
   started_at: string | null;
@@ -39,6 +41,7 @@ export type ExpressBackupJob = {
   error_message: string | null;
   created_at: string;
   agent_name?: string | null;
+  target_agent_name?: string | null;
 };
 
 export type ExpressBackupAgent = {

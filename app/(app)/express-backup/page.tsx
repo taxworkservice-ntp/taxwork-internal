@@ -156,8 +156,10 @@ export default function ExpressBackupPage() {
     setBusy(clientId);
     setMessage("");
     try {
-      await createManualBackupJob(clientId);
-      setMessage("สร้างงานแล้ว รอเครื่องดำเนินการ");
+      const r = await createManualBackupJob(clientId);
+      setMessage(
+        r.ids.length > 1 ? `สร้างงาน ${r.ids.length} งาน รอเครื่องดำเนินการ` : "สร้างงานแล้ว รอเครื่องดำเนินการ"
+      );
       await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "สร้างงานไม่สำเร็จ");
@@ -380,6 +382,9 @@ export default function ExpressBackupPage() {
                             {r.client_name}
                           </Link>
                           {r.tax_id && <div className="text-xs text-neutral-500">{r.tax_id}</div>}
+                          {r.machine_count > 1 && (
+                            <div className="text-xs text-neutral-500">{r.machine_count} เครื่อง</div>
+                          )}
                         </div>
                       </div>
                     </td>
