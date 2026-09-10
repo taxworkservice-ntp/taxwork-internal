@@ -77,6 +77,18 @@ export default function ToolsPage() {
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameDragActive, setRenameDragActive] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  // --- Subset sum (match amounts to target) ---
+  const [subInput, setSubInput] = useState("");
+  const [subTarget, setSubTarget] = useState("");
+  const [subBusy, setSubBusy] = useState(false);
+  const [subResult, setSubResult] = useState<{
+    exact: number[][];
+    closest: { indices: number[]; sum: number; diff: number }[];
+    values: number[];
+    target: number;
+    invalid: number;
+    partial: boolean;
+  } | null>(null);
 
   function isPdf(f: File) {
     return f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
@@ -368,6 +380,198 @@ export default function ToolsPage() {
   }
 
   const okCount = unlockItems.filter((i) => i.status === "ok").length;
+
+  // --- Subset sum solver ---
+  function parseSubAmounts(raw: string) {
+    const values: number[] = [];
+    let invalid = 0;
+    for (const part of raw.split(/[\n,;]+/)) {
+      const t = part.trim().replace(/[฿฿\s]/g, "");
+      if (!t) continue;
+      const cleaned = t.replace(/,/g, "");
+      const n = parseFloat(cleaned);
+      if (!Number.isFinite(n)) {
+        invalid++;
+        continue;
+      }
+      values.push(n);
+    }
+    return { values, invalid };
+  }
+  function subsetSearch() {
+    const { values, invalid } = parseSubAmounts(subInput);
+    const target = parseFloat(subTarget.replace(/,/g, ""));
+    if (!values.length) {
+      setMessage("วางรายการยอดเงินก่อน (บรรทัดละยอด หรือคั่นด้วยจุลภาค)");
+      return;
+    }
+    if (!Number.isFinite(target)) {
+      setMessage("กรอกยอดเป้าหมายก่อน");
+      return;
+    }
+    if (values.length > 60) {
+      setMessage(`รายการเยอะเกินไป (${values.length} รายการ สูงสุด 60) — ลดรายการแล้วลองใหม่`);
+      return;
+    }
+    setSubBusy(true);
+    setMessage(null);
+    // Run async so UI can paint busy state
+    setTimeout(() => {
+      try {
+        const sat = values.map((v) => Math.round(v * 100));
+        const t = Math.round(target * 100);
+        // Sort desc by value for better pruning, keep original indices
+        const order = sat.map((v, i) => ({ v, i })).sort((a, b) => b.v - a.v);
+        const sv = order.map((o) => o.v);
+        const n = sv.length;
+        // Suffix min/max for pruning (sums of remaining negatives/positives)
+        const sufMin = new Array(n + 1).fill(0);
+        const sufMax = new Array(n + 1).fill(0);
+        for (let i = n - 1; i >= 0; i--) {
+          sufMin[i] = sufMin[i + 1] + Math.min(0, sv[i]);
+          sufMax[i] = sufMax[i + 1] + Math.max(0, sv[i]);
+        }
+        const exact: number[][] = [];
+        const closest: { indices: number[]; sum: number; diff: number }[] = [];
+        const seen = new Set<string>();
+        const deadline = Date.now() + 1500;
+        let partial = false;
+        const chosen: number[] = []; // positions in sorted order
+        function consider(sum: number) {
+          if (!chosen.length) return;
+          const diff = sum - t;
+          const key = [...chosen].sort((a, b) => a - b).join(",");
+          if (diff === 0) {
+            if (seen.has("e" + key) || exact.length >= 20) return;
+            seen.add("e" + key);
+            exact.push(chosen.map((p) => order[p].i).sort((a, b) => a - b));
+          } else {
+            if (seen.has("c" + key)) return;
+            seen.add("c" + key);
+            const entry = {
+              indices: chosen.map((p) => order[p].i).sort((a, b) => a - b),
+              sum,
+              diff,
+            };
+            // keep top 5 by |diff|, tie: fewer items
+            closest.push(entry);
+            closest.sort(
+              (a, b) => Math.abs(a.diff) - Math.abs(b.diff) || a.indices.length - b.indices.length
+            );
+            if (closest.length > 5) closest.pop();
+          }
+        }
+        function dfs(pos: number, sum: number): boolean {
+          if (Date.now() > deadline) {
+            partial = true;
+            return true; // stop everything
+          }
+          if (pos === n) {
+            consider(sum);
+            return false;
+          }
+          // Prune exact branch only if target unreachable AND we already have plenty?
+          // Never prune closest search strictly — just recurse both branches.
+          // Include
+          chosen.push(pos);
+          const stop = dfs(pos + 1, sum + sv[pos]);
+          chosen.pop();
+          if (stop) return true;
+          // Exclude (single-step for correctness with duplicates; `seen` dedupes)
+          if (dfs(pos + 1, sum)) return true;
+          return false;
+        }
+        // For n > 30 full DFS explodes — use DP first for one exact + nearest, then bounded DFS
+        if (n > 30) {
+          const dp = new Map<number, number[]>();
+          dp.set(0, []);
+          for (let i = 0; i < n; i++) {
+            const snap = [...dp.entries()];
+            for (const [s, idxs] of snap) {
+              const ns = s + sv[i];
+              if (!dp.has(ns)) dp.set(ns, [...idxs, i]);
+              if (dp.size > 300000) break;
+            }
+            if (dp.size > 300000) {
+              partial = true;
+              break;
+            }
+          }
+          if (dp.has(t)) {
+            const idxs = dp.get(t)!;
+            if (idxs.length) {
+              const mapped = idxs.map((p) => order[p].i).sort((a, b) => a - b);
+              seen.add("e" + mapped.join(","));
+              exact.push(mapped);
+            }
+            /* empty subset (t === 0) is not useful — ignore */
+          }
+          let best: number | null = null;
+          let bestDiff = Infinity;
+          for (const s of dp.keys()) {
+            const d = Math.abs(s - t);
+            if (d < bestDiff && d !== 0) {
+              bestDiff = d;
+              best = s;
+            }
+          }
+          if (best !== null) {
+            const idxs = dp.get(best)!;
+            if (idxs.length)
+              closest.push({
+                indices: idxs.map((p) => order[p].i).sort((a, b) => a - b),
+                sum: best,
+                diff: best - t,
+              });
+          }
+          // Bounded DFS for more exact alternatives with tight deadline
+          if (exact.length) {
+            const dfsDeadline = Date.now() + 600;
+            const dfs2 = (pos: number, sum: number): boolean => {
+              if (Date.now() > dfsDeadline || exact.length >= 20) return true;
+              if (pos === n) {
+                if (sum === t && chosen.length) {
+                  const mapped = chosen.map((p) => order[p].i).sort((a, b) => a - b);
+                  const mkey = mapped.join(",");
+                  if (!seen.has("e" + mkey)) {
+                    seen.add("e" + mkey);
+                    exact.push(mapped);
+                  }
+                }
+                return false;
+              }
+              if (sum + sufMin[pos] > t || sum + sufMax[pos] < t) {
+                // exact unreachable from here (all-remaining range check, valid for pruning exact only)
+                return false;
+              }
+              chosen.push(pos);
+              if (dfs2(pos + 1, sum + sv[pos])) {
+                chosen.pop();
+                return true;
+              }
+              chosen.pop();
+              if (dfs2(pos + 1, sum)) return true;
+              return false;
+            };
+            chosen.length = 0;
+            const r = dfs2(0, 0);
+            if (r && exact.length >= 20) partial = true;
+          }
+        } else {
+          dfs(0, 0);
+        }
+        setSubResult({ exact, closest, values, target, invalid, partial });
+        if (exact.length) setMessage(`เจอชุดที่ตรงเป๊ะ ${exact.length} ชุด จาก ${values.length} รายการ`);
+        else if (closest.length) setMessage(`ไม่เจอชุดตรงเป๊ะ — แสดง ${closest.length} ชุดใกล้เคียง`);
+        else setMessage("ไม่เจอชุดใดเลย");
+      } finally {
+        setSubBusy(false);
+      }
+    }, 30);
+  }
+  function fmtMoney(v: number) {
+    return v.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
 
   // --- VAT / WHT / baht ---
   function num(s: string) {
@@ -1071,6 +1275,97 @@ export default function ToolsPage() {
               </button>
             )}
           </div>
+        </OtherTool>
+
+        <OtherTool title="จับคู่ยอดรวม (Subset Sum)" desc="วางรายการหลายยอด + ยอดเป้าหมาย หาชุดที่รวมกันได้ตรง (หรือใกล้เคียง)">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="label">รายการยอดเงิน (บรรทัดละยอด หรือคั่นด้วยจุลภาค)</label>
+              <textarea
+                className="input h-40 font-mono"
+                placeholder={"12,500\n3,200.50\n8,750"}
+                value={subInput}
+                onChange={(e) => {
+                  setSubInput(e.target.value);
+                  setSubResult(null);
+                }}
+              />
+            </div>
+            <div>
+              <label className="label">ยอดเป้าหมาย</label>
+              <input
+                className="input mb-3 font-mono"
+                inputMode="decimal"
+                placeholder="เช่น 25,450"
+                value={subTarget}
+                onChange={(e) => {
+                  setSubTarget(e.target.value);
+                  setSubResult(null);
+                }}
+              />
+              <button className="btn-primary" onClick={subsetSearch} disabled={subBusy}>
+                {subBusy ? "กำลังค้นหา…" : "ค้นหาชุดยอด"}
+              </button>
+              <p className="mt-2 text-xs text-neutral-500">
+                ตรงเป๊ะระดับสตางค์ก่อน ถ้าไม่มีจะแสดงชุดใกล้เคียง + ส่วนต่าง สูงสุด 60 รายการ แสดงไม่เกิน 20 ชุด
+              </p>
+            </div>
+          </div>
+          {subResult && (
+            <div className="mt-3 space-y-3">
+              <p className="text-xs text-neutral-500">
+                อ่าน {subResult.values.length} รายการ{subResult.invalid > 0 ? ` (ข้าม ${subResult.invalid} บรรทัดที่ไม่ใช่ตัวเลข)` : ""}
+                {subResult.partial ? " • ค้นหาบางส่วน (รายการเยอะ/หมดเวลา)" : ""}
+              </p>
+              {subResult.exact.length > 0 ? (
+                <div>
+                  <p className="mb-1 text-sm font-medium text-green-700">ตรงเป๊ะ {subResult.exact.length} ชุด ✓</p>
+                  <div className="max-h-64 space-y-1 overflow-y-auto">
+                    {subResult.exact.map((idxs, k) => (
+                      <div key={k} className="flex items-start gap-2 rounded border border-green-200 bg-green-50 px-2 py-1 text-sm">
+                        <span className="text-xs text-neutral-400">{k + 1}.</span>
+                        <span className="flex-1 font-mono text-xs">
+                          {idxs.map((i) => fmtMoney(subResult.values[i] ?? 0)).join(" + ")} ={" "}
+                          {fmtMoney(subResult.target)}
+                        </span>
+                        <button
+                          className="btn !px-1.5 !py-0.5 text-xs"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(idxs.map((i) => String(subResult.values[i])).join("\n")).then(
+                              () => setMessage(`คัดลอกชุดที่ ${k + 1} แล้ว (${idxs.length} รายการ)`),
+                              () => setMessage("คัดลอกไม่สำเร็จ")
+                            );
+                          }}
+                        >
+                          คัดลอก
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-neutral-500">ไม่เจอชุดตรงเป๊ะ</p>
+              )}
+              {subResult.closest.length > 0 && (
+                <div>
+                  <p className="mb-1 text-sm font-medium">ใกล้เคียง (ไม่ตรงเป๊ะ)</p>
+                  <div className="max-h-48 space-y-1 overflow-y-auto">
+                    {subResult.closest.map((c, k) => (
+                      <div key={k} className="rounded border border-neutral-200 px-2 py-1 text-sm">
+                        <span className="font-mono text-xs">
+                          {c.indices.map((i) => fmtMoney(subResult.values[i] ?? 0)).join(" + ")} ={" "}
+                          {fmtMoney(c.sum / 100)}
+                        </span>{" "}
+                        <span className={`text-xs ${c.diff > 0 ? "text-orange-600" : "text-blue-600"}`}>
+                          ({c.diff > 0 ? `เกิน ${fmtMoney(c.diff / 100)}` : `ขาด ${fmtMoney(-c.diff / 100)}`})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </OtherTool>
       </div>
 
