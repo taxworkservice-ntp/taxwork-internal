@@ -15,6 +15,78 @@ type UnlockItem = {
   bytes?: Uint8Array;
 };
 
+type SubToken = { line: number; text: string; value: number | null };
+
+function parseSubToken(token: string, line: number): SubToken[] {
+  // Returns 1+ tokens: comma splits only when NOT a thousand-separator.
+  // "12,500" -> [12500]; "12500, 3200" -> [12500, 3200]
+  const parts = token.split(/,(?!\d{3}\b)/);
+  return parts.map((p) => {
+    let t = p.trim().replace(/[฿\s]|บาท|THB/gi, "");
+    if (!t) return { line, text: p.trim(), value: null };
+    let neg = false;
+    const paren = t.match(/^\((.*)\)$/);
+    if (paren) {
+      neg = true;
+      t = paren[1].trim();
+    }
+    const cleaned = t.replace(/,/g, "");
+    if (!/^[+-]?(\d+(\.\d+)?|\.\d+)$/.test(cleaned))
+      return { line, text: p.trim(), value: null };
+    const n = parseFloat(cleaned);
+    if (!Number.isFinite(n)) return { line, text: p.trim(), value: null };
+    return { line, text: p.trim(), value: neg ? -Math.abs(n) : n };
+  });
+}
+
+function parseSubAmounts(raw: string) {
+  // Line-first: each line is split on tabs/semicolons/pipes only —
+  // bare commas are thousand-separators unless proven otherwise.
+  const values: number[] = [];
+  const tokens: SubToken[] = [];
+  const lines = raw.split(/\r?\n/);
+  lines.forEach((ln, li) => {
+    if (!ln.trim()) return;
+    const cells = ln.split(/[\t;|]+/);
+    for (const cell of cells) {
+      for (const tok of parseSubToken(cell, li + 1)) {
+        if (!tok.text) continue;
+        tokens.push(tok);
+        if (tok.value !== null) values.push(tok.value);
+      }
+    }
+  });
+  return { values, tokens, invalid: tokens.filter((t) => t.value === null).length };
+}
+
+function SubPreview({ raw }: { raw: string }) {
+  const { values, tokens } = parseSubAmounts(raw);
+  const bad = tokens.filter((t) => t.value === null);
+  const badLines = [...new Set(bad.map((t) => t.line))];
+  return (
+    <div className="mt-2 rounded bg-neutral-50 p-2 text-xs">
+      <span>
+        อ่านได้ {values.length} ยอด
+        {bad.length > 0 && (
+          <span className="text-red-600">
+            {" "}• ข้าม {bad.length} ช่อง (บรรทัดที่ {badLines.join(", ")})
+          </span>
+        )}
+      </span>
+      {bad.length > 0 && (
+        <div className="mt-1 max-h-20 overflow-y-auto font-mono text-red-600">
+          {bad.slice(0, 10).map((t, i) => (
+            <div key={i}>
+              บรรทัด {t.line}: “{t.text}”
+            </div>
+          ))}
+          {bad.length > 10 && <div>…และอีก {bad.length - 10} ช่อง</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OtherTool({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
   return (
     <details className="card group">
@@ -381,23 +453,7 @@ export default function ToolsPage() {
 
   const okCount = unlockItems.filter((i) => i.status === "ok").length;
 
-  // --- Subset sum solver ---
-  function parseSubAmounts(raw: string) {
-    const values: number[] = [];
-    let invalid = 0;
-    for (const part of raw.split(/[\n,;]+/)) {
-      const t = part.trim().replace(/[฿฿\s]/g, "");
-      if (!t) continue;
-      const cleaned = t.replace(/,/g, "");
-      const n = parseFloat(cleaned);
-      if (!Number.isFinite(n)) {
-        invalid++;
-        continue;
-      }
-      values.push(n);
-    }
-    return { values, invalid };
-  }
+  // --- Subset sum solver (parsers live at module scope) ---
   function subsetSearch() {
     const { values, invalid } = parseSubAmounts(subInput);
     const target = parseFloat(subTarget.replace(/,/g, ""));
@@ -1049,7 +1105,7 @@ export default function ToolsPage() {
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="label">รายการยอดเงิน (บรรทัดละยอด หรือคั่นด้วยจุลภาค)</label>
+            <label className="label">รายการยอดเงิน (บรรทัดละยอด หรือวางแถวจาก Excel)</label>
             <textarea
               className="input h-40 font-mono"
               placeholder={"12,500\n3,200.50\n8,750"}
@@ -1059,6 +1115,9 @@ export default function ToolsPage() {
                 setSubResult(null);
               }}
             />
+            {subInput.trim() && (
+              <SubPreview raw={subInput} />
+            )}
           </div>
           <div>
             <label className="label">ยอดเป้าหมาย</label>
