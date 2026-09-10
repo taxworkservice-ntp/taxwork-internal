@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import {
   cancelBackupJob,
   createManualBackupJob,
+  deleteBackupJob,
   getExpressBackupDetail,
   saveExpressBackupConfig,
   type BackupDetail,
@@ -162,6 +163,16 @@ export default function ExpressBackupDetailPage() {
       await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "ยกเลิกไม่สำเร็จ");
+    }
+  }
+
+  async function handleDelete(jobId: string) {
+    if (!confirm("ลบประวัตินี้ถาวร? ไฟล์สำรองบน R2 จะถูกลบด้วย")) return;
+    try {
+      await deleteBackupJob(jobId);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
     }
   }
 
@@ -346,6 +357,16 @@ export default function ExpressBackupDetailPage() {
                             onClick={() => handleCancel(j.id)}
                           >
                             ยกเลิก
+                          </button>
+                        )}{" "}
+                        {(j.status === "success" ||
+                          j.status === "failed" ||
+                          j.status === "cancelled") && (
+                          <button
+                            className="btn-danger px-2 py-1 text-xs"
+                            onClick={() => handleDelete(j.id)}
+                          >
+                            ลบ
                           </button>
                         )}{" "}
                         <button

@@ -322,6 +322,26 @@ export async function cancelBackupJob(jobId: string): Promise<void> {
     where id=${jobId} and status in ('pending','running')`;
 }
 
+/** Delete a finished job: removes the R2 object (if any) then the DB row. */
+export async function deleteBackupJob(jobId: string): Promise<void> {
+  await requireUser();
+  const rows = (await sql`select id, status, storage_key from express_backup_jobs
+    where id=${jobId}`) as { id: string; status: string; storage_key: string | null }[];
+  const job = rows[0];
+  if (!job) throw new Error("ไม่พบงานสำรองข้อมูล");
+  if (job.status === "pending" || job.status === "running")
+    throw new Error("งานกำลังดำเนินการอยู่ ให้ยกเลิกก่อนลบ");
+  const key = job.storage_key ? String(job.storage_key) : null;
+  if (key) {
+    if (key.includes("..") || !key.startsWith("express-backups/"))
+      throw new Error("คีย์ไฟล์ไม่ถูกต้อง");
+    const { r2, R2_BUCKET } = await import("@/lib/r2");
+    const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+  }
+  await sql`delete from express_backup_jobs where id=${jobId}`;
+}
+
 export async function getBackupJob(jobId: string): Promise<ExpressBackupJob> {
   await requireUser();
   const rows = (await sql`select j.*, a.agent_name from express_backup_jobs j
