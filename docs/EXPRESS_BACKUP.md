@@ -47,6 +47,10 @@ No RLS (Neon convention) — every data path requires auth (see below).
   empty = client default; `[สำรองข้อมูลตอนนี้]` creates one job per mapped machine),
   history (วันที่/ขนาด/สถานะ/ประเภท/ไฟล์) with ดาวน์โหลด/รายละเอียด/ยกเลิก/ลบ,
   machine + used folder shown per job, Thai error text (`ไม่พบโฟลเดอร์ข้อมูล Express`, …).
+  Export card (ส่งออกข้อมูลไปเครื่องอื่น): prefilled file/size/machine/folder/SHA-256 with
+  a 6-step manual checklist persisted per job in localStorage
+  (`express-backup.export.<jobId>`) — download → certutil verify → stage extract →
+  `.bak` safety copy → copy into place → open Express and verify. Never auto-overwrites.
 - Status: ปกติ (success within ~26 h) / รอดำเนินการ / กำลังสำรอง / ล่าช้า / ล้มเหลว / ยังไม่ได้ตั้งค่า.
   Logic: `computeStatus()` in `lib/express-backup.ts`.
 

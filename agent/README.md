@@ -53,6 +53,17 @@ Confirm in the web UI: **เครื่องออนไลน์** and “เ
 3. Action: `pythonw.exe C:\TaxworkAgent\main.py` (use `pythonw` for no console window).
 4. Condition: Start only if network available; **do NOT require admin** unless the Express folder needs it.
 
+Alternative without admin rights: Startup-folder launcher (same effect, per-user).
+Save as `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\TaxworkExpressBackupAgent.vbs`:
+
+```vb
+CreateObject("Wscript.Shell").Run """C:\Path\To\pythonw.exe"" ""C:\TaxworkAgent\main.py""", 0, False
+```
+
+Double-click it once to start now. Logs go to
+`%LOCALAPPDATA%\TaxworkExpressBackup\agent.log` — if the file stays empty,
+the agent is not running (check Task Manager for `pythonw.exe`).
+
 ## 4. Test without touching real data
 
 Set in `config.json`:
