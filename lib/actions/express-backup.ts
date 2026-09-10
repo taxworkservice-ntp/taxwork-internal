@@ -28,6 +28,18 @@ function optStr(v: unknown): string | null {
   return String(v);
 }
 
+/**
+ * True when Postgres reports a table this query needs does not exist —
+ * i.e. its migration has not been applied on this database yet.
+ * Callers degrade gracefully (empty list / zero count) so pages keep loading
+ * and only the not-yet-migrated feature stays empty. All other errors throw.
+ */
+function isMissingTable(e: unknown, table: string): boolean {
+  return (
+    e instanceof Error && e.message.includes("does not exist") && e.message.includes(table)
+  );
+}
+
 function toConfig(r: Record<string, unknown>): ExpressBackupConfig {
   return {
     id: String(r.id),
@@ -118,28 +130,49 @@ export async function getExpressBackupOverview(): Promise<{
   agentsTotal: number;
 }> {
   await requireUser();
-  const rows = (await sql`select c.id as client_id, c.name as client_name, c.tax_id,
-      cfg.enabled, cfg.source_path, cfg.schedule_time, cfg.retention_days,
-      lj.status as latest_job_status, lj.created_at as latest_job_created_at,
-      ls.completed_at as latest_success_at, ls.backup_size_bytes as latest_success_size,
-      m.n as machine_count
-    from clients c
-    left join express_backup_configs cfg on cfg.client_id = c.id
-    left join lateral (
-      select status, created_at from express_backup_jobs
-      where client_id = c.id order by created_at desc limit 1
-    ) lj on true
-    left join lateral (
-      select completed_at, backup_size_bytes from express_backup_jobs
-      where client_id = c.id and status = 'success' order by completed_at desc limit 1
-    ) ls on true
-    left join lateral (
-      select count(*)::text as n from express_backup_agent_paths ap
-      join express_backup_agents a on a.id = ap.agent_id
-      where ap.client_id = c.id and a.status <> 'revoked' and a.revoked_at is null
-    ) m on true
-    where c.status = 'active'
-    order by c.name`) as Record<string, unknown>[];
+  let rows: Record<string, unknown>[];
+  try {
+    rows = (await sql`select c.id as client_id, c.name as client_name, c.tax_id,
+        cfg.enabled, cfg.source_path, cfg.schedule_time, cfg.retention_days,
+        lj.status as latest_job_status, lj.created_at as latest_job_created_at,
+        ls.completed_at as latest_success_at, ls.backup_size_bytes as latest_success_size,
+        m.n as machine_count
+      from clients c
+      left join express_backup_configs cfg on cfg.client_id = c.id
+      left join lateral (
+        select status, created_at from express_backup_jobs
+        where client_id = c.id order by created_at desc limit 1
+      ) lj on true
+      left join lateral (
+        select completed_at, backup_size_bytes from express_backup_jobs
+        where client_id = c.id and status = 'success' order by completed_at desc limit 1
+      ) ls on true
+      left join lateral (
+        select count(*)::text as n from express_backup_agent_paths ap
+        join express_backup_agents a on a.id = ap.agent_id
+        where ap.client_id = c.id and a.status <> 'revoked' and a.revoked_at is null
+      ) m on true
+      where c.status = 'active'
+      order by c.name`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_agent_paths")) throw e;
+    rows = (await sql`select c.id as client_id, c.name as client_name, c.tax_id,
+        cfg.enabled, cfg.source_path, cfg.schedule_time, cfg.retention_days,
+        lj.status as latest_job_status, lj.created_at as latest_job_created_at,
+        ls.completed_at as latest_success_at, ls.backup_size_bytes as latest_success_size
+      from clients c
+      left join express_backup_configs cfg on cfg.client_id = c.id
+      left join lateral (
+        select status, created_at from express_backup_jobs
+        where client_id = c.id order by created_at desc limit 1
+      ) lj on true
+      left join lateral (
+        select completed_at, backup_size_bytes from express_backup_jobs
+        where client_id = c.id and status = 'success' order by completed_at desc limit 1
+      ) ls on true
+      where c.status = 'active'
+      order by c.name`) as Record<string, unknown>[];
+  }
 
   const agents = (await sql`select status, last_seen_at, revoked_at
     from express_backup_agents`) as { status: string; last_seen_at: unknown; revoked_at: unknown }[];
@@ -231,11 +264,17 @@ export async function getExpressBackupDetail(clientId: string): Promise<BackupDe
     toAgent(r, r.client_name == null ? null : String(r.client_name))
   );
 
-  const pathRows = (await sql`select ap.*, a.agent_name, a.machine_name
-    from express_backup_agent_paths ap
-    join express_backup_agents a on a.id = ap.agent_id
-    where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null
-    order by a.agent_name`) as Record<string, unknown>[];
+  let pathRows: Record<string, unknown>[];
+  try {
+    pathRows = (await sql`select ap.*, a.agent_name, a.machine_name
+      from express_backup_agent_paths ap
+      join express_backup_agents a on a.id = ap.agent_id
+      where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null
+      order by a.agent_name`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_agent_paths")) throw e;
+    pathRows = [];
+  }
   const agent_paths: AgentPath[] = pathRows.map((r) => ({
     id: String(r.id),
     agent_id: String(r.agent_id),
@@ -289,11 +328,17 @@ export type AgentPath = {
 /** Per-machine folders for one client (empty = no machine holds it here yet). */
 export async function getAgentPaths(clientId: string): Promise<AgentPath[]> {
   await requireUser();
-  const rows = (await sql`select ap.*, a.agent_name, a.machine_name
-    from express_backup_agent_paths ap
-    join express_backup_agents a on a.id = ap.agent_id
-    where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null
-    order by a.agent_name`) as Record<string, unknown>[];
+  let rows: Record<string, unknown>[];
+  try {
+    rows = (await sql`select ap.*, a.agent_name, a.machine_name
+      from express_backup_agent_paths ap
+      join express_backup_agents a on a.id = ap.agent_id
+      where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null
+      order by a.agent_name`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_agent_paths")) throw e;
+    return [];
+  }
   return rows.map((r) => ({
     id: String(r.id),
     agent_id: String(r.agent_id),
@@ -642,16 +687,22 @@ function toRestore(r: Record<string, unknown>): ExpressBackupRestore {
 /** Restore requests for one client, newest first (open + recent terminal). */
 export async function getRestores(clientId: string): Promise<ExpressBackupRestore[]> {
   await requireUser();
-  const rows = (await sql`select r.*, a.agent_name as target_agent_name,
-      j.file_name as job_file_name, j.checksum as job_checksum,
-      j.backup_size_bytes as job_backup_size
-    from express_backup_restores r
-    left join express_backup_agents a on a.id = r.target_agent_id
-    left join express_backup_jobs j on j.id = r.job_id
-    where r.client_id=${clientId} order by r.created_at desc limit 20`) as Record<
-    string,
-    unknown
-  >[];
+  let rows: Record<string, unknown>[];
+  try {
+    rows = (await sql`select r.*, a.agent_name as target_agent_name,
+        j.file_name as job_file_name, j.checksum as job_checksum,
+        j.backup_size_bytes as job_backup_size
+      from express_backup_restores r
+      left join express_backup_agents a on a.id = r.target_agent_id
+      left join express_backup_jobs j on j.id = r.job_id
+      where r.client_id=${clientId} order by r.created_at desc limit 20`) as Record<
+      string,
+      unknown
+    >[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_restores")) throw e;
+    return [];
+  }
   return rows.map(toRestore);
 }
 
