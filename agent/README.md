@@ -85,6 +85,25 @@ sends this machine's folder with every job — no agent config needed for that.
 2. Within ~30 s the agent claims it (กำลังสำรอง), uploads, and the web shows ปกติ with size + SHA-256.
 3. **ดาวน์โหลด** the ZIP from history and verify it opens.
 
+## 5b. Assisted restore (export to another machine)
+
+Requires two human approvals in the web UI — the agent never places files on its own:
+
+1. Client page → export card → pick target machine + folder → **ขอส่งออก**, then **อนุมัติ**.
+2. The target agent downloads, verifies SHA-256, extracts to
+   `%LOCALAPPDATA%\TaxworkExpressBackup\staging\` and reports staged.
+3. Verify the staged report in the web UI → **ยืนยันนำเข้าที่**.
+4. The agent copies the existing target to `<target>.bak-<id8>` (rollback),
+   merges the staged files in (nothing deleted), and reports completion.
+5. Open Express on the target machine and verify the company before continuing work.
+
+Staging survives restarts and is cleaned after completion. Logs:
+`%LOCALAPPDATA%\TaxworkExpressBackup\agent.log`.
+
+Compatibility: old agents ignore restores (endpoints are additive); a new agent
+against an old server treats missing restore endpoints as "no work" and keeps
+backing up normally.
+
 ## 6. Troubleshooting
 
 | Symptom | Cause / fix |

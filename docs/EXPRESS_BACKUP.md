@@ -60,7 +60,9 @@ No RLS (Neon convention) — every data path requires auth (see below).
 `saveExpressBackupConfig`, `getAgentPaths`, `saveAgentPath`, `deleteAgentPath`,
 `setPrimaryAgentPath`, `createManualBackupJob` / `createBackupAllJobs` (one job per mapped machine,
 single untargeted job when no rows; skips clients with pending/running jobs),
-`cancelBackupJob`, `deleteBackupJob` (finished jobs: R2 object + DB row), `getBackupJob`,
+`cancelBackupJob`, `deleteBackupJob` (finished jobs: R2 object + DB row),
+`getRestores`, `requestRestore`, `approveRestore`, `rejectRestore`, `confirmRestore`,
+`cancelRestore`, `getBackupJob`,
 `getBackupStorageStats` (DB metadata only, no R2 scan),
 `getAgents`, `registerAgent` (one-time `ABC-123-XYZ` token), `revokeAgent`,
 `reclaimStaleJobs` (running > 2 h + dead agent → pending), `issueAgentSecret`.
@@ -84,6 +86,14 @@ Agent (`Authorization: Bearer <agentId>.<secret>`, sha256-compared, revoked reje
   `express-backups/{clientId}/{YYYY}/{MM}/{clientId}_{stamp}_{job8}.zip`, returns presigned PUT (600 s).
 - `POST /api/express-backup/agent/jobs/[id]/complete` — owner-only; requires sha256 + size; sets `success`.
 - `POST /api/express-backup/agent/jobs/[id]/fail` — `{errorCode, errorMessage}` → `failed`.
+- `GET /api/express-backup/agent/restores` → restores targeted at this agent in
+  `approved` (fetch+stage) or `confirmed` (place) state.
+- `POST /api/express-backup/agent/restores/[id]/claim` — atomic `approved → downloading` (409 if taken).
+- `POST /api/express-backup/agent/restores/[id]/download-url` — owner-only; presigned GET (600 s)
+  derived from the source job's key (must start with `express-backups/`).
+- `POST /api/express-backup/agent/restores/[id]/staged` — `{fileCount}` → `staged`.
+- `POST /api/express-backup/agent/restores/[id]/complete` — `{bakPath}` → `completed` (confirmed only).
+- `POST /api/express-backup/agent/restores/[id]/fail` — `{errorCode, errorMessage}` → `failed`.
 
 Online = heartbeat within 3 min. Lease: `reclaimStaleJobs` re-queues `running` jobs whose agent died.
 
@@ -97,16 +107,25 @@ Neon holds metadata; R2 holds bytes. R2 secrets server-side only — agent uploa
 `retention_days` is recorded and displayed; **no automatic deletion yet** (V1 manual).
 Rules when automation lands: never delete the latest or only successful backup; server-side only.
 
-## Restore (V1)
+## Restore (human-gated, agent-assisted)
 
-Download-only. Future restore = download → local restore folder → manual verify → manual replace.
-Never auto-overwrite production Express data.
+Two human gates, agent does only mechanical work (`express_backup_restores`):
+`pending` (request: job + target machine + target folder) → human **approve** →
+agent downloads via presigned GET, verifies SHA-256, extracts to local staging →
+`staged` → human **confirm** → agent makes `.bak-<restore8>` rollback copy, merges
+files in → `completed` (records `bak_path`). Reject/cancel/fail are terminal.
+The agent never places files without both gates; placement is merge-only
+(nothing in the target is deleted) and idempotent across retries.
+Manual path (download → certutil verify → stage → `.bak` → place → open Express)
+remains available via the export checklist on the client page.
 
 ## Security model
 
 - Human: better-auth + `requireUser()`/`requireUserApi()`. Agent credential ≠ user session.
-- Agent endpoints allow only heartbeat/job-claim/upload-url/complete/fail. No client/credential/task reads,
-  no arbitrary R2 keys, no DB/R2 secrets on the machine.
+- Agent endpoints allow only heartbeat/job-claim/upload-url/complete/fail plus
+  restore-claim/download-url/staged/complete/fail. No client/credential/task reads,
+  no arbitrary R2 keys, no DB/R2 secrets on the machine. Restore writes are confined
+  to the server-approved `target_path`; placement requires both human gates.
 
 ## Troubleshooting
 

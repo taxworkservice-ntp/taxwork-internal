@@ -13,6 +13,7 @@ import {
   type ExpressBackupAgent,
   type ExpressBackupConfig,
   type ExpressBackupJob,
+  type ExpressBackupRestore,
   type ExpressBackupStatus,
 } from "@/lib/express-backup";
 
@@ -605,4 +606,141 @@ export async function issueAgentSecret(agentId: string): Promise<{ secret: strin
   }[];
   if (!rows[0]) throw new Error("ไม่พบเครื่อง");
   return { secret: `${agentId}.${secret}` };
+}
+
+// ---------------------------------------------------------------------------
+// Human-gated restore (export to another machine).
+// Two human gates: approve (request → agent may download/verify/stage) and
+// confirm (staged → agent may .bak + place files). The agent can never place
+// files without both. Every transition is enforced in the UPDATE itself.
+// ---------------------------------------------------------------------------
+
+function toRestore(r: Record<string, unknown>): ExpressBackupRestore {
+  return {
+    id: String(r.id),
+    job_id: String(r.job_id),
+    client_id: String(r.client_id),
+    target_agent_id: r.target_agent_id == null ? null : String(r.target_agent_id),
+    target_agent_name: r.target_agent_name == null ? null : String(r.target_agent_name),
+    target_path: String(r.target_path ?? ""),
+    status: String(r.status),
+    requested_by: r.requested_by == null ? null : String(r.requested_by),
+    approved_by: r.approved_by == null ? null : String(r.approved_by),
+    confirmed_by: r.confirmed_by == null ? null : String(r.confirmed_by),
+    staged_file_count: r.staged_file_count == null ? null : num(r.staged_file_count),
+    bak_path: r.bak_path == null ? null : String(r.bak_path),
+    error_code: r.error_code == null ? null : String(r.error_code),
+    error_message: r.error_message == null ? null : String(r.error_message),
+    created_at: str(r.created_at),
+    updated_at: str(r.updated_at),
+    job_file_name: r.job_file_name == null ? null : String(r.job_file_name),
+    job_checksum: r.job_checksum == null ? null : String(r.job_checksum),
+    job_backup_size: r.job_backup_size == null ? null : num(r.job_backup_size),
+  };
+}
+
+/** Restore requests for one client, newest first (open + recent terminal). */
+export async function getRestores(clientId: string): Promise<ExpressBackupRestore[]> {
+  await requireUser();
+  const rows = (await sql`select r.*, a.agent_name as target_agent_name,
+      j.file_name as job_file_name, j.checksum as job_checksum,
+      j.backup_size_bytes as job_backup_size
+    from express_backup_restores r
+    left join express_backup_agents a on a.id = r.target_agent_id
+    left join express_backup_jobs j on j.id = r.job_id
+    where r.client_id=${clientId} order by r.created_at desc limit 20`) as Record<
+    string,
+    unknown
+  >[];
+  return rows.map(toRestore);
+}
+
+function actorEmail(u: { email?: string | null; id?: string } | null): string {
+  if (!u) return "unknown";
+  return u.email ?? u.id ?? "unknown";
+}
+
+/** Gate 0 — request: pick a success backup + target machine + target folder. */
+export async function requestRestore(
+  jobId: string,
+  targetAgentId: string,
+  targetPath: string
+): Promise<ExpressBackupRestore> {
+  const user = await requireUser();
+  const path = targetPath.trim();
+  assertWindowsPath(path);
+  const jobs = (await sql`select id, client_id, status, storage_key from express_backup_jobs
+    where id=${jobId}`) as {
+    id: string;
+    client_id: string;
+    status: string;
+    storage_key: string | null;
+  }[];
+  const job = jobs[0];
+  if (!job) throw new Error("ไม่พบงานสำรองข้อมูล");
+  if (job.status !== "success") throw new Error("ส่งออกได้เฉพาะงานที่สำเร็จแล้ว");
+  const key = job.storage_key ? String(job.storage_key) : "";
+  if (!key || key.includes("..") || !key.startsWith("express-backups/")) {
+    throw new Error("ไฟล์สำรองนี้ไม่มีคีย์ที่ถูกต้อง");
+  }
+  const agents = (await sql`select id from express_backup_agents
+    where id=${targetAgentId} and status <> 'revoked' and revoked_at is null`) as {
+    id: string;
+  }[];
+  if (!agents[0]) throw new Error("ไม่พบเครื่องปลายทาง");
+  const dup = (await sql`select id from express_backup_restores
+    where job_id=${jobId} and target_agent_id=${targetAgentId}
+      and status in ('pending','approved','downloading','staged','confirmed')
+    limit 1`) as { id: string }[];
+  if (dup[0]) throw new Error("มีคำขอส่งออกที่ยังไม่เสร็จสำหรับงานนี้กับเครื่องนี้แล้ว");
+  const rows = (await sql`insert into express_backup_restores
+      (job_id, client_id, target_agent_id, target_path, status, requested_by)
+    values (${jobId}, ${String(job.client_id)}, ${targetAgentId}, ${path}, 'pending', ${actorEmail(user)})
+    returning *`) as Record<string, unknown>[];
+  const full = (await sql`select r.*, a.agent_name as target_agent_name,
+      j.file_name as job_file_name, j.checksum as job_checksum,
+      j.backup_size_bytes as job_backup_size
+    from express_backup_restores r
+    left join express_backup_agents a on a.id = r.target_agent_id
+    left join express_backup_jobs j on j.id = r.job_id
+    where r.id=${String(rows[0].id)}`) as Record<string, unknown>[];
+  return toRestore(full[0]);
+}
+
+/** Gate 1 — approve: details verified by human; agent may download/verify/stage. */
+export async function approveRestore(id: string): Promise<void> {
+  const user = await requireUser();
+  const rows = (await sql`update express_backup_restores
+    set status='approved', approved_by=${actorEmail(user)}, updated_at=now()
+    where id=${id} and status='pending' returning id`) as { id: string }[];
+  if (!rows[0]) throw new Error("คำขอนี้ไม่อยู่ในสถานะรออนุมัติแล้ว");
+}
+
+/** Reject a pending request (terminal, nothing runs). */
+export async function rejectRestore(id: string): Promise<void> {
+  await requireUser();
+  const rows = (await sql`update express_backup_restores
+    set status='rejected', updated_at=now()
+    where id=${id} and status='pending' returning id`) as { id: string }[];
+  if (!rows[0]) throw new Error("คำขอนี้ไม่อยู่ในสถานะรออนุมัติแล้ว");
+}
+
+/** Gate 2 — confirm: staged copy verified; agent may .bak + place files. */
+export async function confirmRestore(id: string): Promise<void> {
+  const user = await requireUser();
+  const rows = (await sql`update express_backup_restores
+    set status='confirmed', confirmed_by=${actorEmail(user)}, updated_at=now()
+    where id=${id} and status='staged' returning id`) as { id: string }[];
+  if (!rows[0]) throw new Error("รายการนี้ยังไม่พร้อมยืนยัน (ต้องอยู่ในสถานะเตรียมไฟล์แล้ว)");
+}
+
+/** Cancel an unfinished restore (nothing further runs; staged files stay local). */
+export async function cancelRestore(id: string): Promise<void> {
+  await requireUser();
+  const rows = (await sql`update express_backup_restores
+    set status='cancelled', updated_at=now()
+    where id=${id}
+      and status in ('pending','approved','downloading','staged','confirmed')
+    returning id`) as { id: string }[];
+  if (!rows[0]) throw new Error("รายการนี้ยกเลิกไม่ได้ (เสร็จหรือล้มเหลวไปแล้ว)");
 }

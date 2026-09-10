@@ -1,4 +1,9 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const r2 = new S3Client({
@@ -12,6 +17,8 @@ export const r2 = new S3Client({
 
 export const R2_BUCKET = process.env.R2_BUCKET ?? "internal-waxwork";
 
-export function signedUrl(command: PutObjectCommand | DeleteObjectCommand) {
+export function signedUrl(
+  command: PutObjectCommand | DeleteObjectCommand | GetObjectCommand
+) {
   return awsGetSignedUrl(r2 as never, command as never, { expiresIn: 600 });
 }

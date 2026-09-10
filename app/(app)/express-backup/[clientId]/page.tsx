@@ -4,11 +4,17 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  approveRestore,
   cancelBackupJob,
+  cancelRestore,
+  confirmRestore,
   createManualBackupJob,
   deleteAgentPath,
   deleteBackupJob,
   getExpressBackupDetail,
+  getRestores,
+  rejectRestore,
+  requestRestore,
   saveAgentPath,
   saveExpressBackupConfig,
   setPrimaryAgentPath,
@@ -16,7 +22,12 @@ import {
   type BackupDetail,
 } from "@/lib/actions/express-backup";
 import CopyButton from "@/components/copy-button";
-import { STATUS_TH, thaiError, type ExpressBackupStatus } from "@/lib/express-backup-ui";
+import {
+  STATUS_TH,
+  thaiError,
+  type ExpressBackupRestore,
+  type ExpressBackupStatus,
+} from "@/lib/express-backup-ui";
 
 function formatBytes(n: number | null): string {
   if (n === null || n === undefined) return "—";
@@ -38,6 +49,18 @@ function formatThaiDateTime(iso: string | null): string {
 }
 
 const TRIGGER_TH: Record<string, string> = { manual: "สั่งเอง", scheduled: "อัตโนมัติ", retry: "ลองใหม่" };
+
+const RESTORE_TH: Record<string, string> = {
+  pending: "รออนุมัติ",
+  approved: "อนุมัติแล้ว รอเครื่องดาวน์โหลด",
+  downloading: "กำลังดาวน์โหลด",
+  staged: "เตรียมไฟล์แล้ว รอยืนยัน",
+  confirmed: "ยืนยันแล้ว กำลังนำเข้า",
+  completed: "เสร็จแล้ว",
+  failed: "ล้มเหลว",
+  rejected: "ปฏิเสธแล้ว",
+  cancelled: "ยกเลิกแล้ว",
+};
 
 function StatusBadge({ status }: { status: ExpressBackupStatus }) {
   const cls =
@@ -94,6 +117,10 @@ export default function ExpressBackupDetailPage() {
   const [pathDrafts, setPathDrafts] = useState<Record<string, string>>({});
   const [pathBusy, setPathBusy] = useState<string | null>(null);
   const [exportChecks, setExportChecks] = useState<boolean[]>([]);
+  const [restores, setRestores] = useState<ExpressBackupRestore[]>([]);
+  const [restoreAgent, setRestoreAgent] = useState("");
+  const [restorePath, setRestorePath] = useState("");
+  const [restoreBusy, setRestoreBusy] = useState(false);
   const [form, setForm] = useState({
     source_path: "",
     schedule_time: "23:00",
@@ -106,8 +133,21 @@ export default function ExpressBackupDetailPage() {
     setLoading(true);
     setError("");
     try {
-      const d = await getExpressBackupDetail(clientId);
+      const [d, rs] = await Promise.all([
+        getExpressBackupDetail(clientId),
+        getRestores(clientId),
+      ]);
       setDetail(d);
+      setRestores(rs);
+      const active = d.agents.filter((a) => a.status !== "revoked");
+      if (active.length > 0) {
+        setRestoreAgent((prev) => prev || active[0].id);
+        setRestorePath((prev) => {
+          if (prev) return prev;
+          const p = d.agent_paths.find((x) => x.agent_id === active[0].id);
+          return p ? p.source_path : "";
+        });
+      }
       const drafts: Record<string, string> = {};
       for (const p of d.agent_paths) drafts[p.agent_id] = p.source_path;
       for (const a of d.agents) {
@@ -240,6 +280,49 @@ export default function ExpressBackupDetailPage() {
       alert(e instanceof Error ? e.message : "ตั้งเครื่องหลักไม่สำเร็จ");
     } finally {
       setPathBusy(null);
+    }
+  }
+
+  async function handleRequestRestore() {
+    const job = detail?.latest_success;
+    if (!job) return;
+    if (!restoreAgent) {
+      alert("กรุณาเลือกเครื่องปลายทาง");
+      return;
+    }
+    if (!restorePath.trim()) {
+      alert("กรุณาระบุโฟลเดอร์ปลายทางบนเครื่องนั้น");
+      return;
+    }
+    setRestoreBusy(true);
+    try {
+      await requestRestore(job.id, restoreAgent, restorePath.trim());
+      setMessage("สร้างคำขอส่งออกแล้ว รอการอนุมัติ");
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "ขอส่งออกไม่สำเร็จ");
+    } finally {
+      setRestoreBusy(false);
+    }
+  }
+
+  async function handleRestoreAction(
+    id: string,
+    action: "approve" | "reject" | "confirm" | "cancel",
+    confirmText: string
+  ) {
+    if (!confirm(confirmText)) return;
+    setRestoreBusy(true);
+    try {
+      if (action === "approve") await approveRestore(id);
+      else if (action === "reject") await rejectRestore(id);
+      else if (action === "confirm") await confirmRestore(id);
+      else await cancelRestore(id);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "ดำเนินการไม่สำเร็จ");
+    } finally {
+      setRestoreBusy(false);
     }
   }
 
@@ -563,6 +646,139 @@ export default function ExpressBackupDetailPage() {
             <button className="btn px-2 py-1 text-xs" onClick={() => setExportChecks([])}>
               เริ่มใหม่
             </button>
+          </div>
+
+          <div className="mt-4 border-t pt-3">
+            <p className="mb-1 text-sm font-medium">ส่งออกด้วยเครื่องปลายทาง (มีคนอนุมัติ 2 ชั้น)</p>
+            <p className="mb-2 text-xs text-neutral-500">
+              เครื่องปลายทางดาวน์โหลด ตรวจ SHA และเตรียมไฟล์ให้เอง —
+              แต่ไฟล์จะเข้าที่จริงก็ต่อเมื่อคุณอนุมัติและยืนยันแล้วเท่านั้น
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <label className="label">
+                เครื่องปลายทาง
+                <select
+                  className="input"
+                  value={restoreAgent}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setRestoreAgent(id);
+                    const p = agent_paths.find((x) => x.agent_id === id);
+                    if (p) setRestorePath(p.source_path);
+                  }}
+                >
+                  {activeAgents.length === 0 && <option value="">ยังไม่มีเครื่อง</option>}
+                  {activeAgents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.agent_name} ({a.machine_name})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="label">
+                โฟลเดอร์ปลายทางบนเครื่องนั้น
+                <input
+                  className="input font-mono"
+                  value={restorePath}
+                  onChange={(e) => setRestorePath(e.target.value)}
+                  placeholder="D:\ExpressData\ABC"
+                />
+              </label>
+              <div className="flex items-end">
+                <button
+                  className="btn-primary px-2 py-1 text-xs"
+                  disabled={restoreBusy || !restoreAgent}
+                  onClick={handleRequestRestore}
+                >
+                  {restoreBusy ? "…" : "ขอส่งออก"}
+                </button>
+              </div>
+            </div>
+
+            {restores.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {restores.map((r) => (
+                  <div key={r.id} className="rounded border p-2 text-xs">
+                    <p className="flex min-w-0 flex-wrap items-center gap-1">
+                      <span className="font-medium">{RESTORE_TH[r.status] ?? r.status}</span>
+                      <span className="text-neutral-500">→ {r.target_agent_name ?? "—"}</span>
+                      <span className="min-w-0 flex-1 truncate font-mono" title={r.target_path}>
+                        {r.target_path}
+                      </span>
+                    </p>
+                    <p className="mt-1 text-neutral-500">
+                      ขอโดย {r.requested_by ?? "—"}
+                      {r.approved_by && ` · อนุมัติโดย ${r.approved_by}`}
+                      {r.confirmed_by && ` · ยืนยันโดย ${r.confirmed_by}`}
+                      {r.staged_file_count != null && ` · เตรียมแล้ว ${r.staged_file_count} ไฟล์`}
+                      {r.bak_path && (
+                        <span className="font-mono"> · สำรองเดิม: {r.bak_path}</span>
+                      )}
+                    </p>
+                    {r.error_code && (
+                      <p className="mt-1 text-red-600">
+                        {thaiError(r.error_code)} ({r.error_code})
+                        {r.error_message && ` — ${r.error_message}`}
+                      </p>
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {r.status === "pending" && (
+                        <>
+                          <button
+                            className="btn-primary px-2 py-1 text-xs"
+                            disabled={restoreBusy}
+                            onClick={() =>
+                              handleRestoreAction(
+                                r.id,
+                                "approve",
+                                `อนุมัติส่งออกไฟล์ ${r.job_file_name ?? ""} ไปเครื่อง ${r.target_agent_name ?? ""}?\nเครื่องจะดาวน์โหลด ตรวจ SHA และเตรียมไฟล์ (ยังไม่เข้าที่)`
+                              )
+                            }
+                          >
+                            อนุมัติ
+                          </button>
+                          <button
+                            className="btn px-2 py-1 text-xs"
+                            disabled={restoreBusy}
+                            onClick={() =>
+                              handleRestoreAction(r.id, "reject", "ปฏิเสธคำขอนี้?")
+                            }
+                          >
+                            ปฏิเสธ
+                          </button>
+                        </>
+                      )}
+                      {r.status === "staged" && (
+                        <button
+                          className="btn-danger px-2 py-1 text-xs"
+                          disabled={restoreBusy}
+                          onClick={() =>
+                            handleRestoreAction(
+                              r.id,
+                              "confirm",
+                              `ยืนยันนำไฟล์เข้าที่ ${r.target_path}?\nเครื่องจะสำรองของเดิมเป็น .bak ก่อนแล้วจึงคัดลอกไฟล์เข้า`
+                            )
+                          }
+                        >
+                          ยืนยันนำเข้าที่
+                        </button>
+                      )}
+                      {["pending", "approved", "staged"].includes(r.status) && (
+                        <button
+                          className="btn px-2 py-1 text-xs"
+                          disabled={restoreBusy}
+                          onClick={() =>
+                            handleRestoreAction(r.id, "cancel", "ยกเลิกคำขอนี้?")
+                          }
+                        >
+                          ยกเลิก
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

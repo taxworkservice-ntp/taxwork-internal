@@ -30,6 +30,16 @@ class Job:
     retention_days: int = 30
 
 
+@dataclass
+class Restore:
+    id: str
+    job_id: str
+    target_path: str
+    status: str  # 'approved' (fetch+stage now) or 'confirmed' (.bak+place now)
+    expected_checksum: str | None = None
+    backup_size: int | None = None
+
+
 class ApiClient:
     def __init__(self, server_url: str, credential: str, version: str, timeout: int = 30) -> None:
         self.base = server_url.rstrip("/")
@@ -133,3 +143,81 @@ class ApiClient:
             )
         except ApiError:
             pass  # best effort — the job lease/reclaim covers a lost failure report
+
+    # -- restore (export) endpoints --------------------------------------
+    def list_restores(self) -> list[Restore]:
+        resp = self._request("GET", "/api/express-backup/agent/restores")
+        if resp.status_code == 404:
+            return []  # server predates restore support — stay quiet, keep backing up
+        if resp.status_code != 200:
+            raise ApiError("NETWORK_ERROR", f"list restores failed: {resp.status_code}", resp.status_code)
+        out = []
+        for r in resp.json().get("restores", []):
+            out.append(
+                Restore(
+                    id=r["id"],
+                    job_id=r["jobId"],
+                    target_path=r["targetPath"],
+                    status=r["status"],
+                    expected_checksum=r.get("expectedChecksum"),
+                    backup_size=r.get("backupSizeBytes"),
+                )
+            )
+        return out
+
+    def claim_restore(self, restore_id: str) -> Restore:
+        resp = self._request("POST", f"/api/express-backup/agent/restores/{restore_id}/claim")
+        if resp.status_code == 409:
+            raise ApiError("JOB_EXPIRED", "restore already claimed")
+        if resp.status_code != 200:
+            raise ApiError("NETWORK_ERROR", f"claim failed: {resp.status_code}", resp.status_code)
+        r = resp.json()
+        return Restore(
+            id=r["id"],
+            job_id=r["jobId"],
+            target_path=r["targetPath"],
+            status="downloading",
+            expected_checksum=r.get("expectedChecksum"),
+            backup_size=r.get("backupSizeBytes"),
+        )
+
+    def restore_download_url(self, restore_id: str) -> str:
+        resp = self._request(
+            "POST", f"/api/express-backup/agent/restores/{restore_id}/download-url"
+        )
+        if resp.status_code != 200:
+            raise ApiError("NETWORK_ERROR", f"download-url failed: {resp.status_code}", resp.status_code)
+        return resp.json()["url"]
+
+    def staged(
+        self,
+        restore_id: str,
+        *,
+        file_count: int,
+    ) -> None:
+        resp = self._request(
+            "POST",
+            f"/api/express-backup/agent/restores/{restore_id}/staged",
+            json={"fileCount": file_count},
+        )
+        if resp.status_code != 200:
+            raise ApiError("NETWORK_ERROR", f"staged failed: {resp.status_code}", resp.status_code)
+
+    def complete_restore(self, restore_id: str, *, bak_path: str) -> None:
+        resp = self._request(
+            "POST",
+            f"/api/express-backup/agent/restores/{restore_id}/complete",
+            json={"bakPath": bak_path},
+        )
+        if resp.status_code != 200:
+            raise ApiError("NETWORK_ERROR", f"complete failed: {resp.status_code}", resp.status_code)
+
+    def fail_restore(self, restore_id: str, code: str, message: str) -> None:
+        try:
+            self._request(
+                "POST",
+                f"/api/express-backup/agent/restores/{restore_id}/fail",
+                json={"errorCode": code, "errorMessage": message[:2000]},
+            )
+        except ApiError:
+            pass  # best effort — the restore stays visible for retry/cancel

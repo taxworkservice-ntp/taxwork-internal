@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "crypto";
 import { sql } from "@/lib/db";
 import type { ExpressBackupStatus } from "./express-backup-ui";
 
-export type { ExpressBackupStatus } from "./express-backup-ui";
+export type { ExpressBackupRestore, ExpressBackupStatus } from "./express-backup-ui";
 export { BACKUP_ERROR_TH, STATUS_TH, thaiError } from "./express-backup-ui";
 
 export type ExpressBackupConfig = {
