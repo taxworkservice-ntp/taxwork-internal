@@ -9,8 +9,6 @@ import requests
 
 from api import RETRY_WAITS, ApiError
 
-_CHUNK = 4 * 1024 * 1024
-
 
 def upload_file(url: str, path: str) -> int:
     """PUT path -> presigned URL with retries. Returns bytes sent."""
@@ -21,8 +19,8 @@ def upload_file(url: str, path: str) -> int:
             with open(path, "rb") as f:
                 resp = requests.put(
                     url,
-                    data=_reader(f),
-                    headers={"Content-Type": "application/zip", "Content-Length": str(size)},
+                    data=f,
+                    headers={"Content-Type": "application/zip"},
                     timeout=600,
                 )
             if 200 <= resp.status_code < 300:
@@ -33,11 +31,3 @@ def upload_file(url: str, path: str) -> int:
         if attempt < len(RETRY_WAITS):
             time.sleep(RETRY_WAITS[attempt])
     raise ApiError("UPLOAD_FAILED", f"upload failed after retries: {last}")
-
-
-def _reader(f):
-    while True:
-        chunk = f.read(_CHUNK)
-        if not chunk:
-            break
-        yield chunk
