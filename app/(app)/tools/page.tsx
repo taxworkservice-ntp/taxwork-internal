@@ -25,6 +25,37 @@ export default function ToolsPage() {
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const unlockInputRef = useRef<HTMLInputElement>(null);
+  const [mergeDragActive, setMergeDragActive] = useState(false);
+  const [splitDragActive, setSplitDragActive] = useState(false);
+  const mergeInputRef = useRef<HTMLInputElement>(null);
+  const splitInputRef = useRef<HTMLInputElement>(null);
+  const [splitMode, setSplitMode] = useState<"ranges" | "every-page">("ranges");
+  const [splitAsZip, setSplitAsZip] = useState(true);
+  const [splitTotal, setSplitTotal] = useState<number | null>(null);
+
+  function isPdf(f: File) {
+    return f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+  }
+
+  function addMergeFiles(files: File[] | FileList) {
+    const arr = Array.from(files).filter(isPdf);
+    if (!arr.length) {
+      setMessage("เลือกเฉพาะไฟล์ PDF");
+      return;
+    }
+    setMergeFiles((prev) => [...prev, ...arr]);
+    setMessage(null);
+  }
+
+  function moveMergeFile(index: number, dir: -1 | 1) {
+    setMergeFiles((prev) => {
+      const next = [...prev];
+      const j = index + dir;
+      if (j < 0 || j >= next.length) return prev;
+      [next[index], next[j]] = [next[j], next[index]];
+      return next;
+    });
+  }
 
   async function merge() {
     if (mergeFiles.length < 2) {
@@ -34,19 +65,35 @@ export default function ToolsPage() {
     setBusy(true);
     try {
       const out = await PDFDocument.create();
+      let ok = 0;
+      const failed: string[] = [];
       for (const file of mergeFiles) {
-        const src = await PDFDocument.load(await file.arrayBuffer());
-        const pages = await out.copyPages(src, src.getPageIndices());
-        pages.forEach((p) => out.addPage(p));
+        try {
+          const src = await PDFDocument.load(await file.arrayBuffer(), { ignoreEncryption: true });
+          const pages = await out.copyPages(src, src.getPageIndices());
+          pages.forEach((p) => out.addPage(p));
+          ok++;
+        } catch {
+          failed.push(file.name);
+        }
+      }
+      if (ok === 0) {
+        setMessage("รวมไฟล์ไม่สำเร็จ — ตรวจสอบว่าไฟล์เป็น PDF ที่ถูกต้อง");
+        return;
       }
       const bytes = await out.save();
       downloadBytes(bytes, "merged.pdf");
-      setMessage(`รวม ${mergeFiles.length} ไฟล์แล้ว`);
+      setMessage(
+        failed.length
+          ? `รวม ${ok} ไฟล์แล้ว (ข้าม ${failed.length} ไฟล์: ${failed.join(", ")})`
+          : `รวม ${ok} ไฟล์แล้ว`
+      );
       setMergeFiles([]);
     } catch {
       setMessage("รวมไฟล์ไม่สำเร็จ — ตรวจสอบว่าไฟล์เป็น PDF ที่ถูกต้อง");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   function parseRanges(range: string, total: number): number[][] {
@@ -68,32 +115,101 @@ export default function ToolsPage() {
       .filter((p) => p.length > 0);
   }
 
+  async function setSplitFileWithInfo(f: File | null) {
+    setSplitFile(f);
+    setSplitTotal(null);
+    if (!f) return;
+    try {
+      const src = await PDFDocument.load(await f.arrayBuffer(), { ignoreEncryption: true });
+      setSplitTotal(src.getPageCount());
+    } catch {
+      setSplitTotal(null);
+    }
+  }
+
+  function addSplitFile(files: File[] | FileList) {
+    const f = Array.from(files).find(isPdf) ?? null;
+    if (!f) {
+      setMessage("เลือกเฉพาะไฟล์ PDF");
+      return;
+    }
+    setSplitFileWithInfo(f);
+    setMessage(null);
+  }
+
+  function baseName(name: string) {
+    return name.replace(/\.pdf$/i, "");
+  }
+
+  async function downloadZipBlob(files: { name: string; bytes: Uint8Array }[], zipName: string) {
+    const zip = new JSZip();
+    for (const f of files) zip.file(f.name, f.bytes);
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = zipName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   async function split() {
     if (!splitFile) {
-      setMessage("Choose a PDF to split.");
+      setMessage("เลือกไฟล์ PDF ที่จะแยกก่อน");
       return;
     }
     setBusy(true);
     try {
-      const src = await PDFDocument.load(await splitFile.arrayBuffer());
+      const src = await PDFDocument.load(await splitFile.arrayBuffer(), { ignoreEncryption: true });
       const total = src.getPageCount();
+      setSplitTotal(total);
+      const base = baseName(splitFile.name);
+
+      if (splitMode === "every-page") {
+        const parts: { name: string; bytes: Uint8Array }[] = [];
+        for (let i = 0; i < total; i++) {
+          const out = await PDFDocument.create();
+          const [p] = await out.copyPages(src, [i]);
+          out.addPage(p);
+          parts.push({ name: `${base}-p${i + 1}.pdf`, bytes: await out.save() });
+        }
+        if (splitAsZip || parts.length > 3) {
+          await downloadZipBlob(parts, `${base}-pages.zip`);
+        } else {
+          for (const p of parts) downloadBytes(p.bytes, p.name);
+        }
+        setMessage(`แยกทุกหน้าแล้ว (${total} ไฟล์)`);
+        return;
+      }
+
       const groups = parseRanges(splitRange, total);
       if (!groups.length) {
         setMessage(`กรอกช่วงหน้า เช่น "1-3,5" (ไฟล์นี้มี ${total} หน้า)`);
-        setBusy(false);
         return;
       }
+      const parts: { name: string; bytes: Uint8Array }[] = [];
       for (const g of groups) {
         const out = await PDFDocument.create();
         const pages = await out.copyPages(src, g);
         pages.forEach((p) => out.addPage(p));
-        downloadBytes(await out.save(), `split-${g.map((i) => i + 1).join("-")}.pdf`);
+        parts.push({
+          name: `${base}-${g.map((i) => i + 1).join("-")}.pdf`,
+          bytes: await out.save(),
+        });
       }
-      setMessage(`สร้าง ${groups.length} ไฟล์แล้ว`);
+      if (splitAsZip) {
+        await downloadZipBlob(parts, `${base}-split.zip`);
+      } else {
+        for (const p of parts) downloadBytes(p.bytes, p.name);
+      }
+      setMessage(`สร้าง ${parts.length} ไฟล์แล้ว`);
     } catch {
-      setMessage("แยกไฟล์ไม่สำเร็จ — PDF หรือช่วงหน้าไม่ถูกต้อง");
+      setMessage("แยกไฟล์ไม่สำเร็จ — PDF หรือช่วงหน้าไม่ถูกต้อง (ไฟล์ติดรหัสผ่านต้องปลดล็อกก่อน)");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   function downloadBytes(bytes: Uint8Array, name: string, type = "application/pdf") {
@@ -217,42 +333,167 @@ export default function ToolsPage() {
 
       <div className="grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
         <section className="card">
-          <h2 className="mb-3 font-medium">รวม PDF</h2>
-          <input
-            type="file"
-            accept="application/pdf"
-            multiple
-            className="mb-3 block text-sm"
-            onChange={(e) => setMergeFiles(Array.from(e.target.files ?? []))}
-          />
+          <h2 className="mb-1 font-medium">รวม PDF</h2>
+          <p className="mb-3 text-xs text-neutral-500">ลากไฟล์มาวาง จัดลำดับ แล้วรวมเป็นไฟล์เดียว</p>
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setMergeDragActive(true);
+            }}
+            onDragLeave={() => setMergeDragActive(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setMergeDragActive(false);
+              if (e.dataTransfer.files?.length) addMergeFiles(e.dataTransfer.files);
+            }}
+            onClick={() => mergeInputRef.current?.click()}
+            className={`mb-3 cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+              mergeDragActive
+                ? "border-blue-500 bg-blue-50"
+                : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+            }`}
+          >
+            <input
+              ref={mergeInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) addMergeFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            ลากไฟล์มาวาง หรือคลิกเพื่อเลือก
+          </div>
           {mergeFiles.length > 0 && (
-            <ol className="mb-3 list-decimal pl-5 text-sm text-neutral-600">
-              {mergeFiles.map((f) => (
-                <li key={f.name}>{f.name}</li>
+            <ol className="mb-3 space-y-1 text-sm text-neutral-600">
+              {mergeFiles.map((f, i) => (
+                <li key={`${i}-${f.name}-${f.size}`} className="flex items-center gap-1 rounded border border-neutral-100 px-2 py-1">
+                  <span className="mr-1 text-xs text-neutral-400">{i + 1}.</span>
+                  <span className="flex-1 truncate" title={f.name}>
+                    {f.name}
+                  </span>
+                  <button className="btn !px-1.5 !py-0.5 text-xs" disabled={busy || i === 0} onClick={() => moveMergeFile(i, -1)}>
+                    ↑
+                  </button>
+                  <button
+                    className="btn !px-1.5 !py-0.5 text-xs"
+                    disabled={busy || i === mergeFiles.length - 1}
+                    onClick={() => moveMergeFile(i, 1)}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    className="text-neutral-400 hover:text-red-600"
+                    disabled={busy}
+                    onClick={() => setMergeFiles((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    ✕
+                  </button>
+                </li>
               ))}
             </ol>
           )}
-          <button className="btn-primary" onClick={merge} disabled={busy}>
-            รวมไฟล์
-          </button>
+          <div className="flex gap-2">
+            <button className="btn-primary" onClick={merge} disabled={busy || mergeFiles.length < 2}>
+              รวมไฟล์ ({mergeFiles.length})
+            </button>
+            {mergeFiles.length > 0 && (
+              <button className="btn-danger" onClick={() => setMergeFiles([])} disabled={busy}>
+                ล้าง
+              </button>
+            )}
+          </div>
         </section>
 
         <section className="card">
-          <h2 className="mb-3 font-medium">แยก PDF</h2>
-          <input
-            type="file"
-            accept="application/pdf"
-            className="mb-3 block text-sm"
-            onChange={(e) => setSplitFile(e.target.files?.[0] ?? null)}
-          />
-          <label className="label">ช่วงหน้า (เช่น 1-3, 5)</label>
-          <input
-            className="input mb-3"
-            placeholder="1-3, 5"
-            value={splitRange}
-            onChange={(e) => setSplitRange(e.target.value)}
-          />
-          <button className="btn-primary" onClick={split} disabled={busy}>
+          <h2 className="mb-1 font-medium">แยก PDF</h2>
+          <p className="mb-3 text-xs text-neutral-500">แยกตามช่วงหน้า หรือแยกทุกหน้าเป็น ZIP</p>
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setSplitDragActive(true);
+            }}
+            onDragLeave={() => setSplitDragActive(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setSplitDragActive(false);
+              if (e.dataTransfer.files?.length) addSplitFile(e.dataTransfer.files);
+            }}
+            onClick={() => splitInputRef.current?.click()}
+            className={`mb-3 cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+              splitDragActive
+                ? "border-blue-500 bg-blue-50"
+                : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+            }`}
+          >
+            <input
+              ref={splitInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) addSplitFile(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            {splitFile ? splitFile.name : "ลากไฟล์มาวาง หรือคลิกเพื่อเลือก"}
+            {splitFile && (
+              <div className="mt-1 text-xs text-neutral-500">
+                {(splitFile.size / 1024).toFixed(0)} KB
+                {splitTotal !== null ? ` • ${splitTotal} หน้า` : ""}
+              </div>
+            )}
+          </div>
+          {splitFile && (
+            <button
+              className="mb-3 text-xs text-neutral-500 underline hover:text-red-600"
+              onClick={() => {
+                setSplitFile(null);
+                setSplitTotal(null);
+              }}
+            >
+              เอาไฟล์ออก
+            </button>
+          )}
+          <div className="mb-3 flex gap-2 text-sm">
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                checked={splitMode === "ranges"}
+                onChange={() => setSplitMode("ranges")}
+              />
+              ช่วงหน้า
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                checked={splitMode === "every-page"}
+                onChange={() => {
+                  setSplitMode("every-page");
+                  setSplitAsZip(true);
+                }}
+              />
+              ทุกหน้า → ZIP
+            </label>
+          </div>
+          {splitMode === "ranges" && (
+            <>
+              <label className="label">ช่วงหน้า (เช่น 1-3, 5)</label>
+              <input
+                className="input mb-3"
+                placeholder="1-3, 5"
+                value={splitRange}
+                onChange={(e) => setSplitRange(e.target.value)}
+              />
+            </>
+          )}
+          <label className="mb-3 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={splitAsZip} onChange={(e) => setSplitAsZip(e.target.checked)} />
+            ส่งออกเป็น ZIP {splitMode === "every-page" ? "(แนะนำ)" : "(กันเบราว์เซอร์บล็อกดาวน์โหลดหลายไฟล์)"}
+          </label>
+          <button className="btn-primary" onClick={split} disabled={busy || !splitFile}>
             แยกไฟล์
           </button>
         </section>
