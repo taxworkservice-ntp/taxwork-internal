@@ -76,6 +76,42 @@ export default function ExpressBackupPage() {
   const [showAgentForm, setShowAgentForm] = useState(false);
   const [agentForm, setAgentForm] = useState({ agent_name: "", machine_name: "" });
   const [newToken, setNewToken] = useState<{ id: string; token: string } | null>(null);
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("express-backup.favorites") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [hidden, setHidden] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("express-backup.hidden") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [onlyFav, setOnlyFav] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("express-backup.favorites", JSON.stringify(favorites));
+  }, [favorites]);
+
+  useEffect(() => {
+    localStorage.setItem("express-backup.hidden", JSON.stringify(hidden));
+  }, [hidden]);
+
+  function toggleFav(clientId: string) {
+    setFavorites((prev) =>
+      prev.includes(clientId) ? prev.filter((id) => id !== clientId) : [...prev, clientId]
+    );
+  }
+
+  function toggleHide(clientId: string) {
+    setHidden((prev) =>
+      prev.includes(clientId) ? prev.filter((id) => id !== clientId) : [...prev, clientId]
+    );
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,11 +192,21 @@ export default function ExpressBackupPage() {
   }
 
   const q = search.trim().toLowerCase();
-  const filtered = q
+  const searched = q
     ? rows.filter(
         (r) => r.client_name.toLowerCase().includes(q) || (r.tax_id ?? "").includes(q)
       )
     : rows;
+  const hiddenCount = searched.filter((r) => hidden.includes(r.client_id)).length;
+  const filtered = searched
+    .filter((r) => (showHidden ? true : !hidden.includes(r.client_id)))
+    .filter((r) => (onlyFav ? favorites.includes(r.client_id) : true))
+    .sort((a, b) => {
+      const fa = favorites.includes(a.client_id) ? 0 : 1;
+      const fb = favorites.includes(b.client_id) ? 0 : 1;
+      if (fa !== fb) return fa - fb;
+      return a.client_name.localeCompare(b.client_name, "th");
+    });
   const healthy = rows.filter((r) => r.status === "healthy").length;
   const problems = rows.filter((r) => r.status === "failed" || r.status === "late").length;
 
@@ -269,12 +315,30 @@ export default function ExpressBackupPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          <button
+            className={onlyFav ? "btn-primary px-2 py-1 text-xs" : "btn px-2 py-1 text-xs"}
+            onClick={() => setOnlyFav((v) => !v)}
+            title="แสดงเฉพาะบริษัทที่ติดดาว"
+          >
+            ★ รายการโปรด
+          </button>
+          <button
+            className={showHidden ? "btn-primary px-2 py-1 text-xs" : "btn px-2 py-1 text-xs"}
+            onClick={() => setShowHidden((v) => !v)}
+            title="แสดงบริษัทที่ซ่อนอยู่"
+          >
+            {showHidden ? "ซ่อนรายการที่ซ่อนอยู่" : `แสดงที่ซ่อนอยู่ (${hiddenCount})`}
+          </button>
         </div>
         {loading ? (
           <p className="text-sm text-neutral-500">กำลังโหลด...</p>
         ) : filtered.length === 0 ? (
           <p className="text-sm text-neutral-500">
-            {rows.length === 0 ? "ยังไม่มีข้อมูลลูกค้า" : "ไม่พบลูกค้าที่ค้นหา"}
+            {rows.length === 0
+              ? "ยังไม่มีข้อมูลลูกค้า"
+              : onlyFav
+                ? "ยังไม่มีรายการโปรด — กด ★ ที่บริษัทที่สำรองบ่อย"
+                : "ไม่พบลูกค้าที่ค้นหา"}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -290,15 +354,34 @@ export default function ExpressBackupPage() {
               </thead>
               <tbody>
                 {filtered.map((r) => (
-                  <tr key={r.client_id}>
+                  <tr key={r.client_id} className={hidden.includes(r.client_id) ? "opacity-60" : ""}>
                     <td>
-                      <Link
-                        href={`/express-backup/${r.client_id}`}
-                        className="font-medium text-blue-600 hover:underline"
-                      >
-                        {r.client_name}
-                      </Link>
-                      {r.tax_id && <div className="text-xs text-neutral-500">{r.tax_id}</div>}
+                      <div className="flex min-w-0 items-center gap-1">
+                        <button
+                          className={
+                            favorites.includes(r.client_id)
+                              ? "shrink-0 text-lg leading-none text-yellow-500"
+                              : "shrink-0 text-lg leading-none text-neutral-300 hover:text-yellow-500"
+                          }
+                          onClick={() => toggleFav(r.client_id)}
+                          title={
+                            favorites.includes(r.client_id)
+                              ? "เอาออกจากรายการโปรด"
+                              : "ติดดาวเป็นรายการโปรด"
+                          }
+                        >
+                          ★
+                        </button>
+                        <div className="min-w-0">
+                          <Link
+                            href={`/express-backup/${r.client_id}`}
+                            className="font-medium text-blue-600 hover:underline"
+                          >
+                            {r.client_name}
+                          </Link>
+                          {r.tax_id && <div className="text-xs text-neutral-500">{r.tax_id}</div>}
+                        </div>
+                      </div>
                     </td>
                     <td className="whitespace-nowrap">{formatThaiDateTime(r.latest_success_at)}</td>
                     <td>
@@ -319,6 +402,17 @@ export default function ExpressBackupPage() {
                         onClick={() => handleBackupOne(r.client_id)}
                       >
                         {busy === r.client_id ? "…" : "สำรองตอนนี้"}
+                      </button>{" "}
+                      <button
+                        className="btn px-2 py-1 text-xs"
+                        onClick={() => toggleHide(r.client_id)}
+                        title={
+                          hidden.includes(r.client_id)
+                            ? "เลิกซ่อนบริษัทนี้"
+                            : "ซ่อนบริษัทนี้จากรายการ (สำรองนานๆ ครั้ง)"
+                        }
+                      >
+                        {hidden.includes(r.client_id) ? "เลิกซ่อน" : "ซ่อน"}
                       </button>
                     </td>
                   </tr>

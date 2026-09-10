@@ -32,6 +32,9 @@ No RLS (Neon convention) — every data path requires auth (see below).
 
 - `/express-backup` — summary cards, `[สำรองข้อมูลทั้งหมด]`, `[เพิ่มเครื่อง]`, per-client table
   (บริษัท/สำรองล่าสุด/สถานะ/ขนาด/การทำงาน), machine list with online/offline + เพิกถอนเครื่อง.
+  Rows can be starred (★ รายการโปรด, sorted first, `express-backup.favorites` in localStorage)
+  or hidden (ซ่อน, `express-backup.hidden`), with `[★ รายการโปรด]` and `[แสดงที่ซ่อนอยู่]`
+  filters — per-browser only, not shared.
 - `/express-backup/[clientId]` — status, settings form (source path/time/retention/enabled),
   `[สำรองข้อมูลตอนนี้]`, history (วันที่/ขนาด/สถานะ/ประเภท/ไฟล์) with ดาวน์โหลด/รายละเอียด/ยกเลิก,
   Thai error text (`ไม่พบโฟลเดอร์ข้อมูล Express`, …).
