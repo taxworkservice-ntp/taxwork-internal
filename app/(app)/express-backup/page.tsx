@@ -397,28 +397,46 @@ export default function ExpressBackupPage() {
                     </td>
                     <td className="whitespace-nowrap">{formatBytes(r.latest_success_size)}</td>
                     <td className="whitespace-nowrap">
-                      <Link href={`/express-backup/${r.client_id}`} className="btn px-2 py-1 text-xs">
-                        เปิด
-                      </Link>{" "}
-                      <button
-                        className="btn px-2 py-1 text-xs"
-                        disabled={busy !== null || !r.has_config || !r.enabled}
-                        title={!r.has_config ? "ยังไม่ได้ตั้งค่า" : "สำรองข้อมูลตอนนี้"}
-                        onClick={() => handleBackupOne(r.client_id)}
-                      >
-                        {busy === r.client_id ? "…" : "สำรองตอนนี้"}
-                      </button>{" "}
-                      <button
-                        className="btn px-2 py-1 text-xs"
-                        onClick={() => toggleHide(r.client_id)}
-                        title={
-                          hidden.includes(r.client_id)
-                            ? "เลิกซ่อนบริษัทนี้"
-                            : "ซ่อนบริษัทนี้จากรายการ (สำรองนานๆ ครั้ง)"
-                        }
-                      >
-                        {hidden.includes(r.client_id) ? "เลิกซ่อน" : "ซ่อน"}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Link href={`/express-backup/${r.client_id}`} className="btn px-2 py-1 text-xs">
+                          เปิด
+                        </Link>
+                        <button
+                          className="btn px-2 py-1 text-xs"
+                          disabled={busy !== null || !r.has_config || !r.enabled}
+                          title={!r.has_config ? "ยังไม่ได้ตั้งค่า" : "สำรองข้อมูลตอนนี้"}
+                          onClick={() => handleBackupOne(r.client_id)}
+                        >
+                          {busy === r.client_id ? "…" : "สำรองตอนนี้"}
+                        </button>
+                        {r.latest_success_at ? (
+                          <Link
+                            href={`/express-backup/${r.client_id}#export`}
+                            className="btn-primary px-2 py-1 text-xs"
+                            title={`รับข้อมูลสำรองล่าสุด (${formatThaiDateTime(r.latest_success_at)}) ไปเครื่องอื่น`}
+                          >
+                            รับข้อมูล
+                          </Link>
+                        ) : (
+                          <span
+                            className="btn cursor-not-allowed px-2 py-1 text-xs opacity-40"
+                            title="ยังไม่มีไฟล์สำรอง — รับข้อมูลได้หลังสำรองครั้งแรกสำเร็จ"
+                          >
+                            รับข้อมูล
+                          </span>
+                        )}
+                        <button
+                          className="btn px-2 py-1 text-xs"
+                          onClick={() => toggleHide(r.client_id)}
+                          title={
+                            hidden.includes(r.client_id)
+                              ? "เลิกซ่อนบริษัทนี้"
+                              : "ซ่อนบริษัทนี้จากรายการ (สำรองนานๆ ครั้ง)"
+                          }
+                        >
+                          {hidden.includes(r.client_id) ? "เลิกซ่อน" : "ซ่อน"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

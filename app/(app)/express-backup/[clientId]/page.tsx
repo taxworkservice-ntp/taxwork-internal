@@ -175,6 +175,14 @@ export default function ExpressBackupDetailPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (window.location.hash === "#export") {
+      requestAnimationFrame(() => {
+        document.getElementById("export")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [detail]);
+
   const exportJobId = detail?.latest_success?.id ?? null;
   useEffect(() => {
     if (!exportJobId) {
@@ -544,7 +552,7 @@ export default function ExpressBackupDetailPage() {
       </div>
 
       {latest_success && (
-        <div className="card border-blue-200">
+        <div id="export" className="card scroll-mt-20 border-blue-200 ring-1 ring-blue-100">
           <h2 className="mb-1 font-medium">ย้ายข้อมูลไปเครื่องอื่น — ทำ 3 ขั้น</h2>
           <p className="mb-3 text-sm text-neutral-600">
             ใช้ข้อมูลสำรองล่าสุด {formatThaiDateTime(latest_success.completed_at ?? latest_success.created_at)} ·{" "}
@@ -881,6 +889,55 @@ export default function ExpressBackupDetailPage() {
             </table>
           </div>
         )}
+        <div className="mt-4 border-t pt-3">
+          <h3 className="mb-2 font-medium">ประวัติการย้ายข้อมูลไปเครื่องอื่น ({restores.length})</h3>
+          {restores.length === 0 ? (
+            <p className="text-sm text-neutral-500">ยังไม่มีการย้ายข้อมูล</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="table-base w-full min-w-[720px]">
+                <thead>
+                  <tr>
+                    <th>วันที่ขอ</th>
+                    <th>ไฟล์ต้นฉบับ</th>
+                    <th>ไปเครื่อง</th>
+                    <th>สถานะ</th>
+                    <th>ของเดิม (.bak)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {restores.map((r) => (
+                    <tr key={r.id}>
+                      <td className="whitespace-nowrap">{formatThaiDateTime(r.created_at)}</td>
+                      <td className="max-w-[200px] truncate font-mono text-xs" title={r.job_file_name ?? ""}>
+                        {r.job_file_name ?? "—"}
+                      </td>
+                      <td>
+                        <span className="font-medium">{r.target_agent_name ?? "—"}</span>
+                        <div className="max-w-[200px] truncate font-mono text-xs text-neutral-500" title={r.target_path}>
+                          {r.target_path}
+                        </div>
+                      </td>
+                      <td>
+                        <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs">
+                          {RESTORE_TH[r.status] ?? r.status}
+                        </span>
+                        {r.error_code && (
+                          <div className="text-xs text-red-600">
+                            {thaiError(r.error_code)} ({r.error_code})
+                          </div>
+                        )}
+                      </td>
+                      <td className="max-w-[200px] truncate font-mono text-xs" title={r.bak_path ?? ""}>
+                        {r.bak_path ?? (r.status === "completed" ? "—" : "ยังไม่ย้ายไฟล์เข้า")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
