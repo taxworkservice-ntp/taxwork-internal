@@ -545,114 +545,82 @@ export default function ExpressBackupDetailPage() {
 
       {latest_success && (
         <div className="card border-blue-200">
-          <h2 className="mb-1 font-medium">ส่งออกข้อมูลไปเครื่องอื่น (Export)</h2>
-          <p className="mb-3 text-xs text-neutral-500">
-            ย้ายข้อมูลจากไฟล์สำรองล่าสุดไปเครื่องปลายทางทีละขั้น — ระบบไม่เขียนทับข้อมูลให้
-            ทุกขั้นทำมือและติ๊กเมื่อเสร็จ
+          <h2 className="mb-1 font-medium">ย้ายข้อมูลไปเครื่องอื่น — ทำ 3 ขั้น</h2>
+          <p className="mb-3 text-sm text-neutral-600">
+            ใช้ข้อมูลสำรองล่าสุด {formatThaiDateTime(latest_success.completed_at ?? latest_success.created_at)} ·{" "}
+            {formatBytes(latest_success.backup_size_bytes)}
+            {latest_success.source_file_count != null && ` · ${latest_success.source_file_count} ไฟล์`} · จาก{" "}
+            {latest_success.agent_name ?? "—"}
           </p>
-          <div className="mb-3 space-y-1 text-sm">
-            <p>
-              <span className="text-neutral-500">ไฟล์: </span>
-              <span className="font-mono text-xs">{latest_success.file_name ?? "—"}</span>
-              <button
-                className="btn ml-2 px-2 py-1 text-xs"
-                onClick={() => handleDownload(latest_success.id, latest_success.file_name)}
-              >
-                ดาวน์โหลด
-              </button>
-            </p>
-            <p>
-              <span className="text-neutral-500">ขนาด: </span>
-              {formatBytes(latest_success.backup_size_bytes)}
-              {latest_success.source_file_count != null &&
-                ` · ต้นฉบับ ${latest_success.source_file_count} ไฟล์`}
-            </p>
-            <p>
-              <span className="text-neutral-500">จากเครื่อง: </span>
-              {latest_success.agent_name ?? "—"}
-              {latest_success.source_path_used && (
-                <span className="font-mono text-xs"> ({latest_success.source_path_used})</span>
-              )}
-            </p>
-            {latest_success.checksum && (
-              <p className="flex min-w-0 items-center gap-1">
-                <span className="shrink-0 text-neutral-500">SHA-256: </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                  {latest_success.checksum}
-                </span>
-                <CopyButton text={latest_success.checksum} />
+          <div className="mb-3 rounded bg-green-50 border border-green-200 p-2 text-xs text-green-800">
+            ปลอดภัย: โปรแกรมจะเก็บของเดิมไว้ให้ก่อนเสมอ (โฟลเดอร์ .bak) ถ้าผิดพลาดยังเอากลับได้
+          </div>
+          <ol className="mb-3 flex gap-2 text-xs">
+            <li className="rounded-full bg-blue-100 px-2 py-0.5 font-medium text-blue-800">1 เลือกเครื่อง</li>
+            <li className="rounded-full bg-neutral-100 px-2 py-0.5 text-neutral-600">2 เตรียมไฟล์</li>
+            <li className="rounded-full bg-neutral-100 px-2 py-0.5 text-neutral-600">3 ยืนยันนำเข้า</li>
+          </ol>
+          <details className="mb-3 text-xs text-neutral-500">
+            <summary className="cursor-pointer hover:underline">วิธีขั้นสูงสำหรับเจ้าหน้าที่ (ดาวน์โหลดเอง / ตรวจ SHA)</summary>
+            <div className="mt-2 space-y-1 text-sm">
+              <p>
+                <span className="text-neutral-500">ไฟล์: </span>
+                <span className="font-mono text-xs">{latest_success.file_name ?? "—"}</span>
+                <button
+                  className="btn ml-2 px-2 py-1 text-xs"
+                  onClick={() => handleDownload(latest_success.id, latest_success.file_name)}
+                >
+                  ดาวน์โหลด
+                </button>
               </p>
-            )}
-          </div>
-          <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-            ห้ามเขียนทับโฟลเดอร์ Express ของเครื่องปลายทางโดยไม่สำรองไว้ก่อน —
-            ถ้า SHA-256 ไม่ตรงกับค่าด้านบน ให้หยุดทันทีและอย่าใช้ไฟล์นั้น
-          </div>
-          <div className="space-y-2">
-            {[
-              {
-                title: "ดาวน์โหลดไฟล์ ZIP แล้ว",
-                hint: "กดปุ่มดาวน์โหลดด้านบน",
-              },
-              {
-                title: "ตรวจสอบ SHA-256 ตรงกันแล้ว",
-                hint: `รัน certutil -hashfile "${latest_success.file_name ?? "backup.zip"}" SHA256 แล้วเทียบกับค่าด้านบน`,
-              },
-              {
-                title: "แตกไฟล์ลงโฟลเดอร์ชั่วคราว จำนวนไฟล์ตรงแล้ว",
-                hint: "เปิด ZIP ดูไฟล์ข้างในก่อน อย่าแตกทับข้อมูลจริง",
-              },
-              {
-                title: "สำรองโฟลเดอร์เดิมของเครื่องปลายทางแล้ว",
-                hint: "คัดลอกโฟลเดอร์ข้อมูล Express เดิมไว้ที่ *.bak-<วันที่> ก่อนเสมอ",
-              },
-              {
-                title: "คัดลอกไฟล์เข้าที่แล้ว",
-                hint: "ZIP เก็บพาธแบบ relative — คัดลอกเนื้อหาลงโฟลเดอร์ข้อมูลโดยตรง",
-              },
-              {
-                title: "เปิด Express ที่เครื่องปลายทาง ตรวจบริษัทเรียบร้อย",
-                hint: "เปิดบริษัท ตรวจเอกสารล่าสุดก่อนใช้งานต่อ",
-              },
-            ].map((s, i) => (
-              <label key={i} className="flex cursor-pointer items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={Boolean(exportChecks[i])}
-                  onChange={() =>
-                    setExportChecks((prev) => {
-                      const next = [...prev];
-                      next[i] = !next[i];
-                      return next;
-                    })
-                  }
-                />
-                <span className="min-w-0">
-                  <span className={exportChecks[i] ? "text-neutral-400 line-through" : "font-medium"}>
-                    {i + 1}. {s.title}
+              {latest_success.checksum && (
+                <p className="flex min-w-0 items-center gap-1">
+                  <span className="shrink-0 text-neutral-500">รหัสตรวจไฟล์: </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{latest_success.checksum}</span>
+                  <CopyButton text={latest_success.checksum} />
+                </p>
+              )}
+            </div>
+            <div className="mt-2 space-y-2">
+              {[
+                "ดาวน์โหลดไฟล์แล้ว",
+                `ตรวจรหัสตรงกันแล้ว (รัน certutil -hashfile "${latest_success.file_name ?? "backup.zip"}" SHA256)`,
+                "แตกไฟล์ดูข้างในก่อน อย่าทับของจริง",
+                "เก็บโฟลเดอร์เดิมไว้ที่ *.bak ก่อนเสมอ",
+                "คัดลอกไฟล์เข้าที่แล้ว",
+                "เปิด Express ตรวจบริษัทเรียบร้อย",
+              ].map((s, i) => (
+                <label key={i} className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={Boolean(exportChecks[i])}
+                    onChange={() =>
+                      setExportChecks((prev) => {
+                        const next = [...prev];
+                        next[i] = !next[i];
+                        return next;
+                      })
+                    }
+                  />
+                  <span className={exportChecks[i] ? "text-neutral-400 line-through" : ""}>
+                    {i + 1}. {s}
                   </span>
-                  <span className="block truncate text-xs text-neutral-500" title={s.hint}>
-                    {s.hint}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
-          <div className="mt-3 flex items-center gap-2 text-xs text-neutral-500">
-            <span>
-              เสร็จ {exportChecks.filter(Boolean).length}/6
-            </span>
-            <button className="btn px-2 py-1 text-xs" onClick={() => setExportChecks([])}>
-              เริ่มใหม่
-            </button>
-          </div>
+                </label>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              <span>เสร็จ {exportChecks.filter(Boolean).length}/6</span>
+              <button className="btn px-2 py-1 text-xs" onClick={() => setExportChecks([])}>
+                เริ่มใหม่
+              </button>
+            </div>
+          </details>
 
-          <div className="mt-4 border-t pt-3">
-            <p className="mb-1 text-sm font-medium">ส่งออกด้วยเครื่องปลายทาง (มีคนอนุมัติ 2 ชั้น)</p>
+          <div className="mt-2 border-t pt-3">
+            <p className="mb-1 text-sm font-medium">ขั้นที่ 1 — เลือกเครื่องที่จะรับข้อมูล</p>
             <p className="mb-2 text-xs text-neutral-500">
-              เครื่องปลายทางดาวน์โหลด ตรวจ SHA และเตรียมไฟล์ให้เอง —
-              แต่ไฟล์จะเข้าที่จริงก็ต่อเมื่อคุณอนุมัติและยืนยันแล้วเท่านั้น
+              เครื่องจะเตรียมไฟล์ให้เอง คุณแค่กดอนุมัติ 2 ครั้ง ไฟล์จริงจะเข้าที่ก็ต่อเมื่อคุณยืนยันแล้วเท่านั้น
             </p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
               <label className="label">
@@ -686,33 +654,42 @@ export default function ExpressBackupDetailPage() {
               </label>
               <div className="flex items-end">
                 <button
-                  className="btn-primary px-2 py-1 text-xs"
+                  className="btn-primary px-3 py-2 text-sm"
                   disabled={restoreBusy || !restoreAgent}
                   onClick={handleRequestRestore}
                 >
-                  {restoreBusy ? "…" : "ขอส่งออก"}
+                  {restoreBusy ? "…" : "1. ส่งข้อมูลไปเครื่องนี้"}
                 </button>
               </div>
             </div>
 
             {restores.length > 0 && (
               <div className="mt-3 space-y-2">
+                <p className="text-sm font-medium">ขั้นที่ 2-3 — ติดตามและกดยืนยัน</p>
                 {restores.map((r) => (
-                  <div key={r.id} className="rounded border p-2 text-xs">
+                  <div key={r.id} className="rounded border p-2 text-sm">
                     <p className="flex min-w-0 flex-wrap items-center gap-1">
                       <span className="font-medium">{RESTORE_TH[r.status] ?? r.status}</span>
                       <span className="text-neutral-500">→ {r.target_agent_name ?? "—"}</span>
-                      <span className="min-w-0 flex-1 truncate font-mono" title={r.target_path}>
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs" title={r.target_path}>
                         {r.target_path}
                       </span>
                     </p>
-                    <p className="mt-1 text-neutral-500">
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {r.status === "pending" && "ขั้นที่ 2: กดปุ่มสีน้ำเงินให้เครื่องเริ่มเตรียมไฟล์ (ยังไม่แตะของจริง)"}
+                      {r.status === "approved" && "เครื่องกำลังเตรียมไฟล์ รอสักครู่แล้วกดรีเฟรช"}
+                      {r.status === "downloading" && "เครื่องกำลังโหลดไฟล์ รอสักครู่"}
+                      {r.status === "staged" && `ขั้นที่ 3: เครื่องเตรียมแล้ว ${r.staged_file_count ?? ""} ไฟล์ ตรวจแล้วกดปุ่มแดง ของเดิมจะถูกเก็บไว้ให้ก่อน`}
+                      {r.status === "confirmed" && "เครื่องกำลังย้ายไฟล์เข้า รอสักครู่"}
+                      {r.status === "completed" && "เสร็จแล้ว เปิด Express ที่เครื่องปลายทางตรวจดูได้เลย"}
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
                       ขอโดย {r.requested_by ?? "—"}
                       {r.approved_by && ` · อนุมัติโดย ${r.approved_by}`}
                       {r.confirmed_by && ` · ยืนยันโดย ${r.confirmed_by}`}
                       {r.staged_file_count != null && ` · เตรียมแล้ว ${r.staged_file_count} ไฟล์`}
                       {r.bak_path && (
-                        <span className="font-mono"> · สำรองเดิม: {r.bak_path}</span>
+                        <span title={r.bak_path}> · ของเดิมเก็บไว้ที่ {r.bak_path} (เอากลับได้)</span>
                       )}
                     </p>
                     {r.error_code && (
@@ -725,42 +702,42 @@ export default function ExpressBackupDetailPage() {
                       {r.status === "pending" && (
                         <>
                           <button
-                            className="btn-primary px-2 py-1 text-xs"
+                            className="btn-primary px-3 py-1.5 text-sm"
                             disabled={restoreBusy}
                             onClick={() =>
                               handleRestoreAction(
                                 r.id,
                                 "approve",
-                                `อนุมัติส่งออกไฟล์ ${r.job_file_name ?? ""} ไปเครื่อง ${r.target_agent_name ?? ""}?\nเครื่องจะดาวน์โหลด ตรวจ SHA และเตรียมไฟล์ (ยังไม่เข้าที่)`
+                                `ขั้นที่ 2: ให้เครื่อง ${r.target_agent_name ?? ""} เตรียมไฟล์ ${r.job_file_name ?? ""} ไว้ก่อน?\nยังไม่แตะของจริง ของเดิมยังอยู่ครบ`
                               )
                             }
                           >
-                            อนุมัติ
+                            2. ให้เครื่องเตรียมไฟล์
                           </button>
                           <button
                             className="btn px-2 py-1 text-xs"
                             disabled={restoreBusy}
                             onClick={() =>
-                              handleRestoreAction(r.id, "reject", "ปฏิเสธคำขอนี้?")
+                              handleRestoreAction(r.id, "reject", "ไม่ต้องการย้ายข้อมูลนี้แล้วใช่ไหม?")
                             }
                           >
-                            ปฏิเสธ
+                            ไม่เอา
                           </button>
                         </>
                       )}
                       {r.status === "staged" && (
                         <button
-                          className="btn-danger px-2 py-1 text-xs"
+                          className="btn-danger px-3 py-1.5 text-sm"
                           disabled={restoreBusy}
                           onClick={() =>
                             handleRestoreAction(
                               r.id,
                               "confirm",
-                              `ยืนยันนำไฟล์เข้าที่ ${r.target_path}?\nเครื่องจะสำรองของเดิมเป็น .bak ก่อนแล้วจึงคัดลอกไฟล์เข้า`
+                              `ขั้นที่ 3 สุดท้าย: ย้ายไฟล์เข้าที่ ${r.target_path}?\nเครื่องจะเก็บของเดิมไว้เป็น .bak ให้ก่อน ถ้าผิดยังเอากลับได้`
                             )
                           }
                         >
-                          ยืนยันนำเข้าที่
+                          3. ยืนยันย้ายไฟล์เข้า
                         </button>
                       )}
                       {["pending", "approved", "staged"].includes(r.status) && (
