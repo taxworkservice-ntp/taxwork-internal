@@ -20,7 +20,10 @@ For people with very low tech. No Python, no commands, no JSON.
    - เซิร์ฟเวอร์: already filled (`https://internal.taxworkaccount.com`) — don't touch.
    - Paste **รหัสเครื่อง** + **รหัสลงทะเบียน** → click **“ลงทะเบียนและเริ่มเลย”**.
 4. Wait for popup **“สำเร็จ! เครื่องออนไลน์แล้ว”** → OK. Done.
-   The program keeps running invisibly. Nothing else to click.
+   The program then runs in the background with **no window** — look for the
+   blue **Taxwork Express Backup** icon in the system tray (bottom-right).
+   Right-click it to open the log folder or quit. No need to run the EXE again;
+   running it twice only shows a “already running” message.
 
 ## Part C — Staff verifies (on the web)
 
@@ -32,8 +35,13 @@ For people with very low tech. No Python, no commands, no JSON.
 
 ## If it fails (plain words)
 
-- **No window opens:** right-click → Run as administrator again
+- **No window opens (first time):** right-click → Run as administrator again
   (needed for auto-start setup).
+- **Nothing happens after it's installed:** that's expected — it runs silently.
+  Check the blue tray icon (bottom-right); if it shows
+  “Taxwork Express Backup — กำลังทำงาน” it is working normally.
+- **Ran it twice:** the second launch shows “โปรแกรมทำงานอยู่เบื้องหลังแล้ว” —
+  close that box, no harm done. Only one copy runs now.
 - **“ลงทะเบียนไม่สำเร็จ / invalid registration”:** wrong codes or token
   already used → `เพิ่มเครื่อง` again on web, send fresh codes.
 - **Offline in web:** program not running → double-click the EXE once more;

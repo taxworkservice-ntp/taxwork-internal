@@ -34,6 +34,40 @@ PERMANENT_CODES = {"SOURCE_NOT_FOUND", "ACCESS_DENIED"}
 
 log = setup_logger()
 
+# Held for the process lifetime so the OS keeps the single-instance lock.
+_MUTEX_HANDLE = None
+
+
+def _acquire_single_instance() -> bool:
+    """True when this is the only running instance (Windows named mutex).
+
+    Double-clicking the EXE repeatedly used to spawn several agents fighting
+    over the same jobs; now the later launches exit immediately.
+    """
+    if os.name != "nt":
+        return True
+    global _MUTEX_HANDLE
+    import ctypes
+
+    ERROR_ALREADY_EXISTS = 183
+    kernel32 = ctypes.windll.kernel32
+    _MUTEX_HANDLE = kernel32.CreateMutexW(None, False, "Local\\TaxworkExpressBackupAgent")
+    if not _MUTEX_HANDLE:
+        return True  # fail open rather than block backups
+    return kernel32.GetLastError() != ERROR_ALREADY_EXISTS
+
+
+def _info_box(title: str, message: str) -> None:
+    """Plain Windows popup for GUI-less builds (no console available)."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x40)  # MB_ICONINFORMATION
+    except Exception:
+        pass
+
 
 def run_restore(client: ApiClient, cfg: AgentConfig, r: Restore, staging_root: str) -> None:
     """One restore step. Fetch phase for approved, place phase for confirmed."""
@@ -208,6 +242,15 @@ def main() -> None:
         register_interactive(cfg)
         return
 
+    if not _acquire_single_instance():
+        _info_box(
+            "Taxwork Express Backup",
+            "โปรแกรมนี้ทำงานอยู่เบื้องหลังแล้ว\n"
+            "ไม่ต้องเปิดซ้ำ — สถานะดูได้ที่เว็บ Express Backup\n\n"
+            "ถ้าต้องการปิด ให้คลิกขวาไอคอน Taxwork ที่มุมขวาล่างของจอ แล้วเลือก \"ออกจากโปรแกรม\"",
+        )
+        return
+
     if "--install" in sys.argv:
         try:
             from wizard import ensure_startup
@@ -233,6 +276,17 @@ def main() -> None:
 
     client = ApiClient(cfg.server_url, cfg.credential, cfg.version)
     log.info("agent %s starting (poll %ss, heartbeat %ss)", cfg.agent_id, cfg.poll_interval, cfg.heartbeat_interval)
+
+    # Visible presence so users can tell the agent is running. Optional dep.
+    try:
+        from tray import start_tray
+
+        start_tray(
+            on_quit=lambda: os._exit(0),
+            log_dir=os.path.dirname(pending_dir),
+        )
+    except Exception as exc:  # noqa: BLE001 - tray is a nicety, never fatal
+        log.warning("tray unavailable: %s", exc)
 
     last_heartbeat = 0.0
     while True:
