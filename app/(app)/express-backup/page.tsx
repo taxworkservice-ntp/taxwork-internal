@@ -1,17 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import CopyButton from "@/components/copy-button";
 import {
   approveRestore,
+  cancelRestore,
+  confirmRestore,
   createBackupAllJobs,
   createManualBackupJob,
   getAgents,
   getBackupStorageStats,
   getExpressBackupDetail,
   getExpressBackupOverview,
+  getRestores,
   registerAgent,
   requestRestore,
   revokeAgent,
@@ -19,7 +21,7 @@ import {
   setPrimaryAgentPath,
   type OverviewRow,
 } from "@/lib/actions/express-backup";
-import { STATUS_TH, type ExpressBackupStatus } from "@/lib/express-backup-ui";
+import { STATUS_TH, thaiError, type ExpressBackupStatus } from "@/lib/express-backup-ui";
 
 function formatBytes(n: number | null): string {
   if (n === null || n === undefined) return "—";
@@ -98,7 +100,6 @@ export default function ExpressBackupPage() {
   });
   const [onlyFav, setOnlyFav] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
-  const router = useRouter();
   const [importClient, setImportClient] = useState<{ id: string; name: string } | null>(null);
   const [importDetail, setImportDetail] = useState<{
     jobId: string;
@@ -115,6 +116,89 @@ export default function ExpressBackupPage() {
   const [importPath, setImportPath] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [rememberHome, setRememberHome] = useState(true);
+  const [importStage, setImportStage] = useState<"form" | "preparing" | "ready" | "placing" | "done" | "error">("form");
+  const [importRestore, setImportRestore] = useState<{
+    id: string;
+    status: string;
+    stagedCount: number | null;
+    bakPath: string | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+  } | null>(null);
+  const [importError, setImportError] = useState("");
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function stopImportPoll() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  function closeImport() {
+    stopImportPoll();
+    setImportClient(null);
+    setImportDetail(null);
+    setImportStage("form");
+    setImportRestore(null);
+    setImportError("");
+  }
+
+  useEffect(() => () => stopImportPoll(), []);
+
+  function pollRestore(clientId: string, restoreId: string, next: "ready" | "done") {
+    stopImportPoll();
+    let attempts = 0;
+    pollRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const list = await getRestores(clientId);
+        const r = list.find((x) => x.id === restoreId);
+        if (!r) return;
+        const snap = {
+          id: r.id,
+          status: r.status,
+          stagedCount: r.staged_file_count,
+          bakPath: r.bak_path,
+          errorCode: r.error_code,
+          errorMessage: r.error_message,
+        };
+        setImportRestore(snap);
+        if (next === "ready" && r.status === "staged") {
+          stopImportPoll();
+          setImportStage("ready");
+          setImportBusy(false);
+        } else if (next === "done" && r.status === "completed") {
+          stopImportPoll();
+          setImportStage("done");
+          setImportBusy(false);
+          load();
+        } else if (["failed", "cancelled", "rejected"].includes(r.status)) {
+          stopImportPoll();
+          setImportBusy(false);
+          setImportError(
+            r.error_code
+              ? `${thaiError(r.error_code)} (${r.error_code})${r.error_message ? ` — ${r.error_message}` : ""}`
+              : "รายการนี้ถูกยกเลิกหรือล้มเหลว"
+          );
+          setImportStage("error");
+        } else if (attempts >= 100) {
+          stopImportPoll();
+          setImportBusy(false);
+          setImportError("รอนานเกินไป เครื่องปลายทางอาจออฟไลน์อยู่ ติดตามต่อได้ที่หน้ารายละเอียด");
+          setImportStage("error");
+        }
+      } catch {
+        // transient — keep polling until timeout
+        if (attempts >= 100) {
+          stopImportPoll();
+          setImportBusy(false);
+          setImportError("ติดต่อเซิร์ฟเวอร์ไม่ได้ ติดตามต่อได้ที่หน้ารายละเอียด");
+          setImportStage("error");
+        }
+      }
+    }, 3000);
+  }
 
   useEffect(() => {
     localStorage.setItem("express-backup.favorites", JSON.stringify(favorites));
@@ -217,10 +301,14 @@ export default function ExpressBackupPage() {
   }
 
   async function openImport(clientId: string, clientName: string) {
+    stopImportPoll();
     setImportClient({ id: clientId, name: clientName });
     setImportDetail(null);
     setImportAgent("");
     setImportPath("");
+    setImportStage("form");
+    setImportRestore(null);
+    setImportError("");
     setImportLoading(true);
     try {
       const d = await getExpressBackupDetail(clientId);
@@ -274,12 +362,13 @@ export default function ExpressBackupPage() {
       return;
     }
     setImportBusy(true);
+    setImportError("");
     try {
       const r = await requestRestore(importDetail.jobId, importAgent, importPath.trim());
       try {
         await approveRestore(r.id);
       } catch {
-        // requested ok, approve may fail if duplicate — still go to detail
+        // requested ok, approve may fail if duplicate — keep tracking it
       }
       if (rememberHome) {
         try {
@@ -289,13 +378,48 @@ export default function ExpressBackupPage() {
           // home-machine memory is best-effort — import already succeeded
         }
       }
-      setImportClient(null);
-      router.push(`/express-backup/${importClient.id}#export`);
+      setImportRestore({
+        id: r.id,
+        status: r.status,
+        stagedCount: null,
+        bakPath: null,
+        errorCode: null,
+        errorMessage: null,
+      });
+      setImportStage("preparing");
+      pollRestore(importClient.id, r.id, "ready");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "รับข้อมูลไม่สำเร็จ");
-    } finally {
       setImportBusy(false);
+      setImportError(e instanceof Error ? e.message : "รับข้อมูลไม่สำเร็จ");
+      setImportStage("error");
     }
+  }
+
+  async function confirmPlace() {
+    if (!importClient || !importRestore) return;
+    setImportBusy(true);
+    setImportError("");
+    try {
+      await confirmRestore(importRestore.id);
+      setImportStage("placing");
+      pollRestore(importClient.id, importRestore.id, "done");
+    } catch (e) {
+      setImportBusy(false);
+      setImportError(e instanceof Error ? e.message : "ยืนยันไม่สำเร็จ");
+      setImportStage("error");
+    }
+  }
+
+  async function cancelImportFlow() {
+    if (importRestore && (importStage === "preparing" || importStage === "ready")) {
+      if (!confirm("ยกเลิกรายการรับข้อมูลนี้?")) return;
+      try {
+        await cancelRestore(importRestore.id);
+      } catch {
+        // fall through to close — detail page still shows it
+      }
+    }
+    closeImport();
   }
 
   const q = search.trim().toLowerCase();
@@ -635,101 +759,211 @@ export default function ExpressBackupPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl">
             <h3 className="font-medium">รับข้อมูล — {importClient.name}</h3>
-            {importLoading || !importDetail ? (
-              <p className="mt-3 text-sm text-neutral-500">กำลังเตรียมข้อมูล...</p>
-            ) : (
-              <div className="mt-3 space-y-3">
-                <p className="text-sm text-neutral-600">
-                  ไฟล์ล่าสุด {formatThaiDateTime(importDetail.at)} · {formatBytes(importDetail.size)}
-                  <span className="block truncate font-mono text-xs text-neutral-500" title={importDetail.fileName ?? ""}>
-                    {importDetail.fileName ?? ""}
-                  </span>
-                </p>
-                {(() => {
-                  const home = importDetail.agents.find((a) => a.id === importAgent);
-                  return home ? (
-                    <div className="rounded border border-neutral-200 bg-neutral-50 p-2 text-sm">
-                      <span className="text-neutral-500">รับเข้าเครื่องหลัก: </span>
-                      <span className="font-medium">
-                        🏠 {home.name} ({home.machine})
+            {importStage === "form" && (
+              <>
+                {importLoading || !importDetail ? (
+                  <p className="mt-3 text-sm text-neutral-500">กำลังเตรียมข้อมูล...</p>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-sm text-neutral-600">
+                      ไฟล์ล่าสุด {formatThaiDateTime(importDetail.at)} · {formatBytes(importDetail.size)}
+                      <span className="block truncate font-mono text-xs text-neutral-500" title={importDetail.fileName ?? ""}>
+                        {importDetail.fileName ?? ""}
                       </span>
-                      {!home.online && <span className="text-xs text-red-600"> (ออฟไลน์อยู่)</span>}
-                      <span className="block truncate font-mono text-xs text-neutral-500" title={importPath}>
-                        {importPath || "—"}
-                      </span>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-red-600">ยังไม่มีเครื่อง กรุณาเพิ่มเครื่องก่อน</p>
-                  );
-                })()}
-                {importDetail.machineCount > 1 && (
-                  <p className="rounded border border-yellow-300 bg-yellow-50 p-2 text-xs text-yellow-800">
-                    บริษัทนี้มีข้อมูลบน {importDetail.machineCount} เครื่อง — ตรวจว่าเครื่องหลักข้างบนคือตัวจริงก่อนกดรับ
-                  </p>
-                )}
-                <details>
-                  <summary className="cursor-pointer text-xs text-neutral-500 hover:underline">
-                    เปลี่ยนเครื่อง / โฟลเดอร์
-                  </summary>
-                  <div className="mt-2 space-y-3">
-                    <label className="label">
-                      รับเข้าเครื่องไหน
-                      <select
-                        className="input"
-                        value={importAgent}
-                        onChange={(e) => {
-                          const id = e.target.value;
-                          setImportAgent(id);
-                          if (importDetail.paths[id]) setImportPath(importDetail.paths[id]);
-                        }}
-                      >
-                        {importDetail.agents.length === 0 && <option value="">ยังไม่มีเครื่อง</option>}
-                        {importDetail.agents.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name} ({a.machine}){a.online ? " ●" : ""}{importDetail.primaryAgent === a.id ? " ★หลัก" : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="label">
-                      โฟลเดอร์ปลายทาง
-                      <input
-                        className="input font-mono"
-                        value={importPath}
-                        onChange={(e) => setImportPath(e.target.value)}
-                        placeholder="D:\ExpressData\ABC"
-                      />
-                    </label>
+                    </p>
+                    {(() => {
+                      const home = importDetail.agents.find((a) => a.id === importAgent);
+                      return home ? (
+                        <div className="rounded border border-neutral-200 bg-neutral-50 p-2 text-sm">
+                          <span className="text-neutral-500">รับเข้าเครื่องหลัก: </span>
+                          <span className="font-medium">
+                            🏠 {home.name} ({home.machine})
+                          </span>
+                          {!home.online && <span className="text-xs text-red-600"> (ออฟไลน์อยู่)</span>}
+                          <span className="block truncate font-mono text-xs text-neutral-500" title={importPath}>
+                            {importPath || "—"}
+                          </span>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-red-600">ยังไม่มีเครื่อง กรุณาเพิ่มเครื่องก่อน</p>
+                      );
+                    })()}
+                    {importDetail.machineCount > 1 && (
+                      <p className="rounded border border-yellow-300 bg-yellow-50 p-2 text-xs text-yellow-800">
+                        บริษัทนี้มีข้อมูลบน {importDetail.machineCount} เครื่อง — ตรวจว่าเครื่องหลักข้างบนคือตัวจริงก่อนกดรับ
+                      </p>
+                    )}
+                    <details>
+                      <summary className="cursor-pointer text-xs text-neutral-500 hover:underline">
+                        เปลี่ยนเครื่อง / โฟลเดอร์
+                      </summary>
+                      <div className="mt-2 space-y-3">
+                        <label className="label">
+                          รับเข้าเครื่องไหน
+                          <select
+                            className="input"
+                            value={importAgent}
+                            onChange={(e) => {
+                              const id = e.target.value;
+                              setImportAgent(id);
+                              if (importDetail.paths[id]) setImportPath(importDetail.paths[id]);
+                            }}
+                          >
+                            {importDetail.agents.length === 0 && <option value="">ยังไม่มีเครื่อง</option>}
+                            {importDetail.agents.map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.name} ({a.machine}){a.online ? " ●" : ""}{importDetail.primaryAgent === a.id ? " ★หลัก" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="label">
+                          โฟลเดอร์ปลายทาง
+                          <input
+                            className="input font-mono"
+                            value={importPath}
+                            onChange={(e) => setImportPath(e.target.value)}
+                            placeholder="D:\ExpressData\ABC"
+                          />
+                        </label>
+                      </div>
+                    </details>
+                    {importDetail.primaryAgent !== importAgent && (
+                      <label className="flex cursor-pointer items-start gap-2 text-xs text-neutral-600">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={rememberHome}
+                          onChange={(e) => setRememberHome(e.target.checked)}
+                        />
+                        จำเครื่องนี้เป็นเครื่องหลักของบริษัทนี้
+                      </label>
+                    )}
+                    <p className="rounded bg-green-50 border border-green-200 p-2 text-xs text-green-800">
+                      ทำครบในหน้าต่างนี้: เครื่องเตรียมไฟล์ให้ → คุณกดยืนยันครั้งเดียว → เสร็จ ของเดิมเก็บเป็น .bak ให้ก่อนเสมอ
+                    </p>
                   </div>
-                </details>
-                {importDetail.primaryAgent !== importAgent && (
-                  <label className="flex cursor-pointer items-start gap-2 text-xs text-neutral-600">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={rememberHome}
-                      onChange={(e) => setRememberHome(e.target.checked)}
-                    />
-                    จำเครื่องนี้เป็นเครื่องหลักของบริษัทนี้
-                  </label>
                 )}
-                <p className="rounded bg-green-50 border border-green-200 p-2 text-xs text-green-800">
-                  กดครั้งเดียว: เครื่องจะเตรียมไฟล์ให้ทันที ของเดิมเก็บเป็น .bak ให้ก่อน กดยืนยันครั้งสุดท้ายที่หน้าถัดไป
-                </p>
-              </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button className="btn px-3 py-1.5 text-sm" disabled={importBusy} onClick={closeImport}>
+                    ยกเลิก
+                  </button>
+                  <button
+                    className="btn-primary px-3 py-1.5 text-sm"
+                    disabled={importBusy || importLoading || !importDetail || !importAgent}
+                    onClick={confirmImport}
+                  >
+                    {importBusy ? "กำลังรับ..." : "รับข้อมูลเลย"}
+                  </button>
+                </div>
+              </>
             )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button className="btn px-3 py-1.5 text-sm" disabled={importBusy} onClick={() => setImportClient(null)}>
-                ยกเลิก
-              </button>
-              <button
-                className="btn-primary px-3 py-1.5 text-sm"
-                disabled={importBusy || importLoading || !importDetail}
-                onClick={confirmImport}
-              >
-                {importBusy ? "กำลังรับ..." : "รับข้อมูลเลย"}
-              </button>
-            </div>
+            {importStage === "preparing" && (
+              <>
+                <div className="mt-3 space-y-3">
+                  <p className="text-sm">
+                    <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent align-middle" />
+                    เครื่องกำลังเตรียมไฟล์… (ปกติไม่เกิน 1–2 นาที)
+                  </p>
+                  <p className="text-xs text-neutral-500">
+                    เครื่องปลายทางตรวจงานทุก ~30 วินาที หน้านี้รอให้เอง ไม่ต้องกดอะไร
+                    {importRestore && (
+                      <span className="block font-mono">สถานะ: {importRestore.status}</span>
+                    )}
+                  </p>
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button className="btn px-3 py-1.5 text-sm" onClick={cancelImportFlow}>
+                    ยกเลิก
+                  </button>
+                </div>
+              </>
+            )}
+            {importStage === "ready" && (
+              <>
+                <div className="mt-3 space-y-3">
+                  <p className="rounded border border-green-200 bg-green-50 p-2 text-sm text-green-800">
+                    เครื่องเตรียมไฟล์แล้ว{importRestore?.stagedCount != null && ` ${importRestore.stagedCount} ไฟล์`} — พร้อมย้ายเข้า
+                  </p>
+                  <p className="truncate font-mono text-xs text-neutral-500" title={importPath}>
+                    ปลายทาง: {importPath}
+                  </p>
+                  <p className="text-xs text-neutral-500">
+                    กดยืนยัน เครื่องจะเก็บของเดิมเป็น .bak ให้ก่อนแล้วจึงย้ายไฟล์เข้า
+                  </p>
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button className="btn px-3 py-1.5 text-sm" disabled={importBusy} onClick={cancelImportFlow}>
+                    ยกเลิก
+                  </button>
+                  <button
+                    className="btn-danger px-3 py-1.5 text-sm"
+                    disabled={importBusy}
+                    onClick={confirmPlace}
+                  >
+                    {importBusy ? "…" : "ยืนยันย้ายไฟล์เข้า"}
+                  </button>
+                </div>
+              </>
+            )}
+            {importStage === "placing" && (
+              <>
+                <div className="mt-3 space-y-3">
+                  <p className="text-sm">
+                    <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent align-middle" />
+                    กำลังย้ายไฟล์เข้าเครื่องปลายทาง…
+                  </p>
+                  <p className="text-xs text-neutral-500">หน้านี้รอให้เอง ไม่ต้องกดอะไร</p>
+                </div>
+              </>
+            )}
+            {importStage === "done" && (
+              <>
+                <div className="mt-3 space-y-2">
+                  <p className="rounded border border-green-200 bg-green-50 p-2 text-sm font-medium text-green-800">
+                    ✓ รับข้อมูลเสร็จแล้ว เปิด Express ที่เครื่องปลายทางตรวจดูได้เลย
+                  </p>
+                  {importRestore?.bakPath && (
+                    <p className="truncate font-mono text-xs text-neutral-500" title={importRestore.bakPath}>
+                      ของเดิมเก็บไว้ที่ {importRestore.bakPath} (เอากลับได้)
+                    </p>
+                  )}
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <Link
+                    href={`/express-backup/${importClient.id}#export`}
+                    className="btn px-3 py-1.5 text-sm"
+                    onClick={closeImport}
+                  >
+                    ดูประวัติ
+                  </Link>
+                  <button className="btn-primary px-3 py-1.5 text-sm" onClick={closeImport}>
+                    ปิด
+                  </button>
+                </div>
+              </>
+            )}
+            {importStage === "error" && (
+              <>
+                <div className="mt-3 space-y-2">
+                  <p className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+                    {importError || "เกิดข้อผิดพลาด"}
+                  </p>
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <Link
+                    href={`/express-backup/${importClient.id}#export`}
+                    className="btn px-3 py-1.5 text-sm"
+                    onClick={closeImport}
+                  >
+                    ไปหน้าติดตาม
+                  </Link>
+                  <button className="btn-primary px-3 py-1.5 text-sm" onClick={closeImport}>
+                    ปิด
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
