@@ -15,6 +15,8 @@ import {
   registerAgent,
   requestRestore,
   revokeAgent,
+  saveAgentPath,
+  setPrimaryAgentPath,
   type OverviewRow,
 } from "@/lib/actions/express-backup";
 import { STATUS_TH, type ExpressBackupStatus } from "@/lib/express-backup-ui";
@@ -106,11 +108,13 @@ export default function ExpressBackupPage() {
     agents: { id: string; name: string; machine: string; online: boolean }[];
     paths: Record<string, string>;
     primaryAgent: string | null;
+    machineCount: number;
   } | null>(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importAgent, setImportAgent] = useState("");
   const [importPath, setImportPath] = useState("");
   const [importBusy, setImportBusy] = useState(false);
+  const [rememberHome, setRememberHome] = useState(true);
 
   useEffect(() => {
     localStorage.setItem("express-backup.favorites", JSON.stringify(favorites));
@@ -246,9 +250,11 @@ export default function ExpressBackupPage() {
         })),
         paths,
         primaryAgent: primary,
+        machineCount: d.agent_paths.length,
       });
       setImportAgent(defAgent);
       setImportPath(paths[defAgent] ?? d.config?.source_path ?? "");
+      setRememberHome(!primary);
     } catch (e) {
       alert(e instanceof Error ? e.message : "โหลดข้อมูลรับไฟล์ไม่สำเร็จ");
       setImportClient(null);
@@ -274,6 +280,14 @@ export default function ExpressBackupPage() {
         await approveRestore(r.id);
       } catch {
         // requested ok, approve may fail if duplicate — still go to detail
+      }
+      if (rememberHome) {
+        try {
+          await saveAgentPath(importAgent, importClient.id, importPath.trim());
+          await setPrimaryAgentPath(importAgent, importClient.id);
+        } catch {
+          // home-machine memory is best-effort — import already succeeded
+        }
       }
       setImportClient(null);
       router.push(`/express-backup/${importClient.id}#export`);
@@ -631,34 +645,74 @@ export default function ExpressBackupPage() {
                     {importDetail.fileName ?? ""}
                   </span>
                 </p>
-                <label className="label">
-                  รับเข้าเครื่องไหน
-                  <select
-                    className="input"
-                    value={importAgent}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      setImportAgent(id);
-                      if (importDetail.paths[id]) setImportPath(importDetail.paths[id]);
-                    }}
-                  >
-                    {importDetail.agents.length === 0 && <option value="">ยังไม่มีเครื่อง</option>}
-                    {importDetail.agents.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name} ({a.machine}){a.online ? " ●" : ""}{importDetail.primaryAgent === a.id ? " ★หลัก" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="label">
-                  โฟลเดอร์ปลายทาง
-                  <input
-                    className="input font-mono"
-                    value={importPath}
-                    onChange={(e) => setImportPath(e.target.value)}
-                    placeholder="D:\ExpressData\ABC"
-                  />
-                </label>
+                {(() => {
+                  const home = importDetail.agents.find((a) => a.id === importAgent);
+                  return home ? (
+                    <div className="rounded border border-neutral-200 bg-neutral-50 p-2 text-sm">
+                      <span className="text-neutral-500">รับเข้าเครื่องหลัก: </span>
+                      <span className="font-medium">
+                        🏠 {home.name} ({home.machine})
+                      </span>
+                      {!home.online && <span className="text-xs text-red-600"> (ออฟไลน์อยู่)</span>}
+                      <span className="block truncate font-mono text-xs text-neutral-500" title={importPath}>
+                        {importPath || "—"}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-red-600">ยังไม่มีเครื่อง กรุณาเพิ่มเครื่องก่อน</p>
+                  );
+                })()}
+                {importDetail.machineCount > 1 && (
+                  <p className="rounded border border-yellow-300 bg-yellow-50 p-2 text-xs text-yellow-800">
+                    บริษัทนี้มีข้อมูลบน {importDetail.machineCount} เครื่อง — ตรวจว่าเครื่องหลักข้างบนคือตัวจริงก่อนกดรับ
+                  </p>
+                )}
+                <details>
+                  <summary className="cursor-pointer text-xs text-neutral-500 hover:underline">
+                    เปลี่ยนเครื่อง / โฟลเดอร์
+                  </summary>
+                  <div className="mt-2 space-y-3">
+                    <label className="label">
+                      รับเข้าเครื่องไหน
+                      <select
+                        className="input"
+                        value={importAgent}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setImportAgent(id);
+                          if (importDetail.paths[id]) setImportPath(importDetail.paths[id]);
+                        }}
+                      >
+                        {importDetail.agents.length === 0 && <option value="">ยังไม่มีเครื่อง</option>}
+                        {importDetail.agents.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.machine}){a.online ? " ●" : ""}{importDetail.primaryAgent === a.id ? " ★หลัก" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="label">
+                      โฟลเดอร์ปลายทาง
+                      <input
+                        className="input font-mono"
+                        value={importPath}
+                        onChange={(e) => setImportPath(e.target.value)}
+                        placeholder="D:\ExpressData\ABC"
+                      />
+                    </label>
+                  </div>
+                </details>
+                {importDetail.primaryAgent !== importAgent && (
+                  <label className="flex cursor-pointer items-start gap-2 text-xs text-neutral-600">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={rememberHome}
+                      onChange={(e) => setRememberHome(e.target.checked)}
+                    />
+                    จำเครื่องนี้เป็นเครื่องหลักของบริษัทนี้
+                  </label>
+                )}
                 <p className="rounded bg-green-50 border border-green-200 p-2 text-xs text-green-800">
                   กดครั้งเดียว: เครื่องจะเตรียมไฟล์ให้ทันที ของเดิมเก็บเป็น .bak ให้ก่อน กดยืนยันครั้งสุดท้ายที่หน้าถัดไป
                 </p>

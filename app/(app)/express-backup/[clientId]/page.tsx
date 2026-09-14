@@ -496,6 +496,23 @@ export default function ExpressBackupDetailPage() {
           ลูกค้านี้อยู่หลายเครื่องและโฟลเดอร์ต่างกัน ให้ระบุพาธของแต่ละเครื่อง
           เครื่องที่ไม่มีพาธจะใช้ค่าเริ่มต้นด้านบน กดสำรองข้อมูลจะสร้างงานให้ทุกเครื่องที่มีพาธ
         </p>
+        {agent_paths.length > 1 &&
+          (() => {
+            const home = agent_paths.find((p) => p.is_primary);
+            const homeName = home
+              ? activeAgents.find((a) => a.id === home.agent_id)?.agent_name ?? home.agent_id
+              : null;
+            return (
+              <div className="mb-3 rounded border border-yellow-300 bg-yellow-50 p-2 text-xs text-yellow-800">
+                บริษัทนี้มีข้อมูลบน {agent_paths.length} เครื่อง
+                {homeName ? (
+                  <> — เครื่องหลักคือ <span className="font-medium">🏠 {homeName}</span> ใช้อ้างอิงตอนรับข้อมูล</>
+                ) : (
+                  <> — ยังไม่ได้ตั้งเครื่องหลัก กรุณากด “ตั้งเป็นหลัก” ที่เครื่องตัวจริง</>
+                )}
+              </div>
+            );
+          })()}
         {activeAgents.length === 0 ? (
           <p className="text-sm text-neutral-500">ยังไม่มีเครื่อง เพิ่มเครื่องที่หน้า Express Backup ก่อน</p>
         ) : (
