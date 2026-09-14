@@ -930,13 +930,6 @@ export default function ExpressBackupPage() {
                   )}
                 </div>
                 <div className="mt-4 flex justify-end gap-2">
-                  <Link
-                    href={`/express-backup/${importClient.id}#export`}
-                    className="btn px-3 py-1.5 text-sm"
-                    onClick={closeImport}
-                  >
-                    ดูประวัติ
-                  </Link>
                   <button className="btn-primary px-3 py-1.5 text-sm" onClick={closeImport}>
                     ปิด
                   </button>
@@ -951,15 +944,20 @@ export default function ExpressBackupPage() {
                   </p>
                 </div>
                 <div className="mt-4 flex justify-end gap-2">
-                  <Link
-                    href={`/express-backup/${importClient.id}#export`}
-                    className="btn px-3 py-1.5 text-sm"
-                    onClick={closeImport}
-                  >
-                    ไปหน้าติดตาม
-                  </Link>
-                  <button className="btn-primary px-3 py-1.5 text-sm" onClick={closeImport}>
+                  <button className="btn px-3 py-1.5 text-sm" onClick={closeImport}>
                     ปิด
+                  </button>
+                  <button
+                    className="btn-primary px-3 py-1.5 text-sm"
+                    onClick={() => {
+                      stopImportPoll();
+                      setImportRestore(null);
+                      setImportError("");
+                      setImportStage("form");
+                      setImportBusy(false);
+                    }}
+                  >
+                    ลองใหม่
                   </button>
                 </div>
               </>
