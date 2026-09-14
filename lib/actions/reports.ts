@@ -96,6 +96,24 @@ export async function rememberFormCode(code: string): Promise<void> {
   await sql`insert into form_custom_codes (code) values (${c}) on conflict (code) do nothing`;
 }
 
+export async function listCustomPaymentMethods(): Promise<string[]> {
+  await requireUser();
+  const rows = (await sql`select code from payment_method_presets order by code`) as { code: string }[];
+  return rows.map((r) => r.code);
+}
+
+export async function rememberPaymentMethod(code: string): Promise<void> {
+  await requireUser();
+  const c = code.trim();
+  if (!c) return;
+  await sql`insert into payment_method_presets (code) values (${c}) on conflict (code) do nothing`;
+}
+
+export async function deleteCustomPaymentMethod(code: string): Promise<void> {
+  await requireUser();
+  await sql`delete from payment_method_presets where code=${code.trim()}`;
+}
+
 export async function listActiveClients(): Promise<ClientRow[]> {
   await requireUser();
   return (await sql`select id, name, tax_id, address, phone, email from clients where status='active'`) as ClientRow[];

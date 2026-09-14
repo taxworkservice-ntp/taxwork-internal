@@ -350,7 +350,9 @@ class ReportRenderer {
   ): Promise<void> {
     this.realizePendingPage();
     const size = opts.size ?? 10;
-    const lineHeight = opts.lineHeight ?? size * 1.45;
+    // Canvas glyph box is ~1.0x above + 0.6x below baseline — keep >=1.7x
+    // leading so Thai สระบน/ล่าง never collides with adjacent lines.
+    const lineHeight = opts.lineHeight ?? size * 1.7;
     const w = this.measureText(value, size, opts.bold ?? false);
     let x = opts.x ?? M;
     if (opts.align === "center" && opts.width) {
@@ -382,7 +384,7 @@ class ReportRenderer {
     const measure = (s: string) =>
       this.measureText(s, size, opts.bold ?? false);
     const lines = wrapText(value, measure, opts.width);
-    const lineHeight = size * 1.4;
+    const lineHeight = size * 1.7;
     for (const line of lines) {
       await this.text(line, {
         x: opts.x,
@@ -628,7 +630,7 @@ async function drawCover(
   const rowPadY = 7;
   const headerH = 24;
   const fontSize = 9.5;
-  const lh = fontSize * 1.4;
+  const lh = fontSize * 1.7;
 
   // 5 cols: ลำดับ | รายการ | รายละเอียด | จำนวนเงิน (ขวา) | วิธีชำระ
   const idxX = M;
@@ -636,7 +638,7 @@ async function drawCover(
   const itemX = idxX + idxW;
   const itemW = 90;
   const amtW = 90;
-  const methW = 110;
+  const methW = 143;
   const detW = CONTENT_W - idxW - itemW - amtW - methW;
   const detX = itemX + itemW;
   const amtX = detX + detW;
@@ -862,8 +864,8 @@ async function drawWatermark(r: ReportRenderer, opts: BuildOptions): Promise<voi
     if (!img) return;
     const firstPage = r.doc.getPages()[0];
     if (!firstPage) return;
-    const maxH = 90;
-    const maxW = CONTENT_W * 0.45;
+    const maxH = 72;
+    const maxW = CONTENT_W * 0.36;
     let w = maxW;
     let h = (img.height / img.width) * w;
     if (h > maxH) {
@@ -872,10 +874,10 @@ async function drawWatermark(r: ReportRenderer, opts: BuildOptions): Promise<voi
     }
     firstPage.drawImage(img, {
       x: PAGE_W - M - w,
-      y: M + 20,
+      y: M - 8,
       width: w,
       height: h,
-      opacity: 0.65,
+      opacity: 0.85,
     });
   } catch {
     // ignore invalid logo

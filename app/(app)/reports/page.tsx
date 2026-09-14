@@ -9,13 +9,16 @@ import {
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
   getAppSettings,
+  deleteCustomPaymentMethod as deleteCustomPaymentMethodAction,
   listActiveClients,
   listBankAccounts,
   listCustomFormCodes,
+  listCustomPaymentMethods,
   loadFilings as loadFilingsAction,
   patchFiling as patchFilingAction,
   recordReportFile,
   rememberFormCode as rememberFormCodeAction,
+  rememberPaymentMethod as rememberPaymentMethodAction,
   saveAppSettings,
   setBankQr,
   type BankAccount,
@@ -108,6 +111,8 @@ export default function ReportsPage() {
   const [copyingFrom, setCopyingFrom] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
   const [customFormCodes, setCustomFormCodes] = useState<string[]>([]);
+  const [customPayMethods, setCustomPayMethods] = useState<string[]>([]);
+  const [newPayMethodPreset, setNewPayMethodPreset] = useState("");
   const loadSeq = useRef(0);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -158,7 +163,12 @@ export default function ReportsPage() {
 
   useEffect(() => {
     (async () => {
-      setCustomFormCodes(await listCustomFormCodes());
+      const [codes, methods] = await Promise.all([
+        listCustomFormCodes(),
+        listCustomPaymentMethods(),
+      ]);
+      setCustomFormCodes(codes);
+      setCustomPayMethods(methods);
     })();
   }, []);
 
@@ -186,6 +196,40 @@ export default function ReportsPage() {
     rememberFormCodeAction(code).catch((err) => {
       console.error("save form code failed:", err);
     });
+  }
+
+  const payMethodPresetList = useMemo(
+    () => [...customPayMethods].sort((a, b) => a.localeCompare(b, "th")),
+    [customPayMethods]
+  );
+
+  function rememberPaymentMethod(raw: string) {
+    const code = raw.trim();
+    if (!code) return;
+    setCustomPayMethods((prev) =>
+      prev.includes(code) ? prev : [...prev, code]
+    );
+    rememberPaymentMethodAction(code).catch((err) => {
+      console.error("save payment method failed:", err);
+    });
+  }
+
+  async function addPayMethodPreset() {
+    const code = newPayMethodPreset.trim();
+    if (!code) return;
+    setNewPayMethodPreset("");
+    rememberPaymentMethod(code);
+  }
+
+  async function removePayMethodPreset(code: string) {
+    if (!confirm(`ลบวิธีชำระ "${code}" ออกจากตัวเลือก?`)) return;
+    setCustomPayMethods((prev) => prev.filter((p) => p !== code));
+    try {
+      await deleteCustomPaymentMethodAction(code);
+    } catch (err) {
+      alert(`ลบไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      setCustomPayMethods(await listCustomPaymentMethods());
+    }
   }
 
   const selectedClient = clients.find((c) => c.id === clientId) ?? null;
@@ -333,7 +377,10 @@ export default function ReportsPage() {
         alert(`ไม่พบรายการของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
         return;
       }
-      inserted.forEach((f) => rememberFormCode(f.form_code));
+      inserted.forEach((f) => {
+        rememberFormCode(f.form_code);
+        if (f.payment_method) rememberPaymentMethod(f.payment_method);
+      });
       setFilings((prev) => [...prev, ...inserted]);
     } catch (err) {
       alert(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
@@ -357,6 +404,7 @@ export default function ReportsPage() {
         payment_method: newPaymentMethod.trim() || null,
       });
       rememberFormCode(newFormCode.trim());
+      if (newPaymentMethod.trim()) rememberPaymentMethod(newPaymentMethod);
       setFilings((prev) => [...prev, created]);
       setNewFormCode("");
       setNewDescription("");
@@ -381,6 +429,8 @@ export default function ReportsPage() {
       return;
     }
     if (typeof patch.form_code === "string") rememberFormCode(patch.form_code);
+    if (typeof patch.payment_method === "string" && patch.payment_method.trim())
+      rememberPaymentMethod(patch.payment_method);
   }
 
   async function deleteR2Object(storagePath: string) {
@@ -760,10 +810,16 @@ export default function ReportsPage() {
                 <label className="label">วิธีชำระ</label>
                 <input
                   className="input"
+                  list="payment-method-presets"
                   placeholder="เช่น สลิป หน้า 2"
                   value={newPaymentMethod}
                   onChange={(e) => setNewPaymentMethod(e.target.value)}
                 />
+                <datalist id="payment-method-presets">
+                  {payMethodPresetList.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
               </div>
               <button
                 className="btn-primary order-5 col-span-2 lg:order-none lg:col-span-1"
@@ -773,6 +829,45 @@ export default function ReportsPage() {
                 เพิ่มรายการ
               </button>
             </div>
+
+            <details className="card !py-2 text-sm">
+              <summary className="cursor-pointer text-neutral-600">
+                จัดการตัวเลือกวิธีชำระ ({payMethodPresetList.length})
+              </summary>
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="input"
+                  placeholder="เพิ่มวิธีชำระใหม่ เช่น สลิป หน้า 3"
+                  value={newPayMethodPreset}
+                  onChange={(e) => setNewPayMethodPreset(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addPayMethodPreset();
+                  }}
+                />
+                <button className="btn shrink-0" onClick={addPayMethodPreset}>
+                  เพิ่ม
+                </button>
+              </div>
+              {payMethodPresetList.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {payMethodPresetList.map((p) => (
+                    <li
+                      key={p}
+                      className="flex items-center gap-2 rounded bg-neutral-50 px-2 py-1"
+                    >
+                      <span className="min-w-0 flex-1 truncate">{p}</span>
+                      <button
+                        className="text-neutral-400 hover:text-red-600"
+                        onClick={() => removePayMethodPreset(p)}
+                        aria-label={`ลบวิธีชำระ ${p}`}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </details>
 
             {loading && loadedKey !== `${clientId}|${period}` ? (
               <p className="text-sm text-neutral-500">กำลังโหลด...</p>
@@ -1255,6 +1350,7 @@ function FilingCard({
           <label className="label">วิธีชำระ</label>
           <input
             className="input"
+            list="payment-method-presets"
             placeholder="เช่น สลิป หน้า 2"
             {...fieldHandlers("payment_method")}
           />
