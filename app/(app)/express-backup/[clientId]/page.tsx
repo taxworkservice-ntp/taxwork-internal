@@ -396,7 +396,11 @@ export default function ExpressBackupDetailPage() {
         <h1 className="text-lg font-bold">{client.name}</h1>
         <StatusBadge status={status} />
         <div className="ml-auto flex gap-2">
-          <button className="btn-primary" onClick={handleBackupNow} disabled={busy || !config?.enabled}>
+          <button
+            className="rounded bg-yellow-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-yellow-800 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={handleBackupNow}
+            disabled={busy || !config?.enabled}
+          >
             {busy ? "…" : "สำรองข้อมูลตอนนี้"}
           </button>
           {config && (

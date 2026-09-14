@@ -2,14 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import CopyButton from "@/components/copy-button";
 import {
+  approveRestore,
   createBackupAllJobs,
   createManualBackupJob,
   getAgents,
   getBackupStorageStats,
+  getExpressBackupDetail,
   getExpressBackupOverview,
   registerAgent,
+  requestRestore,
   revokeAgent,
   type OverviewRow,
 } from "@/lib/actions/express-backup";
@@ -92,6 +96,21 @@ export default function ExpressBackupPage() {
   });
   const [onlyFav, setOnlyFav] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  const router = useRouter();
+  const [importClient, setImportClient] = useState<{ id: string; name: string } | null>(null);
+  const [importDetail, setImportDetail] = useState<{
+    jobId: string;
+    fileName: string | null;
+    size: number | null;
+    at: string | null;
+    agents: { id: string; name: string; machine: string; online: boolean }[];
+    paths: Record<string, string>;
+    primaryAgent: string | null;
+  } | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importAgent, setImportAgent] = useState("");
+  const [importPath, setImportPath] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
 
   useEffect(() => {
     localStorage.setItem("express-backup.favorites", JSON.stringify(favorites));
@@ -190,6 +209,78 @@ export default function ExpressBackupPage() {
       await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "เพิกถอนไม่สำเร็จ");
+    }
+  }
+
+  async function openImport(clientId: string, clientName: string) {
+    setImportClient({ id: clientId, name: clientName });
+    setImportDetail(null);
+    setImportAgent("");
+    setImportPath("");
+    setImportLoading(true);
+    try {
+      const d = await getExpressBackupDetail(clientId);
+      if (!d.latest_success) {
+        alert("ยังไม่มีไฟล์สำรองของบริษัทนี้");
+        setImportClient(null);
+        return;
+      }
+      const active = d.agents.filter((a) => a.status !== "revoked");
+      const paths: Record<string, string> = {};
+      for (const p of d.agent_paths) paths[p.agent_id] = p.source_path;
+      const primary = d.agent_paths.find((p) => p.is_primary)?.agent_id ?? null;
+      const onlineFirst = [...active].sort((a, b) =>
+        a.status === b.status ? 0 : a.status === "online" ? -1 : 1
+      );
+      const defAgent = primary ?? onlineFirst[0]?.id ?? "";
+      setImportDetail({
+        jobId: d.latest_success.id,
+        fileName: d.latest_success.file_name,
+        size: d.latest_success.backup_size_bytes,
+        at: d.latest_success.completed_at ?? d.latest_success.created_at,
+        agents: active.map((a) => ({
+          id: a.id,
+          name: a.agent_name,
+          machine: a.machine_name,
+          online: a.status === "online",
+        })),
+        paths,
+        primaryAgent: primary,
+      });
+      setImportAgent(defAgent);
+      setImportPath(paths[defAgent] ?? d.config?.source_path ?? "");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "โหลดข้อมูลรับไฟล์ไม่สำเร็จ");
+      setImportClient(null);
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
+  async function confirmImport() {
+    if (!importClient || !importDetail) return;
+    if (!importAgent) {
+      alert("กรุณาเลือกเครื่องปลายทาง");
+      return;
+    }
+    if (!importPath.trim()) {
+      alert("กรุณาระบุโฟลเดอร์ปลายทาง");
+      return;
+    }
+    setImportBusy(true);
+    try {
+      const r = await requestRestore(importDetail.jobId, importAgent, importPath.trim());
+      try {
+        await approveRestore(r.id);
+      } catch {
+        // requested ok, approve may fail if duplicate — still go to detail
+      }
+      setImportClient(null);
+      router.push(`/express-backup/${importClient.id}#export`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "รับข้อมูลไม่สำเร็จ");
+    } finally {
+      setImportBusy(false);
     }
   }
 
@@ -402,7 +493,7 @@ export default function ExpressBackupPage() {
                           เปิด
                         </Link>
                         <button
-                          className="btn px-2 py-1 text-xs"
+                          className="rounded bg-yellow-700 px-2 py-1 text-xs font-medium text-white hover:bg-yellow-800 disabled:cursor-not-allowed disabled:opacity-40"
                           disabled={busy !== null || !r.has_config || !r.enabled}
                           title={!r.has_config ? "ยังไม่ได้ตั้งค่า" : "สำรองข้อมูลตอนนี้"}
                           onClick={() => handleBackupOne(r.client_id)}
@@ -410,13 +501,13 @@ export default function ExpressBackupPage() {
                           {busy === r.client_id ? "…" : "สำรองตอนนี้"}
                         </button>
                         {r.latest_success_at ? (
-                          <Link
-                            href={`/express-backup/${r.client_id}#export`}
+                          <button
                             className="btn-primary px-2 py-1 text-xs"
-                            title={`รับข้อมูลสำรองล่าสุด (${formatThaiDateTime(r.latest_success_at)}) ไปเครื่องอื่น`}
+                            title={`รับข้อมูลสำรองล่าสุด (${formatThaiDateTime(r.latest_success_at)}) ไปเครื่องอื่น — กดครั้งเดียวจบ`}
+                            onClick={() => openImport(r.client_id, r.client_name)}
                           >
                             รับข้อมูล
-                          </Link>
+                          </button>
                         ) : (
                           <span
                             className="btn cursor-not-allowed px-2 py-1 text-xs opacity-40"
@@ -510,6 +601,68 @@ export default function ExpressBackupPage() {
         )}
       </div>
 
+      {importClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl">
+            <h3 className="font-medium">รับข้อมูล — {importClient.name}</h3>
+            {importLoading || !importDetail ? (
+              <p className="mt-3 text-sm text-neutral-500">กำลังเตรียมข้อมูล...</p>
+            ) : (
+              <div className="mt-3 space-y-3">
+                <p className="text-sm text-neutral-600">
+                  ไฟล์ล่าสุด {formatThaiDateTime(importDetail.at)} · {formatBytes(importDetail.size)}
+                  <span className="block truncate font-mono text-xs text-neutral-500" title={importDetail.fileName ?? ""}>
+                    {importDetail.fileName ?? ""}
+                  </span>
+                </p>
+                <label className="label">
+                  รับเข้าเครื่องไหน
+                  <select
+                    className="input"
+                    value={importAgent}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setImportAgent(id);
+                      if (importDetail.paths[id]) setImportPath(importDetail.paths[id]);
+                    }}
+                  >
+                    {importDetail.agents.length === 0 && <option value="">ยังไม่มีเครื่อง</option>}
+                    {importDetail.agents.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.machine}){a.online ? " ●" : ""}{importDetail.primaryAgent === a.id ? " ★หลัก" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="label">
+                  โฟลเดอร์ปลายทาง
+                  <input
+                    className="input font-mono"
+                    value={importPath}
+                    onChange={(e) => setImportPath(e.target.value)}
+                    placeholder="D:\ExpressData\ABC"
+                  />
+                </label>
+                <p className="rounded bg-green-50 border border-green-200 p-2 text-xs text-green-800">
+                  กดครั้งเดียว: เครื่องจะเตรียมไฟล์ให้ทันที ของเดิมเก็บเป็น .bak ให้ก่อน กดยืนยันครั้งสุดท้ายที่หน้าถัดไป
+                </p>
+              </div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="btn px-3 py-1.5 text-sm" disabled={importBusy} onClick={() => setImportClient(null)}>
+                ยกเลิก
+              </button>
+              <button
+                className="btn-primary px-3 py-1.5 text-sm"
+                disabled={importBusy || importLoading || !importDetail}
+                onClick={confirmImport}
+              >
+                {importBusy ? "กำลังรับ..." : "รับข้อมูลเลย"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
