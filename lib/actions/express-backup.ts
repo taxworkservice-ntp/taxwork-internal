@@ -513,6 +513,38 @@ async function assertCreatable(clientId: string): Promise<void> {
  * Machines with an override row each get a targeted job; when no machine
  * has a row yet, a single untargeted job preserves legacy behavior.
  */
+/**
+ * Insert a manual job, tolerating a database where the created_by column
+ * migration has not been applied yet (no 500 for the whole page).
+ */
+async function insertManualJob(
+  clientId: string,
+  targetAgentId: string | null,
+  by: string
+): Promise<{ id: string }[]> {
+  const withAgent = targetAgentId != null;
+  try {
+    return withAgent
+      ? ((await sql`insert into express_backup_jobs
+            (client_id, target_agent_id, status, trigger_type, created_by)
+          values (${clientId}, ${targetAgentId}, 'pending', 'manual', ${by}) returning id`) as {
+          id: string;
+        }[])
+      : ((await sql`insert into express_backup_jobs (client_id, status, trigger_type, created_by)
+          values (${clientId}, 'pending', 'manual', ${by}) returning id`) as { id: string }[]);
+  } catch (e) {
+    if (!isMissingColumn(e, "created_by")) throw e;
+    return withAgent
+      ? ((await sql`insert into express_backup_jobs
+            (client_id, target_agent_id, status, trigger_type)
+          values (${clientId}, ${targetAgentId}, 'pending', 'manual') returning id`) as {
+          id: string;
+        }[])
+      : ((await sql`insert into express_backup_jobs (client_id, status, trigger_type)
+          values (${clientId}, 'pending', 'manual') returning id`) as { id: string }[]);
+  }
+}
+
 export async function createManualBackupJob(clientId: string): Promise<{ ids: string[] }> {
   const user = await requireUser();
   await assertCreatable(clientId);
@@ -522,18 +554,12 @@ export async function createManualBackupJob(clientId: string): Promise<{ ids: st
     where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null`) as {
     agent_id: string;
   }[];
-  let rows: { id: string }[];
+  let rows: { id: string }[] = [];
   if (machines.length === 0) {
-    rows = (await sql`insert into express_backup_jobs (client_id, status, trigger_type, created_by)
-      values (${clientId}, 'pending', 'manual', ${by}) returning id`) as { id: string }[];
+    rows = await insertManualJob(clientId, null, by);
   } else {
-    rows = [];
     for (const m of machines) {
-      const r = (await sql`insert into express_backup_jobs
-          (client_id, target_agent_id, status, trigger_type, created_by)
-        values (${clientId}, ${String(m.agent_id)}, 'pending', 'manual', ${by}) returning id`) as {
-        id: string;
-      }[];
+      const r = await insertManualJob(clientId, String(m.agent_id), by);
       rows.push(r[0]);
     }
   }
@@ -563,13 +589,11 @@ export async function createBackupAllJobs(): Promise<{ created: number; skipped:
       agent_id: string;
     }[];
     if (machines.length === 0) {
-      await sql`insert into express_backup_jobs (client_id, status, trigger_type, created_by)
-        values (${c.client_id}, 'pending', 'manual', ${by})`;
+      await insertManualJob(c.client_id, null, by);
       created++;
     } else {
       for (const m of machines) {
-        await sql`insert into express_backup_jobs (client_id, target_agent_id, status, trigger_type, created_by)
-          values (${c.client_id}, ${String(m.agent_id)}, 'pending', 'manual', ${by})`;
+        await insertManualJob(c.client_id, String(m.agent_id), by);
         created++;
       }
     }
