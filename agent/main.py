@@ -166,6 +166,41 @@ def register_interactive(cfg: AgentConfig) -> None:
     print("(The web UI never shows it again.)")
 
 
+def _try_gui_register() -> AgentConfig | None:
+    """Single-EXE flow: missing config -> open wizard window -> load again."""
+    try:
+        from wizard import run_wizard
+    except ImportError:
+        return None
+    # Pre-fill agent_id if user already created config without secret.
+    initial_agent = ""
+    try:
+        partial = load_config()
+        initial_agent = partial.agent_id
+    except SystemExit:
+        pass
+    except Exception:
+        pass
+    try:
+        from config import default_paths as _paths
+        import json as _json
+
+        _cfg_path, _ = _paths()
+        try:
+            with open(_cfg_path, encoding="utf-8") as _f:
+                _raw = _json.load(_f)
+            initial_agent = _raw.get("agent_id", "") or initial_agent
+            _srv = _raw.get("server_url", "") or None
+        except (OSError, ValueError):
+            _srv = None
+        if run_wizard(initial_server=_srv or "https://internal.taxworkaccount.com",
+                       initial_agent=initial_agent):
+            return load_config()
+    except Exception as exc:
+        print(f"wizard failed: {exc}")
+    return None
+
+
 def main() -> None:
     if "--register" in sys.argv:
         # config.json needs server_url + agent_id only for this step.
@@ -173,7 +208,23 @@ def main() -> None:
         register_interactive(cfg)
         return
 
-    cfg: AgentConfig = load_config()
+    if "--install" in sys.argv:
+        try:
+            from wizard import ensure_startup
+            print("startup task:", "created" if ensure_startup() else "failed")
+        except Exception as exc:
+            print(f"install failed: {exc}")
+        return
+
+    try:
+        cfg: AgentConfig = load_config()
+    except SystemExit:
+        # First run on a new machine: open the 1-click window instead of crashing.
+        # Falls back to CLI message when no display (pythonw / frozen service).
+        gui = _try_gui_register()
+        if gui is None:
+            raise
+        cfg = gui
     _cfg_path, pending_dir = default_paths()
     os.makedirs(pending_dir, exist_ok=True)
     staging_root = os.path.join(os.path.dirname(pending_dir), "staging")

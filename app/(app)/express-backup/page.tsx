@@ -493,10 +493,13 @@ export default function ExpressBackupPage() {
                           เปิด
                         </Link>
                         <button
-                          className="rounded bg-yellow-700 px-2 py-1 text-xs font-medium text-white hover:bg-yellow-800 disabled:cursor-not-allowed disabled:opacity-40"
+                          className="rounded bg-neutral-900 px-2 py-1 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-40"
                           disabled={busy !== null || !r.has_config || !r.enabled}
                           title={!r.has_config ? "ยังไม่ได้ตั้งค่า" : "สำรองข้อมูลตอนนี้"}
-                          onClick={() => handleBackupOne(r.client_id)}
+                          onClick={() => {
+                            if (!confirm(`สำรองข้อมูลของ "${r.client_name}" ตอนนี้?`)) return;
+                            handleBackupOne(r.client_id);
+                          }}
                         >
                           {busy === r.client_id ? "…" : "สำรองตอนนี้"}
                         </button>
@@ -517,7 +520,7 @@ export default function ExpressBackupPage() {
                           </span>
                         )}
                         <button
-                          className="btn px-2 py-1 text-xs"
+                          className="px-1 py-1 text-[11px] text-neutral-300 hover:text-neutral-500 hover:underline"
                           onClick={() => toggleHide(r.client_id)}
                           title={
                             hidden.includes(r.client_id)
