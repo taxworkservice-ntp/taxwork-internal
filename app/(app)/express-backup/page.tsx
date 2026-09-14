@@ -21,7 +21,7 @@ import {
   setPrimaryAgentPath,
   type OverviewRow,
 } from "@/lib/actions/express-backup";
-import { STATUS_TH, thaiError, type ExpressBackupStatus } from "@/lib/express-backup-ui";
+import { RESTORE_TH as RESTORE_STATUS_TH, STATUS_TH, thaiError, type ExpressBackupStatus } from "@/lib/express-backup-ui";
 
 function formatBytes(n: number | null): string {
   if (n === null || n === undefined) return "—";
@@ -40,6 +40,12 @@ function formatThaiDateTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   return `${d.toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" })} ${d.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+/** Show a readable person name from an email actor (falls back to full value). */
+function shortActor(actor: string): string {
+  const at = actor.indexOf("@");
+  return at > 0 ? actor.slice(0, at) : actor;
 }
 
 function StatusBadge({ status }: { status: ExpressBackupStatus }) {
@@ -578,6 +584,7 @@ export default function ExpressBackupPage() {
                 <tr>
                   <th>บริษัท</th>
                   <th>สำรองล่าสุด</th>
+                  <th>นำเข้าล่าสุด</th>
                   <th>สถานะ</th>
                   <th>ขนาด</th>
                   <th>การทำงาน</th>
@@ -617,7 +624,29 @@ export default function ExpressBackupPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="whitespace-nowrap">{formatThaiDateTime(r.latest_success_at)}</td>
+                    <td className="whitespace-nowrap">
+                      {formatThaiDateTime(r.latest_success_at)}
+                      {r.latest_success_by && (
+                        <div className="text-xs text-neutral-500" title={r.latest_success_by}>
+                          โดย {shortActor(r.latest_success_by)}
+                        </div>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap">
+                      {r.latest_restore_at ? (
+                        <>
+                          {formatThaiDateTime(r.latest_restore_at)}
+                          {r.latest_restore_status && (
+                            <div className="text-xs text-neutral-500">
+                              {RESTORE_STATUS_TH[r.latest_restore_status] ?? r.latest_restore_status}
+                              {r.latest_restore_by && ` · โดย ${shortActor(r.latest_restore_by)}`}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-neutral-400">—</span>
+                      )}
+                    </td>
                     <td>
                       <StatusBadge status={r.status} />
                       {r.latest_job_status === "failed" && (

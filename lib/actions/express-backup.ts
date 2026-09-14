@@ -40,6 +40,15 @@ function isMissingTable(e: unknown, table: string): boolean {
   );
 }
 
+/** True when Postgres reports a column this query needs does not exist yet. */
+function isMissingColumn(e: unknown, column: string): boolean {
+  return (
+    e instanceof Error &&
+    e.message.includes("does not exist") &&
+    e.message.includes(column)
+  );
+}
+
 function toConfig(r: Record<string, unknown>): ExpressBackupConfig {
   return {
     id: String(r.id),
@@ -74,6 +83,7 @@ function toJob(r: Record<string, unknown>): ExpressBackupJob {
     checksum: r.checksum == null ? null : String(r.checksum),
     error_code: r.error_code == null ? null : String(r.error_code),
     error_message: r.error_message == null ? null : String(r.error_message),
+    created_by: r.created_by == null ? null : String(r.created_by),
     created_at: str(r.created_at),
     agent_name: r.agent_name == null ? null : String(r.agent_name),
     target_agent_name:
@@ -116,6 +126,10 @@ export type OverviewRow = {
   latest_job_created_at: string | null;
   latest_success_at: string | null;
   latest_success_size: number | null;
+  latest_success_by: string | null;
+  latest_restore_at: string | null;
+  latest_restore_status: string | null;
+  latest_restore_by: string | null;
   status: ExpressBackupStatus;
   machine_count: number;
 };
@@ -174,6 +188,45 @@ export async function getExpressBackupOverview(): Promise<{
       order by c.name`) as Record<string, unknown>[];
   }
 
+  // Latest import (restore) per client — isolated query with its own
+  // missing-table fallback, so the overview never breaks on old schemas.
+  let restoreRows: Record<string, unknown>[] = [];
+  try {
+    restoreRows = (await sql`select distinct on (client_id) client_id, status, updated_at, requested_by
+      from express_backup_restores
+      order by client_id, created_at desc`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_restores")) throw e;
+  }
+  const restoreByClient = new Map<string, { at: string | null; status: string; by: string | null }>();
+  for (const r of restoreRows) {
+    restoreByClient.set(String(r.client_id), {
+      at:
+        r.updated_at == null
+          ? null
+          : r.updated_at instanceof Date
+            ? r.updated_at.toISOString()
+            : String(r.updated_at),
+      status: String(r.status),
+      by: r.requested_by == null ? null : String(r.requested_by),
+    });
+  }
+
+  // Who triggered the latest successful manual backup (column added later).
+  let backupByRows: Record<string, unknown>[] = [];
+  try {
+    backupByRows = (await sql`select distinct on (client_id) client_id, created_by
+      from express_backup_jobs
+      where status = 'success'
+      order by client_id, completed_at desc`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingColumn(e, "created_by")) throw e;
+  }
+  const backupByClient = new Map<string, string>();
+  for (const r of backupByRows) {
+    if (r.created_by != null) backupByClient.set(String(r.client_id), String(r.created_by));
+  }
+
   const agents = (await sql`select status, last_seen_at, revoked_at
     from express_backup_agents`) as { status: string; last_seen_at: unknown; revoked_at: unknown }[];
   const agentsTotal = agents.length;
@@ -191,6 +244,7 @@ export async function getExpressBackupOverview(): Promise<{
       const hasConfig = r.enabled !== null && r.enabled !== undefined;
       const enabled = Boolean(r.enabled);
       const latestJobStatus = r.latest_job_status == null ? null : String(r.latest_job_status);
+      const restore = restoreByClient.get(String(r.client_id)) ?? null;
       const latestSuccessAt =
         r.latest_success_at == null
           ? null
@@ -215,6 +269,10 @@ export async function getExpressBackupOverview(): Promise<{
               : String(r.latest_job_created_at),
         latest_success_at: latestSuccessAt,
         latest_success_size: r.latest_success_size == null ? null : num(r.latest_success_size),
+        latest_success_by: backupByClient.get(String(r.client_id)) ?? null,
+        latest_restore_at: restore?.at ?? null,
+        latest_restore_status: restore?.status ?? null,
+        latest_restore_by: restore?.by ?? null,
         status: computeStatus({ enabled, hasConfig, latestJobStatus, latestSuccessAt }),
         machine_count: num(r.machine_count ?? 0),
       };
@@ -458,7 +516,7 @@ async function assertCreatable(clientId: string): Promise<void> {
 export async function createManualBackupJob(clientId: string): Promise<{ ids: string[] }> {
   const user = await requireUser();
   await assertCreatable(clientId);
-  void user;
+  const by = actorEmail(user);
   const machines = (await sql`select ap.agent_id from express_backup_agent_paths ap
     join express_backup_agents a on a.id = ap.agent_id
     where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null`) as {
@@ -466,14 +524,14 @@ export async function createManualBackupJob(clientId: string): Promise<{ ids: st
   }[];
   let rows: { id: string }[];
   if (machines.length === 0) {
-    rows = (await sql`insert into express_backup_jobs (client_id, status, trigger_type)
-      values (${clientId}, 'pending', 'manual') returning id`) as { id: string }[];
+    rows = (await sql`insert into express_backup_jobs (client_id, status, trigger_type, created_by)
+      values (${clientId}, 'pending', 'manual', ${by}) returning id`) as { id: string }[];
   } else {
     rows = [];
     for (const m of machines) {
       const r = (await sql`insert into express_backup_jobs
-          (client_id, target_agent_id, status, trigger_type)
-        values (${clientId}, ${String(m.agent_id)}, 'pending', 'manual') returning id`) as {
+          (client_id, target_agent_id, status, trigger_type, created_by)
+        values (${clientId}, ${String(m.agent_id)}, 'pending', 'manual', ${by}) returning id`) as {
         id: string;
       }[];
       rows.push(r[0]);
@@ -483,7 +541,8 @@ export async function createManualBackupJob(clientId: string): Promise<{ ids: st
 }
 
 export async function createBackupAllJobs(): Promise<{ created: number; skipped: number }> {
-  await requireUser();
+  const user = await requireUser();
+  const by = actorEmail(user);
   const cfgs = (await sql`select cfg.client_id from express_backup_configs cfg
     join clients c on c.id = cfg.client_id
     where cfg.enabled = true and c.status = 'active'`) as { client_id: string }[];
@@ -504,13 +563,13 @@ export async function createBackupAllJobs(): Promise<{ created: number; skipped:
       agent_id: string;
     }[];
     if (machines.length === 0) {
-      await sql`insert into express_backup_jobs (client_id, status, trigger_type)
-        values (${c.client_id}, 'pending', 'manual')`;
+      await sql`insert into express_backup_jobs (client_id, status, trigger_type, created_by)
+        values (${c.client_id}, 'pending', 'manual', ${by})`;
       created++;
     } else {
       for (const m of machines) {
-        await sql`insert into express_backup_jobs (client_id, target_agent_id, status, trigger_type)
-          values (${c.client_id}, ${String(m.agent_id)}, 'pending', 'manual')`;
+        await sql`insert into express_backup_jobs (client_id, target_agent_id, status, trigger_type, created_by)
+          values (${c.client_id}, ${String(m.agent_id)}, 'pending', 'manual', ${by})`;
         created++;
       }
     }

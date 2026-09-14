@@ -39,6 +39,7 @@ export type ExpressBackupJob = {
   checksum: string | null;
   error_code: string | null;
   error_message: string | null;
+  created_by: string | null;
   created_at: string;
   agent_name?: string | null;
   target_agent_name?: string | null;

@@ -23,6 +23,7 @@ import {
 } from "@/lib/actions/express-backup";
 import CopyButton from "@/components/copy-button";
 import {
+  RESTORE_TH,
   STATUS_TH,
   thaiError,
   type ExpressBackupRestore,
@@ -50,17 +51,11 @@ function formatThaiDateTime(iso: string | null): string {
 
 const TRIGGER_TH: Record<string, string> = { manual: "สั่งเอง", scheduled: "อัตโนมัติ", retry: "ลองใหม่" };
 
-const RESTORE_TH: Record<string, string> = {
-  pending: "รออนุมัติ",
-  approved: "อนุมัติแล้ว รอเครื่องดาวน์โหลด",
-  downloading: "กำลังดาวน์โหลด",
-  staged: "เตรียมไฟล์แล้ว รอยืนยัน",
-  confirmed: "ยืนยันแล้ว กำลังนำเข้า",
-  completed: "เสร็จแล้ว",
-  failed: "ล้มเหลว",
-  rejected: "ปฏิเสธแล้ว",
-  cancelled: "ยกเลิกแล้ว",
-};
+/** Show a readable person name from an email actor (falls back to full value). */
+function shortActor(actor: string): string {
+  const at = actor.indexOf("@");
+  return at > 0 ? actor.slice(0, at) : actor;
+}
 
 function StatusBadge({ status }: { status: ExpressBackupStatus }) {
   const cls =
@@ -813,7 +808,14 @@ export default function ExpressBackupDetailPage() {
                 {jobs.map((j) => (
                   <Fragment key={j.id}>
                     <tr>
-                      <td className="whitespace-nowrap">{formatThaiDateTime(j.created_at)}</td>
+                      <td className="whitespace-nowrap">
+                        {formatThaiDateTime(j.created_at)}
+                        {j.created_by && (
+                          <div className="text-xs text-neutral-500" title={j.created_by}>
+                            โดย {shortActor(j.created_by)}
+                          </div>
+                        )}
+                      </td>
                       <td className="whitespace-nowrap">{formatBytes(j.backup_size_bytes)}</td>
                       <td>
                         <JobStatus s={j.status} />

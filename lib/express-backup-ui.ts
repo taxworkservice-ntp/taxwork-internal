@@ -53,6 +53,18 @@ export type ExpressBackupRestore = {
   job_backup_size?: number | null;
 };
 
+export const RESTORE_TH: Record<string, string> = {
+  pending: "รออนุมัติ",
+  approved: "อนุมัติแล้ว รอเครื่องดาวน์โหลด",
+  downloading: "กำลังดาวน์โหลด",
+  staged: "เตรียมไฟล์แล้ว รอยืนยัน",
+  confirmed: "ยืนยันแล้ว กำลังนำเข้า",
+  completed: "เสร็จแล้ว",
+  failed: "ล้มเหลว",
+  rejected: "ปฏิเสธแล้ว",
+  cancelled: "ยกเลิกแล้ว",
+};
+
 export function thaiError(code: string | null | undefined): string {
   if (!code) return "";
   return BACKUP_ERROR_TH[code] ?? BACKUP_ERROR_TH.UNKNOWN_ERROR;
