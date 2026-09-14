@@ -2,12 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  addAttachment as addAttachmentAction,
   addBankAccount as addBankAccountAction,
   addFiling as addFilingAction,
   clearFilings,
   copyMonthFilings,
-  deleteAttachment as deleteAttachmentAction,
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
   getAppSettings,
@@ -20,15 +18,14 @@ import {
   rememberFormCode as rememberFormCodeAction,
   saveAppSettings,
   setBankQr,
-  type Attachment,
   type BankAccount,
   type ClientRow,
   type Filing,
 } from "@/lib/actions/reports";
 import {
-  ATTACHMENT_KIND_LABELS,
   buildMonthlyReportPdf,
   fetchAttachmentBytes,
+  type ReportDocument,
   type ReportFiling,
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
@@ -127,24 +124,34 @@ export default function ReportsPage() {
   const [bankAcctName, setBankAcctName] = useState("");
   const [bankPromptpay, setBankPromptpay] = useState("");
 
-  const [slipPanelFor, setSlipPanelFor] = useState<string | null>(null);
-  const [slipCovers, setSlipCovers] = useState<Set<string>>(new Set());
+  // Part 2: ordered documents (upload order = PDF order, session-local)
+  const [docs, setDocs] = useState<{ id: string; file: File }[]>([]);
 
-  function openSlipPanel(filingId: string) {
-    setSlipPanelFor(filingId);
-    setSlipCovers(new Set([filingId]));
+  function addDocs(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (!list.length) return;
+    setDocs((prev) => [
+      ...prev,
+      ...list.map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`,
+        file,
+      })),
+    ]);
   }
 
-  function toggleSlipCover(filingId: string) {
-    setSlipCovers((prev) => {
-      const next = new Set(prev);
-      if (next.has(filingId)) {
-        if (next.size > 1) next.delete(filingId);
-      } else {
-        next.add(filingId);
-      }
+  function moveDoc(id: string, delta: -1 | 1) {
+    setDocs((prev) => {
+      const i = prev.findIndex((d) => d.id === id);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[i], next[j]];
       return next;
     });
+  }
+
+  function removeDoc(id: string) {
+    setDocs((prev) => prev.filter((d) => d.id !== id));
   }
 
   useEffect(() => {
@@ -223,6 +230,11 @@ export default function ReportsPage() {
   useEffect(() => {
     loadFilings();
   }, [loadFilings]);
+
+  // Docs belong to one cover — reset when switching client/month
+  useEffect(() => {
+    setDocs([]);
+  }, [clientId, period]);
 
   const reloadBanks = useCallback(async () => {
     setBankAccounts(await listBankAccounts());
@@ -393,9 +405,6 @@ export default function ReportsPage() {
 
   async function deleteFiling(filing: Filing) {
     if (!confirm(`ลบรายการ "${filing.form_code}" ?`)) return;
-    for (const att of filing.filing_attachments) {
-      await deleteR2Object(att.storage_path);
-    }
     await deleteFilingAction(filing.id);
     loadFilings();
   }
@@ -404,16 +413,12 @@ export default function ReportsPage() {
     if (!clientId || !filings.length) return;
     if (
       !confirm(
-        `ลบรายการทั้งหมด ${filings.length} รายการ ของ ${periodToThai(period)} ?\nไฟล์แนบที่เกี่ยวข้องจะถูกลบด้วย — ไม่สามารถกู้คืนได้`
+        `ลบรายการทั้งหมด ${filings.length} รายการ ของ ${periodToThai(period)} ?\nไม่สามารถกู้คืนได้`
       )
     )
       return;
     setClearingAll(true);
     try {
-      const atts = filings.flatMap((f) => f.filing_attachments);
-      for (const att of atts) {
-        await deleteR2Object(att.storage_path);
-      }
       await clearFilings(clientId, period);
       loadFilings();
     } catch (err) {
@@ -421,44 +426,6 @@ export default function ReportsPage() {
     } finally {
       setClearingAll(false);
     }
-  }
-
-  async function uploadAttachment(
-    filingId: string,
-    kind: Attachment["kind"],
-    file: File,
-    covers?: string[]
-  ) {
-    let path: string;
-    try {
-      path = await uploadObject(file.name, file);
-    } catch (err) {
-      alert(`อัปโหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
-      return;
-    }
-    try {
-      await addAttachmentAction(
-        filingId,
-        kind,
-        {
-          storage_path: path,
-          file_name: file.name,
-          size_bytes: file.size,
-          mime_type: file.type || null,
-        },
-        covers ?? []
-      );
-    } catch (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
-    }
-    loadFilings();
-  }
-
-  async function deleteAttachment(att: Attachment) {
-    if (!confirm(`ลบไฟล์ ${att.file_name}?`)) return;
-    await deleteR2Object(att.storage_path);
-    await deleteAttachmentAction(att.id);
-    loadFilings();
   }
 
   async function addBankAccount() {
@@ -532,16 +499,14 @@ export default function ReportsPage() {
     if (!selectedClient || !filings.length) return;
     if (
       !confirm(
-        `สร้างรายงาน ${periodToThai(period)} ของ "${selectedClient.name}" (${filings.length} รายการ)?`
+        `สร้างรายงาน ${periodToThai(period)} ของ "${selectedClient.name}" (${filings.length} รายการ + ${docs.length} เอกสาร)?`
       )
     )
       return;
     setGenerating(true);
     setStatus("");
     try {
-      const filingById = new Map(filings.map((f) => [f.id, f]));
-      const enriched: ReportFiling[] = [];
-
+      // Part 1: cover rows (no per-filing files anymore)
       const bankQrCache = new Map<string, ArrayBuffer | null>();
       const usedBanks = new Set(
         filings
@@ -561,39 +526,9 @@ export default function ReportsPage() {
         }
       }
 
-      for (const f of filings) {
-        const attachments = [];
-        for (const att of f.filing_attachments) {
-          const bytes = await fetchAttachmentBytes(att.storage_path);
-          const coveredFilings = (att.covers?.length
-            ? att.covers
-            : [f.id]
-          )
-            .map((cid) => filingById.get(cid))
-            .filter((cf): cf is Filing => Boolean(cf));
-          attachments.push({
-            kind: att.kind as string,
-            file_name: att.file_name,
-            mime_type: att.mime_type,
-            bytes,
-            covered_forms: [
-              ...new Set(coveredFilings.map((cf) => cf.form_code)),
-            ],
-            covered_amount: coveredFilings.reduce(
-              (sum, cf) => sum + Number(cf.amount ?? 0),
-              0
-            ),
-            covered_filings: [
-              ...new Set(
-                (att.covers?.length ? att.covers : [f.id]).filter(
-                  (cid) => filingById.has(cid)
-                )
-              ),
-            ],
-          });
-        }
+      const enriched: ReportFiling[] = filings.map((f) => {
         const ba = bankAccounts.find((b) => b.id === f.bank_account_id);
-        enriched.push({
+        return {
           id: f.id,
           form_code: f.form_code,
           description: f.description,
@@ -610,7 +545,17 @@ export default function ReportsPage() {
                 qr_bytes: bankQrCache.get(ba.id) ?? null,
               }
             : null,
-          attachments,
+          attachments: [],
+        };
+      });
+
+      // Part 2: ordered documents, upload order = PDF order
+      const documents: ReportDocument[] = [];
+      for (const d of docs) {
+        documents.push({
+          file_name: d.file.name,
+          mime_type: d.file.type || null,
+          bytes: await d.file.arrayBuffer(),
         });
       }
 
@@ -634,6 +579,7 @@ export default function ReportsPage() {
         periodLabel: period,
         filings: enriched,
         logo: logoBytes ? { bytes: logoBytes } : null,
+        documents,
       });
 
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
@@ -751,7 +697,7 @@ export default function ReportsPage() {
         <>
           <section className="max-w-4xl space-y-3">
             <h2 className="font-medium">
-              รายการงานภาษี ประจำเดือน {periodToThai(period)}
+              ส่วนที่ 1 — ปก: รายการงานภาษี ประจำเดือน {periodToThai(period)}
             </h2>
 
             <div className="card grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[150px_minmax(0,1.7fr)_135px_170px_auto] lg:items-end lg:gap-x-3">
@@ -819,24 +765,9 @@ export default function ReportsPage() {
                 <FilingCard
                   key={f.id}
                   filing={f}
-                  allFilings={filings}
                   bankAccounts={bankAccounts}
                   onPatch={patchFiling}
                   onDelete={() => deleteFiling(f)}
-                  onUpload={(kind, file) =>
-                    uploadAttachment(f.id, kind, file)
-                  }
-                  onDeleteAttachment={deleteAttachment}
-                  slipOpen={slipPanelFor === f.id}
-                  slipCovers={slipCovers}
-                  onOpenSlipPanel={() => openSlipPanel(f.id)}
-                  onCloseSlipPanel={() => setSlipPanelFor(null)}
-                  onToggleSlipCover={toggleSlipCover}
-                  onSlipFiles={(files) =>
-                    files.forEach((file) =>
-                      uploadAttachment(f.id, "slip", file, [...slipCovers])
-                    )
-                  }
                 />
               ))
             )}
@@ -850,9 +781,6 @@ export default function ReportsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  {status && (
-                    <span className="text-xs text-green-700">{status}</span>
-                  )}
                   <button
                     className="btn-danger"
                     onClick={clearAllFilings}
@@ -861,17 +789,105 @@ export default function ReportsPage() {
                   >
                     {clearingAll ? "กำลังลบ..." : `ลบทั้งหมด (${filings.length})`}
                   </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="max-w-4xl space-y-3">
+            <h2 className="font-medium">ส่วนที่ 2 — เอกสารแนบ (ตามลำดับอัปโหลด)</h2>
+            <div className="card space-y-3">
+              <label className="btn inline-flex cursor-pointer self-start text-xs">
+                + เพิ่มเอกสาร (PDF / PNG / JPG)
+                <input
+                  type="file"
+                  multiple
+                  accept="application/pdf,image/png,image/jpeg"
+                  className="hidden"
+                  onChange={(e) => {
+                    const list = e.target.files;
+                    if (!list?.length) return;
+                    addDocs(list);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {!docs.length ? (
+                <p className="text-sm text-neutral-500">
+                  ยังไม่มีเอกสาร — ไฟล์จะต่อท้ายปกตามลำดับที่แสดง
+                </p>
+              ) : (
+                <ol className="space-y-1.5">
+                  {docs.map((d, i) => (
+                    <li
+                      key={d.id}
+                      className="flex items-center gap-2 rounded bg-neutral-50 px-2 py-1.5 text-sm"
+                    >
+                      <span className="w-6 shrink-0 text-center font-medium text-neutral-500">
+                        {i + 1}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate" title={d.file.name}>
+                        {d.file.name}
+                      </span>
+                      <span className="shrink-0 text-xs text-neutral-400">
+                        {(d.file.size / 1024).toFixed(0)} KB
+                      </span>
+                      <button
+                        className="btn px-1.5 py-0.5 text-xs"
+                        onClick={() => moveDoc(d.id, -1)}
+                        disabled={i === 0}
+                        aria-label="เลื่อนขึ้น"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        className="btn px-1.5 py-0.5 text-xs"
+                        onClick={() => moveDoc(d.id, 1)}
+                        disabled={i === docs.length - 1}
+                        aria-label="เลื่อนลง"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        className="btn-danger px-1.5 py-0.5 text-xs"
+                        onClick={() => removeDoc(d.id)}
+                        aria-label="ลบเอกสาร"
+                      >
+                        ลบ
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </section>
+
+          {Boolean(filings.length) && (
+            <section className="max-w-4xl">
+              <div className="card flex flex-wrap items-center justify-between gap-3">
+                <div className="text-sm">
+                  <span className="font-medium">
+                    ปก {filings.length} รายการ + เอกสาร {docs.length} ไฟล์
+                  </span>
+                  <div className="text-xs text-neutral-500">
+                    ยอดรวม {fmtMoney(total)} บาท
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {status && (
+                    <span className="text-xs text-green-700">{status}</span>
+                  )}
                   <button
                     className="btn-primary"
                     onClick={generatePdf}
                     disabled={generating}
                   >
-                    {generating ? "กำลังสร้าง..." : "สร้างรายงาน PDF"}
+                    {generating ? "กำลังสร้าง..." : "ดาวน์โหลด PDF"}
                   </button>
                 </div>
               </div>
-            )}
-          </section>
+            </section>
+          )}
 
           <section className="max-w-4xl">
             <button
@@ -1083,32 +1099,14 @@ export default function ReportsPage() {
 
 function FilingCard({
   filing,
-  allFilings,
   bankAccounts,
   onPatch,
   onDelete,
-  onUpload,
-  onDeleteAttachment,
-  slipOpen,
-  slipCovers,
-  onOpenSlipPanel,
-  onCloseSlipPanel,
-  onToggleSlipCover,
-  onSlipFiles,
 }: {
   filing: Filing;
-  allFilings: Filing[];
   bankAccounts: BankAccount[];
   onPatch: (id: string, patch: Partial<Filing>) => void;
   onDelete: () => void;
-  onUpload: (kind: Attachment["kind"], file: File) => void;
-  onDeleteAttachment: (att: Attachment) => void;
-  slipOpen: boolean;
-  slipCovers: Set<string>;
-  onOpenSlipPanel: () => void;
-  onCloseSlipPanel: () => void;
-  onToggleSlipCover: (filingId: string) => void;
-  onSlipFiles: (files: File[]) => void;
 }) {
   const editingRef = useRef<string | null>(null);
   const [draft, setDraft] = useState({
@@ -1251,124 +1249,8 @@ function FilingCard({
           ลบ
         </button>
       </div>
-
-      <div className="flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">
-        {(["slip", "qr", "document"] as const).map((kind) => (
-          <label
-            key={kind}
-            className="btn cursor-pointer text-xs"
-            onClick={
-              kind === "slip"
-                ? (e) => {
-                    e.preventDefault();
-                    if (slipOpen) onCloseSlipPanel();
-                    else onOpenSlipPanel();
-                  }
-                : undefined
-            }
-          >
-            + {ATTACHMENT_KIND_LABELS[kind]}
-            {kind !== "slip" && (
-              <input
-                type="file"
-                multiple
-                accept="image/png,image/jpeg,image/webp,.pdf"
-                className="hidden"
-                onChange={(e) => {
-                  const list = e.target.files;
-                  if (!list?.length) return;
-                  Array.from(list).forEach((file) => onUpload(kind, file));
-                  e.target.value = "";
-                }}
-              />
-            )}
-          </label>
-        ))}
-        <span className="ml-auto flex flex-wrap gap-1">
-          {filing.filing_attachments.length ? (
-            filing.filing_attachments.map((att) => (
-              <span
-                key={att.id}
-                className="inline-flex items-center gap-1 rounded bg-neutral-100 px-1.5 py-0.5 text-xs"
-              >
-                [{ATTACHMENT_KIND_LABELS[att.kind] ?? att.kind}]{" "}
-                {truncateName(att.file_name)}
-                {att.covers && att.covers.length > 1 && (
-                  <span className="text-blue-600">
-                    ·{att.covers.length} ฟอร์ม
-                  </span>
-                )}
-                <button
-                  className="text-red-500 hover:text-red-700"
-                  onClick={() => onDeleteAttachment(att)}
-                  aria-label="ลบไฟล์แนบ"
-                >
-                  ✕
-                </button>
-              </span>
-            ))
-          ) : (
-            <span className="text-xs text-neutral-400">ยังไม่มีไฟล์แนบ</span>
-          )}
-        </span>
-      </div>
-
-      {slipOpen && (
-        <div className="rounded border border-neutral-200 bg-neutral-50 p-3 text-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs font-medium">
-              สลิปนี้ชำระสำหรับฟอร์มใด (เลือกได้หลายฟอร์ม):
-            </p>
-            <button
-              className="text-xs text-neutral-400 hover:text-neutral-700"
-              onClick={onCloseSlipPanel}
-            >
-              ยกเลิก ✕
-            </button>
-          </div>
-          <div className="mb-3 grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
-            {allFilings.map((pf) => (
-              <label
-                key={pf.id}
-                className="flex items-center gap-1.5 text-xs"
-              >
-                <input
-                  type="checkbox"
-                  checked={slipCovers.has(pf.id)}
-                  onChange={() => onToggleSlipCover(pf.id)}
-                />
-                <span className={pf.id === filing.id ? "font-medium" : ""}>
-                  {[pf.form_code, pf.description].filter(Boolean).join(" – ") ||
-                    "-"}
-                  {` (${fmtMoney(Number(pf.amount))})`}
-                </span>
-              </label>
-            ))}
-          </div>
-          <label className="btn inline-flex cursor-pointer text-xs">
-            เลือกไฟล์สลิป...
-            <input
-              type="file"
-              multiple
-              accept="image/png,image/jpeg,image/webp,.pdf"
-              className="hidden"
-              onChange={(e) => {
-                const list = e.target.files;
-                if (!list?.length) return;
-                onSlipFiles(Array.from(list));
-                e.target.value = "";
-                onCloseSlipPanel();
-              }}
-            />
-          </label>
-        </div>
-      )}
     </div>
   );
-}
-
-function truncateName(name: string, max = 28) {
-  return name.length > max ? `${name.slice(0, max)}…` : name;
 }
 
 function CopyIcon() {
