@@ -519,17 +519,30 @@ export default function ExpressBackupPage() {
                             รับข้อมูล
                           </span>
                         )}
-                        <button
-                          className="px-1 py-1 text-[11px] text-neutral-300 hover:text-neutral-500 hover:underline"
-                          onClick={() => toggleHide(r.client_id)}
-                          title={
-                            hidden.includes(r.client_id)
-                              ? "เลิกซ่อนบริษัทนี้"
-                              : "ซ่อนบริษัทนี้จากรายการ (สำรองนานๆ ครั้ง)"
-                          }
-                        >
-                          {hidden.includes(r.client_id) ? "เลิกซ่อน" : "ซ่อน"}
-                        </button>
+                        <details className="relative">
+                          <summary
+                            className="cursor-pointer list-none rounded px-1.5 py-1 text-sm leading-none text-neutral-300 hover:bg-neutral-100 hover:text-neutral-600 [&::-webkit-details-marker]:hidden"
+                            title="เพิ่มเติม"
+                          >
+                            ⋯
+                          </summary>
+                          <div className="absolute right-0 z-10 min-w-[160px] rounded-md border bg-white py-1 shadow-lg">
+                            <button
+                              className="block w-full px-3 py-1.5 text-left text-xs text-neutral-600 hover:bg-neutral-50"
+                              onClick={(e) => {
+                                (e.target as HTMLElement).closest("details")?.removeAttribute("open");
+                                if (
+                                  !hidden.includes(r.client_id) &&
+                                  !confirm(`ซ่อน "${r.client_name}" จากรายการ? (เอากลับมาได้จากปุ่มแสดงที่ซ่อนอยู่)`)
+                                )
+                                  return;
+                                toggleHide(r.client_id);
+                              }}
+                            >
+                              {hidden.includes(r.client_id) ? "↩ เลิกซ่อนบริษัทนี้" : "🙈 ซ่อนบริษัทนี้"}
+                            </button>
+                          </div>
+                        </details>
                       </div>
                     </td>
                   </tr>
