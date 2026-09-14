@@ -45,6 +45,7 @@ export type Filing = {
   amount: number;
   due_date: string | null;
   remark: string | null;
+  payment_method: string | null;
   bank_account_id: string | null;
   sort_order: number;
   created_at?: string;
@@ -158,13 +159,14 @@ export type FilingInput = {
   description: string | null;
   amount: number;
   due_date: string | null;
+  payment_method?: string | null;
   bank_account_id?: string | null;
   sort_order?: number;
 };
 
 export async function copyMonthFilings(clientId: string, fromPeriod: string, toPeriod: string): Promise<Filing[]> {
   await requireUser();
-  const prev = (await sql`select form_code, description, amount, due_date, bank_account_id, sort_order
+  const prev = (await sql`select form_code, description, amount, due_date, payment_method, bank_account_id, sort_order
     from monthly_filings where client_id=${clientId} and period_label=${fromPeriod}
     order by sort_order, created_at`) as Record<string, unknown>[];
   if (!prev.length) return [];
@@ -184,18 +186,19 @@ export async function copyMonthFilings(clientId: string, fromPeriod: string, toP
   };
   const values: unknown[] = [];
   const groups = prev.map((f, i) => {
-    const r = f as { form_code: string; description: string | null; amount: unknown; due_date: unknown; bank_account_id: string | null; sort_order: unknown };
+    const r = f as { form_code: string; description: string | null; amount: unknown; due_date: unknown; payment_method: string | null; bank_account_id: string | null; sort_order: unknown };
     const base = values.length;
     values.push(
       clientId, toPeriod, r.form_code, r.description, num(r.amount),
       r.due_date == null ? null : shiftMonth(str(r.due_date)),
+      r.payment_method ?? null,
       r.bank_account_id, maxSort + i + 1
     );
     const ph = (k: number) => `$${base + k + 1}`;
-    return `(${[1, 2, 3, 4, 5, 6, 7, 8].map(ph).join(",")})`;
+    return `(${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(ph).join(",")})`;
   });
   const inserted = (await sql.query(
-    `insert into monthly_filings (client_id, period_label, form_code, description, amount, due_date, bank_account_id, sort_order)
+    `insert into monthly_filings (client_id, period_label, form_code, description, amount, due_date, payment_method, bank_account_id, sort_order)
      values ${groups.join(",")} returning *`,
     values
   )) as Record<string, unknown>[];
@@ -206,14 +209,14 @@ export async function addFiling(clientId: string, period: string, input: FilingI
   await requireUser();
   const maxRow = (await sql`select coalesce(max(sort_order),0)::int as m from monthly_filings
     where client_id=${clientId} and period_label=${period}`) as { m: number }[];
-  const rows = (await sql`insert into monthly_filings (client_id, period_label, form_code, description, amount, due_date, sort_order)
-    values (${clientId}, ${period}, ${input.form_code}, ${input.description}, ${input.amount}, ${input.due_date}, ${(maxRow[0]?.m ?? 0) + 1})
+  const rows = (await sql`insert into monthly_filings (client_id, period_label, form_code, description, amount, due_date, payment_method, sort_order)
+    values (${clientId}, ${period}, ${input.form_code}, ${input.description}, ${input.amount}, ${input.due_date}, ${input.payment_method ?? null}, ${(maxRow[0]?.m ?? 0) + 1})
     returning *`) as Record<string, unknown>[];
   if (!rows[0]) throw new Error("Insert failed");
   return toFiling(rows[0], []);
 }
 
-const FILING_EDITABLE = ["form_code", "description", "amount", "due_date", "bank_account_id", "sort_order", "remark"];
+const FILING_EDITABLE = ["form_code", "description", "amount", "due_date", "payment_method", "bank_account_id", "sort_order", "remark"];
 
 export async function patchFiling(id: string, patch: Partial<Filing>): Promise<void> {
   await requireUser();

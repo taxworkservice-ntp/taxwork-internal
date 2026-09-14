@@ -103,7 +103,7 @@ export default function ReportsPage() {
   const [newFormCode, setNewFormCode] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newAmount, setNewAmount] = useState("");
-  const [newDueDate, setNewDueDate] = useState("");
+  const [newPaymentMethod, setNewPaymentMethod] = useState("");
   const [adding, setAdding] = useState(false);
   const [copyingFrom, setCopyingFrom] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
@@ -126,6 +126,8 @@ export default function ReportsPage() {
 
   // Part 2: ordered documents (upload order = PDF order, session-local)
   const [docs, setDocs] = useState<{ id: string; file: File }[]>([]);
+  const [docsDragActive, setDocsDragActive] = useState(false);
+  const docsInputRef = useRef<HTMLInputElement>(null);
 
   function addDocs(files: FileList | File[]) {
     const list = Array.from(files);
@@ -312,9 +314,11 @@ export default function ReportsPage() {
 
   const total = filings.reduce((sum, f) => sum + Number(f.amount ?? 0), 0);
 
-  async function copyFromLastMonth() {
+  const [copyOffset, setCopyOffset] = useState(1);
+
+  async function copyFromPastMonth() {
     if (!clientId) return;
-    const prevPeriod = shiftPeriod(period, -1);
+    const prevPeriod = shiftPeriod(period, -copyOffset);
     if (
       filings.length &&
       !confirm(
@@ -349,14 +353,15 @@ export default function ReportsPage() {
         form_code: newFormCode.trim(),
         description: newDescription.trim() || null,
         amount: Number(newAmount) || 0,
-        due_date: newDueDate || null,
+        due_date: null,
+        payment_method: newPaymentMethod.trim() || null,
       });
       rememberFormCode(newFormCode.trim());
       setFilings((prev) => [...prev, created]);
       setNewFormCode("");
       setNewDescription("");
       setNewAmount("");
-      setNewDueDate("");
+      setNewPaymentMethod("");
     } catch (error) {
       alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     } finally {
@@ -535,6 +540,7 @@ export default function ReportsPage() {
           amount: Number(f.amount ?? 0),
           due_date: f.due_date,
           remark: f.remark ?? null,
+          payment_method: f.payment_method ?? null,
           bank_account: ba
             ? {
                 label: ba.label,
@@ -639,11 +645,25 @@ export default function ReportsPage() {
           <button className="btn px-2.5" onClick={() => setPeriod((p) => shiftPeriod(p, 1))}>
             →
           </button>
+          <select
+            className="input w-auto !py-1 text-xs"
+            value={copyOffset}
+            onChange={(e) => setCopyOffset(Number(e.target.value))}
+            title="เลือกเดือนต้นทางที่จะคัดลอก"
+            aria-label="เลือกเดือนต้นทางที่จะคัดลอก"
+            disabled={!clientId || copyingFrom}
+          >
+            {[1, 2, 3].map((n) => (
+              <option key={n} value={n}>
+                {periodToThai(shiftPeriod(period, -n))}
+              </option>
+            ))}
+          </select>
           <button
             className="btn px-2.5"
-            title="คัดลอกรายการจากเดือนก่อน"
-            aria-label="คัดลอกรายการจากเดือนก่อน"
-            onClick={copyFromLastMonth}
+            title="คัดลอกรายการจากเดือนที่เลือก"
+            aria-label="คัดลอกรายการจากเดือนที่เลือก"
+            onClick={copyFromPastMonth}
             disabled={!clientId || copyingFrom}
           >
             {copyingFrom ? <SpinnerIcon /> : <CopyIcon />}
@@ -700,7 +720,7 @@ export default function ReportsPage() {
               ส่วนที่ 1 — ปก: รายการงานภาษี ประจำเดือน {periodToThai(period)}
             </h2>
 
-            <div className="card grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[150px_minmax(0,1.7fr)_135px_170px_auto] lg:items-end lg:gap-x-3">
+            <div className="card grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[150px_135px_minmax(0,1.7fr)_170px_auto] lg:items-end lg:gap-x-3">
               <div className="order-1 lg:order-none">
                 <label className="label">แบบฟอร์ม</label>
                 <input
@@ -737,12 +757,12 @@ export default function ReportsPage() {
                 />
               </div>
               <div className="order-4 lg:order-none">
-                <label className="label">กำหนดชำระ</label>
+                <label className="label">วิธีชำระ</label>
                 <input
                   className="input"
-                  type="date"
-                  value={newDueDate}
-                  onChange={(e) => setNewDueDate(e.target.value)}
+                  placeholder="เช่น สลิป หน้า 2"
+                  value={newPaymentMethod}
+                  onChange={(e) => setNewPaymentMethod(e.target.value)}
                 />
               </div>
               <button
@@ -796,68 +816,101 @@ export default function ReportsPage() {
 
           <section className="max-w-4xl space-y-3">
             <h2 className="font-medium">ส่วนที่ 2 — เอกสารแนบ (ตามลำดับอัปโหลด)</h2>
+            <p className="-mt-2 text-xs text-neutral-500">
+              ลากไฟล์มาวาง จัดลำดับ แล้วรวมต่อท้ายปกเป็นไฟล์เดียว
+            </p>
             <div className="card space-y-3">
-              <label className="btn inline-flex cursor-pointer self-start text-xs">
-                + เพิ่มเอกสาร (PDF / PNG / JPG)
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDocsDragActive(true);
+                }}
+                onDragLeave={() => setDocsDragActive(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDocsDragActive(false);
+                  if (e.dataTransfer.files?.length) addDocs(e.dataTransfer.files);
+                }}
+                onClick={() => docsInputRef.current?.click()}
+                className={`cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+                  docsDragActive
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+                }`}
+              >
                 <input
+                  ref={docsInputRef}
                   type="file"
                   multiple
                   accept="application/pdf,image/png,image/jpeg"
                   className="hidden"
                   onChange={(e) => {
-                    const list = e.target.files;
-                    if (!list?.length) return;
-                    addDocs(list);
+                    if (e.target.files?.length) addDocs(e.target.files);
                     e.target.value = "";
                   }}
                 />
-              </label>
+                ลากไฟล์มาวาง หรือคลิกเพื่อเลือก (PDF / PNG / JPG — เลือกได้หลายไฟล์)
+              </div>
               {!docs.length ? (
                 <p className="text-sm text-neutral-500">
                   ยังไม่มีเอกสาร — ไฟล์จะต่อท้ายปกตามลำดับที่แสดง
                 </p>
               ) : (
-                <ol className="space-y-1.5">
-                  {docs.map((d, i) => (
-                    <li
-                      key={d.id}
-                      className="flex items-center gap-2 rounded bg-neutral-50 px-2 py-1.5 text-sm"
-                    >
-                      <span className="w-6 shrink-0 text-center font-medium text-neutral-500">
-                        {i + 1}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate" title={d.file.name}>
-                        {d.file.name}
-                      </span>
-                      <span className="shrink-0 text-xs text-neutral-400">
-                        {(d.file.size / 1024).toFixed(0)} KB
-                      </span>
-                      <button
-                        className="btn px-1.5 py-0.5 text-xs"
-                        onClick={() => moveDoc(d.id, -1)}
-                        disabled={i === 0}
-                        aria-label="เลื่อนขึ้น"
+                <>
+                  <ol className="space-y-1 text-sm text-neutral-600">
+                    {docs.map((d, i) => (
+                      <li
+                        key={d.id}
+                        className="flex items-center gap-1 rounded border border-neutral-100 px-2 py-1"
                       >
-                        ↑
-                      </button>
-                      <button
-                        className="btn px-1.5 py-0.5 text-xs"
-                        onClick={() => moveDoc(d.id, 1)}
-                        disabled={i === docs.length - 1}
-                        aria-label="เลื่อนลง"
-                      >
-                        ↓
-                      </button>
-                      <button
-                        className="btn-danger px-1.5 py-0.5 text-xs"
-                        onClick={() => removeDoc(d.id)}
-                        aria-label="ลบเอกสาร"
-                      >
-                        ลบ
-                      </button>
-                    </li>
-                  ))}
-                </ol>
+                        <span className="mr-1 text-xs text-neutral-400">{i + 1}.</span>
+                        <span className="min-w-0 flex-1 truncate" title={d.file.name}>
+                          {d.file.name}
+                          <span className="ml-1 text-xs text-neutral-400">
+                            {(d.file.size / 1024).toFixed(0)} KB
+                          </span>
+                        </span>
+                        <button
+                          className="btn !px-1.5 !py-0.5 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveDoc(d.id, -1);
+                          }}
+                          disabled={i === 0}
+                          aria-label="เลื่อนขึ้น"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          className="btn !px-1.5 !py-0.5 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveDoc(d.id, 1);
+                          }}
+                          disabled={i === docs.length - 1}
+                          aria-label="เลื่อนลง"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          className="text-neutral-400 hover:text-red-600"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeDoc(d.id);
+                          }}
+                          aria-label="ลบเอกสาร"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                  <div>
+                    <button className="btn-danger text-xs" onClick={() => setDocs([])}>
+                      ล้างเอกสาร ({docs.length})
+                    </button>
+                  </div>
+                </>
               )}
             </div>
           </section>
@@ -1113,8 +1166,7 @@ function FilingCard({
     form_code: filing.form_code,
     description: filing.description ?? "",
     amount: String(Number(filing.amount)),
-    due_date: filing.due_date ?? "",
-    remark: filing.remark ?? "",
+    payment_method: filing.payment_method ?? "",
   });
 
   useEffect(() => {
@@ -1133,32 +1185,22 @@ function FilingCard({
         editingRef.current === "amount"
           ? prev.amount
           : String(Number(filing.amount)),
-      due_date:
-        prev.due_date !== (filing.due_date ?? "") &&
-        editingRef.current === "due_date"
-          ? prev.due_date
-          : filing.due_date ?? "",
-      remark:
-        prev.remark !== (filing.remark ?? "") &&
-        editingRef.current === "remark"
-          ? prev.remark
-          : filing.remark ?? "",
+      payment_method:
+        prev.payment_method !== (filing.payment_method ?? "") &&
+        editingRef.current === "payment_method"
+          ? prev.payment_method
+          : filing.payment_method ?? "",
     }));
   }, [filing]);
 
   function commitField(
-    key: "form_code" | "description" | "amount" | "due_date" | "remark"
+    key: "form_code" | "description" | "amount" | "payment_method"
   ) {
     const raw = draft[key];
     if (key === "amount") {
       const num = Number(raw) || 0;
       if (num !== Number(filing.amount)) onPatch(filing.id, { amount: num });
       else setDraft((p) => ({ ...p, amount: String(Number(filing.amount)) }));
-      return;
-    }
-    if (key === "due_date") {
-      const val = raw || null;
-      if (val !== filing.due_date) onPatch(filing.id, { due_date: val });
       return;
     }
     const val = raw.trim() || null;
@@ -1182,7 +1224,7 @@ function FilingCard({
 
   return (
     <div className="card space-y-3">
-      <div className="grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,0.85fr)_minmax(0,1.05fr)_minmax(0,1.45fr)_minmax(0,0.95fr)_auto] lg:items-end lg:gap-x-3">
+      <div className="grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,0.85fr)_minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_auto] lg:items-end lg:gap-x-3">
         <div className="order-1 lg:order-none">
           <label className="label">แบบฟอร์ม</label>
           <input
@@ -1210,22 +1252,14 @@ function FilingCard({
           />
         </div>
         <div className="order-4 lg:order-none">
-          <label className="label">กำหนดชำระ</label>
+          <label className="label">วิธีชำระ</label>
           <input
             className="input"
-            type="date"
-            {...fieldHandlers("due_date")}
+            placeholder="เช่น สลิป หน้า 2"
+            {...fieldHandlers("payment_method")}
           />
         </div>
-        <div className="order-5 lg:order-none">
-          <label className="label">หมายเหตุ</label>
-          <input
-            className="input"
-            placeholder="หมายเหตุ"
-            {...fieldHandlers("remark")}
-          />
-        </div>
-        <div className="order-6 col-span-2 lg:order-none lg:col-span-1">
+        <div className="order-5 col-span-2 lg:order-none lg:col-span-1">
           <label className="label">แนบบัญชีธนาคาร</label>
           <select
             className="input"
@@ -1243,7 +1277,7 @@ function FilingCard({
           </select>
         </div>
         <button
-          className="btn-danger order-7 justify-self-end self-end lg:order-none"
+          className="btn-danger order-6 justify-self-end self-end lg:order-none"
           onClick={onDelete}
         >
           ลบ

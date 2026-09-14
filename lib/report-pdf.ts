@@ -75,6 +75,7 @@ export type ReportFiling = {
   amount: number;
   due_date: string | null;
   remark?: string | null;
+  payment_method?: string | null;
   bank_account_id?: string | null;
   bank_account?: ReportBankAccount | null;
   attachments: ReportAttachment[];
@@ -629,15 +630,17 @@ async function drawCover(
   const fontSize = 9.5;
   const lh = fontSize * 1.4;
 
-  // 4 cols: ลำดับ | รายการ | จำนวนเงิน (ขวา) | หมายเหตุ — no payment info here
+  // 5 cols: ลำดับ | รายการ | รายละเอียด | จำนวนเงิน (ขวา) | วิธีชำระ
   const idxX = M;
-  const idxW = 32;
+  const idxW = 28;
   const itemX = idxX + idxW;
-  const amtW = 95;
-  const remW = 130;
-  const itemW = CONTENT_W - idxW - amtW - remW;
-  const amtX = itemX + itemW;
-  const remX = amtX + amtW;
+  const itemW = 90;
+  const amtW = 90;
+  const methW = 110;
+  const detW = CONTENT_W - idxW - itemW - amtW - methW;
+  const detX = itemX + itemW;
+  const amtX = detX + detW;
+  const methX = amtX + amtW;
   const tableRight = M + CONTENT_W;
 
   const drawTableHeader = async () => {
@@ -659,13 +662,17 @@ async function drawCover(
       size: 9.5,
       bold: true,
     });
+    await r.drawTextCanvas("รายละเอียด", detX + 6, baseline, {
+      size: 9.5,
+      bold: true,
+    });
     const amtLabel = "จำนวนเงิน (บาท)";
     const aW = r.measureText(amtLabel, 9.5, true);
     await r.drawTextCanvas(amtLabel, amtX + amtW - 6 - aW, baseline, {
       size: 9.5,
       bold: true,
     });
-    await r.drawTextCanvas("หมายเหตุ", remX + 6, baseline, {
+    await r.drawTextCanvas("วิธีชำระ", methX + 6, baseline, {
       size: 9.5,
       bold: true,
     });
@@ -680,13 +687,12 @@ async function drawCover(
   for (let i = 0; i < filings.length; i++) {
     const f = filings[i];
     total += Number(f.amount ?? 0);
-    const itemText =
-      [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
+    const itemText = f.form_code?.trim() || "-";
+    const detText = f.description?.trim() || "-";
     const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 12);
-    void methodOf;
-    const remText = f.remark?.trim() || "-";
-    const linesRem = wrapText(remText, (s) => r.measureText(s, fontSize, false), remW - 12);
-    const maxLines = Math.max(linesItem.length, linesRem.length);
+    const linesDet = wrapText(detText, (s) => r.measureText(s, fontSize, false), detW - 12);
+    const methLines = wrapText(methodOf(f), (s) => r.measureText(s, fontSize, false), methW - 12);
+    const maxLines = Math.max(linesItem.length, linesDet.length, methLines.length);
     const rowH = Math.max(maxLines * lh + rowPadY * 2, 24);
 
     if (r.y - rowH < M + 60) {
@@ -703,13 +709,18 @@ async function drawCover(
         size: fontSize,
       });
     }
+    for (let li = 0; li < linesDet.length; li++) {
+      await r.drawTextCanvas(linesDet[li], detX + 6, top - 14 - li * lh, {
+        size: fontSize,
+      });
+    }
     const amtText = fmtMoney(Number(f.amount ?? 0));
     const amtTw = r.measureText(amtText, fontSize, false);
     await r.drawTextCanvas(amtText, amtX + amtW - 6 - amtTw, top - 14, {
       size: fontSize,
     });
-    for (let li = 0; li < linesRem.length; li++) {
-      await r.drawTextCanvas(linesRem[li], remX + 4, top - 14 - li * lh, {
+    for (let li = 0; li < methLines.length; li++) {
+      await r.drawTextCanvas(methLines[li], methX + 6, top - 14 - li * lh, {
         size: fontSize,
       });
     }
@@ -740,156 +751,6 @@ async function drawCover(
   r.y -= totalRowH;
 
   await r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
-}
-
-async function drawPaymentSection(
-  r: ReportRenderer,
-  filings: SectionFiling[],
-  methodOf: (f: SectionFiling) => string
-): Promise<void> {
-  if (!filings.length) return;
-
-  // 4 cols: ลำดับ | รายการ | วิธีชำระ | จำนวนเงิน (ขวา) — mirrors summary, no QR
-  const headerH = 24;
-  const rowPadY = 7;
-  const fontSize = 9.5;
-  const lh = fontSize * 1.4;
-  const idxW = 32;
-  const amtW = 95;
-  const methW = 140;
-  const itemW = CONTENT_W - idxW - amtW - methW;
-  const idxX = M;
-  const itemX = idxX + idxW;
-  const methX = itemX + itemW;
-  const amtX = methX + methW;
-  const tableRight = M + CONTENT_W;
-
-  r.requestFreshPage();
-  r.ensureSpace(headerH + 80);
-  r.y -= 6;
-  await r.text("ช่องทางการชำระเงิน", { size: 12, bold: true });
-  await r.text("ชำระตามวิธีที่ระบุในแต่ละรายการ", {
-    size: 9,
-    color: COLOR_MUTED,
-  });
-  r.y -= 4;
-
-  const drawHeader = async () => {
-    r.ensureSpace(headerH + 70);
-    if (!r.sim)
-      r.page.drawRectangle({
-        x: M,
-        y: r.y - headerH,
-        width: CONTENT_W,
-        height: headerH,
-        color: COLOR_HEADER_BG,
-      });
-    const baseline = r.y - 16;
-    await r.drawTextCanvas("ลำดับ", idxX + 6, baseline, {
-      size: 9.5,
-      bold: true,
-    });
-    await r.drawTextCanvas("รายการ", itemX + 6, baseline, {
-      size: 9.5,
-      bold: true,
-    });
-    await r.drawTextCanvas("วิธีชำระ", methX + 6, baseline, {
-      size: 9.5,
-      bold: true,
-    });
-    const amtLabel = "จำนวนเงิน (บาท)";
-    const aW = r.measureText(amtLabel, 9.5, true);
-    await r.drawTextCanvas(amtLabel, amtX + amtW - 6 - aW, baseline, {
-      size: 9.5,
-      bold: true,
-    });
-    r.y -= headerH;
-  };
-
-  await drawHeader();
-
-  let total = 0;
-  for (let i = 0; i < filings.length; i++) {
-    const f = filings[i];
-    total += Number(f.amount ?? 0);
-    const itemText =
-      [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
-    const linesItem = wrapText(
-      itemText,
-      (s) => r.measureText(s, fontSize, false),
-      itemW - 12
-    );
-    const methLines = wrapText(
-      methodOf(f),
-      (s) => r.measureText(s, fontSize, false),
-      methW - 12
-    );
-    const bankDetail =
-      f.bank_account != null
-        ? `${f.bank_account.bank_name} ${f.bank_account.account_no}`
-        : "";
-    const linesBank = bankDetail
-      ? wrapText(bankDetail, (s) => r.measureText(s, 8.5, false), methW - 12)
-      : [];
-    const maxLines = Math.max(linesItem.length, methLines.length + linesBank.length, 1);
-    const rowH = Math.max(maxLines * lh + rowPadY * 2, 24);
-
-    if (r.y - rowH < M + 60) {
-      await r.hr();
-      await drawHeader();
-    }
-    const top = r.y;
-    await r.drawTextCanvas(String(i + 1), idxX + 6, top - 14, {
-      size: fontSize,
-    });
-    for (let li = 0; li < linesItem.length; li++) {
-      await r.drawTextCanvas(linesItem[li], itemX + 6, top - 14 - li * lh, {
-        size: fontSize,
-      });
-    }
-    for (let li = 0; li < methLines.length; li++) {
-      await r.drawTextCanvas(methLines[li], methX + 6, top - 14 - li * lh, {
-        size: fontSize,
-      });
-    }
-    for (let li = 0; li < linesBank.length; li++) {
-      await r.drawTextCanvas(
-        linesBank[li],
-        methX + 6,
-        top - 14 - (methLines.length + li) * lh,
-        { size: 8.5, color: COLOR_MUTED }
-      );
-    }
-    const amtText = fmtMoney(Number(f.amount ?? 0));
-    const amtTw = r.measureText(amtText, fontSize, false);
-    await r.drawTextCanvas(amtText, amtX + amtW - 6 - amtTw, top - 14, {
-      size: fontSize,
-    });
-
-    if (!r.sim)
-      r.page.drawLine({
-        start: { x: M, y: top - rowH },
-        end: { x: tableRight, y: top - rowH },
-        thickness: 0.5,
-        color: COLOR_BORDER,
-      });
-    r.y -= rowH;
-  }
-
-  const totalRowH = 26;
-  r.y -= 4;
-  r.ensureSpace(totalRowH + 40);
-  await r.drawTextCanvas("ยอดชำระทั้งสิ้น", itemX + 6, r.y - 15, {
-    size: 11,
-    bold: true,
-  });
-  const totalText = fmtMoney(total);
-  const totalTextW = r.measureText(totalText, 11, true);
-  await r.drawTextCanvas(totalText, amtX + amtW - 6 - totalTextW, r.y - 15, {
-    size: 11,
-    bold: true,
-  });
-  r.y -= totalRowH;
 }
 
 function collectEvidenceItems(filings: SectionFiling[]): ReportAttachment[] {
@@ -1039,6 +900,8 @@ function makeMethodOf(
 ) {
   const indexOf = new Map(orderedItems.map((a, i) => [a, i] as const));
   return (f: SectionFiling): string => {
+    const custom = f.payment_method?.trim();
+    if (custom) return custom;
     const slips = f.attachments.filter(
       (a) => a.kind === "slip" && (a.covered_filings ?? []).includes(f.id)
     );
@@ -1060,7 +923,7 @@ function makeMethodOf(
       f.bank_account?.qr_bytes
     )
       return "QR Code";
-    if (f.bank_account) return `โอนเข้า ${f.bank_account.label}`;
+    if (f.bank_account) return f.bank_account.label;
     return "-";
   };
 }
@@ -1092,7 +955,6 @@ export async function buildMonthlyReportPdf(
     applyDocMeta(r, opts);
     const method = makeMethodOf(orderedEvidence, iter === 0 ? null : pageByIndex);
     await drawCover(r, opts, method);
-    await drawPaymentSection(r, filings, method);
     await drawEvidencePages(r, filings);
     await drawDocumentPages(r, opts.documents ?? []);
     pageByIndex = orderedEvidence.map(
@@ -1110,7 +972,6 @@ export async function buildMonthlyReportPdf(
   const method = makeMethodOf(orderedEvidence, pageByIndex);
   await drawCover(r, opts, method);
   await drawWatermark(r, opts);
-  await drawPaymentSection(r, filings, method);
   await drawEvidencePages(r, filings);
   await drawDocumentPages(r, opts.documents ?? []);
   await r.drawFooters();
