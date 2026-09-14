@@ -494,6 +494,62 @@ export default function ToolsPage() {
         const deadline = Date.now() + 1500;
         let partial = false;
         const chosen: number[] = []; // positions in sorted order
+        // DP pass first: guarantees one exact match + the optimal closest set
+        // for the active mode even when the DFS below runs out of time.
+        // Keys use sorted-order positions — same key space as consider().
+        const dp = new Map<number, number[]>();
+        dp.set(0, []);
+        let dpOverflow = false;
+        for (let i = 0; i < n; i++) {
+          const snap = [...dp.entries()];
+          for (const [s, idxs] of snap) {
+            const ns = s + sv[i];
+            if (!dp.has(ns)) dp.set(ns, [...idxs, i]);
+            if (dp.size > 300000) {
+              dpOverflow = true;
+              break;
+            }
+          }
+          if (dpOverflow) {
+            partial = true;
+            break;
+          }
+        }
+        if (!dpOverflow) {
+          if (dp.has(t)) {
+            const idxs = dp.get(t)!;
+            if (idxs.length) {
+              const posKey = [...idxs].sort((a, b) => a - b).join(",");
+              seen.add("e" + posKey);
+              exact.push(idxs.map((p) => order[p].i).sort((a, b) => a - b));
+            }
+          }
+          let best: number | null = null;
+          let bestDiff = Infinity;
+          for (const s of dp.keys()) {
+            if (s === 0) continue; // empty subset is never a useful answer
+            const d = s - t;
+            if (d === 0) continue;
+            if (subMode === "max" && d > 0) continue;
+            if (subMode === "min" && d < 0) continue;
+            if (Math.abs(d) < bestDiff) {
+              bestDiff = Math.abs(d);
+              best = s;
+            }
+          }
+          if (best !== null) {
+            const idxs = dp.get(best)!;
+            if (idxs.length) {
+              const posKey = [...idxs].sort((a, b) => a - b).join(",");
+              seen.add("c" + posKey);
+              closest.push({
+                indices: idxs.map((p) => order[p].i).sort((a, b) => a - b),
+                sum: best,
+                diff: best - t,
+              });
+            }
+          }
+        }
         function consider(sum: number) {
           if (!chosen.length) return;
           const diff = sum - t;
@@ -540,52 +596,10 @@ export default function ToolsPage() {
           if (dfs(pos + 1, sum)) return true;
           return false;
         }
-        // For n > 30 full DFS explodes — use DP first for one exact + nearest, then bounded DFS
+        // For n > 30 full DFS explodes — DP above already seeded one exact +
+        // the optimal closest, so here only run a bounded DFS for more exact
+        // alternatives with a tight deadline.
         if (n > 30) {
-          const dp = new Map<number, number[]>();
-          dp.set(0, []);
-          for (let i = 0; i < n; i++) {
-            const snap = [...dp.entries()];
-            for (const [s, idxs] of snap) {
-              const ns = s + sv[i];
-              if (!dp.has(ns)) dp.set(ns, [...idxs, i]);
-              if (dp.size > 300000) break;
-            }
-            if (dp.size > 300000) {
-              partial = true;
-              break;
-            }
-          }
-          if (dp.has(t)) {
-            const idxs = dp.get(t)!;
-            if (idxs.length) {
-              const mapped = idxs.map((p) => order[p].i).sort((a, b) => a - b);
-              seen.add("e" + mapped.join(","));
-              exact.push(mapped);
-            }
-            /* empty subset (t === 0) is not useful — ignore */
-          }
-          let best: number | null = null;
-          let bestDiff = Infinity;
-          for (const s of dp.keys()) {
-            const d = s - t;
-            if (d === 0) continue;
-            if (subMode === "max" && d > 0) continue;
-            if (subMode === "min" && d < 0) continue;
-            if (Math.abs(d) < bestDiff) {
-              bestDiff = Math.abs(d);
-              best = s;
-            }
-          }
-          if (best !== null) {
-            const idxs = dp.get(best)!;
-            if (idxs.length)
-              closest.push({
-                indices: idxs.map((p) => order[p].i).sort((a, b) => a - b),
-                sum: best,
-                diff: best - t,
-              });
-          }
           // Bounded DFS for more exact alternatives with tight deadline
           if (exact.length) {
             const dfsDeadline = Date.now() + 600;
@@ -593,11 +607,10 @@ export default function ToolsPage() {
               if (Date.now() > dfsDeadline || exact.length >= 20) return true;
               if (pos === n) {
                 if (sum === t && chosen.length) {
-                  const mapped = chosen.map((p) => order[p].i).sort((a, b) => a - b);
-                  const mkey = mapped.join(",");
-                  if (!seen.has("e" + mkey)) {
-                    seen.add("e" + mkey);
-                    exact.push(mapped);
+                  const posKey = [...chosen].sort((a, b) => a - b).join(",");
+                  if (!seen.has("e" + posKey)) {
+                    seen.add("e" + posKey);
+                    exact.push(chosen.map((p) => order[p].i).sort((a, b) => a - b));
                   }
                 }
                 return false;
@@ -833,7 +846,7 @@ export default function ToolsPage() {
               if (e.dataTransfer.files?.length) addMergeFiles(e.dataTransfer.files);
             }}
             onClick={() => mergeInputRef.current?.click()}
-            className={`mb-3 cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+            className={`mb-3 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
               mergeDragActive
                 ? "border-blue-500 bg-blue-50"
                 : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
@@ -908,7 +921,7 @@ export default function ToolsPage() {
               if (e.dataTransfer.files?.length) addSplitFile(e.dataTransfer.files);
             }}
             onClick={() => splitInputRef.current?.click()}
-            className={`mb-3 cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+            className={`mb-3 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
               splitDragActive
                 ? "border-blue-500 bg-blue-50"
                 : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
@@ -1003,7 +1016,7 @@ export default function ToolsPage() {
             if (e.dataTransfer.files?.length) addUnlockFiles(e.dataTransfer.files);
           }}
           onClick={() => unlockInputRef.current?.click()}
-          className={`mb-3 cursor-pointer rounded border-2 border-dashed p-6 text-center text-sm transition ${
+          className={`mb-3 flex min-h-44 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-10 text-center text-sm transition ${
             dragActive ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
           }`}
         >
@@ -1145,7 +1158,7 @@ export default function ToolsPage() {
                 setSubResult(null);
               }}
             />
-            <label className="label">เงื่อนไขยอดรวม</label>
+            <label className="label">เงื่อนไขการจับคู่ยอดรวม</label>
             <div className="mb-3 flex flex-col gap-1 text-sm">
               <label className="flex items-center gap-1">
                 <input
@@ -1156,7 +1169,7 @@ export default function ToolsPage() {
                     setSubResult(null);
                   }}
                 />
-                ตรงเป๊ะก่อน ถ้าไม่มีขอใกล้เคียง
+                ยอดรวมเท่ากับเป้าหมาย หากไม่มีให้แสดงยอดที่ใกล้เคียงที่สุด
               </label>
               <label className="flex items-center gap-1">
                 <input
@@ -1167,7 +1180,7 @@ export default function ToolsPage() {
                     setSubResult(null);
                   }}
                 />
-                ห้ามเกินเป้าหมาย (เอาชุดที่รวมได้มากสุด)
+                ยอดรวมต้องไม่เกินเป้าหมาย (เลือกชุดที่มียอดรวมสูงสุด)
               </label>
               <label className="flex items-center gap-1">
                 <input
@@ -1178,12 +1191,12 @@ export default function ToolsPage() {
                     setSubResult(null);
                   }}
                 />
-                เกินได้ (เอาชุดที่ถึงเป้าด้วยส่วนเกินน้อยสุด)
+                ยอดรวมเกินเป้าหมายได้ (เลือกชุดที่มีส่วนเกินน้อยที่สุด)
               </label>
             </div>
             <div className="flex gap-2">
               <button className="btn-primary" onClick={subsetSearch} disabled={subBusy}>
-                {subBusy ? "กำลังค้นหา…" : "ค้นหาชุดยอด"}
+                {subBusy ? "กำลังค้นหา…" : "ค้นหาชุดยอดเงิน"}
               </button>
               {(subInput || subTarget || subResult) && (
                 <button
@@ -1195,12 +1208,12 @@ export default function ToolsPage() {
                     setSubResult(null);
                   }}
                 >
-                  ล้าง
+                  ล้างข้อมูล
                 </button>
               )}
             </div>
             <p className="mt-2 text-xs text-neutral-500">
-              ตรงเป๊ะระดับสตางค์ก่อน ถ้าไม่มีจะแสดงชุดใกล้เคียง + ส่วนต่าง สูงสุด 60 รายการ แสดงไม่เกิน 20 ชุด
+              ระบบจะค้นหาชุดที่ยอดรวมตรงกับเป้าหมายในระดับสตางค์ก่อน หากไม่พบจะแสดงชุดที่ใกล้เคียงพร้อมส่วนต่าง รับรายการสูงสุด 60 รายการ และแสดงผลไม่เกิน 20 ชุด
             </p>
           </div>
         </div>
@@ -1367,7 +1380,7 @@ export default function ToolsPage() {
               if (f) setFixFileWithInfo(f);
             }}
             onClick={() => fixInputRef.current?.click()}
-            className={`mb-3 cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+            className={`mb-3 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
               fixDragActive ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
             }`}
           >
@@ -1429,7 +1442,7 @@ export default function ToolsPage() {
               if (e.dataTransfer.files?.length) addRenameFiles(e.dataTransfer.files);
             }}
             onClick={() => renameInputRef.current?.click()}
-            className={`mb-3 cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+            className={`mb-3 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
               renameDragActive ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
             }`}
           >

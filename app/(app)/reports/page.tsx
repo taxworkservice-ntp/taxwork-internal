@@ -927,7 +927,7 @@ export default function ReportsPage() {
                   if (e.dataTransfer.files?.length) addDocs(e.dataTransfer.files);
                 }}
                 onClick={() => docsInputRef.current?.click()}
-                className={`cursor-pointer rounded border-2 border-dashed p-4 text-center text-sm transition ${
+                className={`flex min-h-36 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
                   docsDragActive
                     ? "border-blue-500 bg-blue-50"
                     : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
