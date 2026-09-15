@@ -312,15 +312,31 @@ export async function listMonthlyReports(
   return rows.map(toReport);
 }
 
-export async function createMonthlyReport(
+/** Insert a round. When `requestedSeq` is given it must be free; otherwise the
+ *  smallest unused round number is used (so freed numbers are reused). */
+async function insertMonthlyReport(
   clientId: string,
-  period: string
+  period: string,
+  requestedSeq?: number | null
 ): Promise<MonthlyReport> {
   await requireUser();
+  let seq: number;
+  if (requestedSeq != null) {
+    if (!Number.isInteger(requestedSeq) || requestedSeq < 1) {
+      throw new Error("ครั้งที่ต้องเป็นจำนวนเต็มบวก");
+    }
+    const taken = (await sql`select 1 from monthly_reports
+      where client_id=${clientId} and period_label=${period} and seq=${requestedSeq}`) as unknown[];
+    if (taken.length) throw new Error(`ครั้งที่ ${requestedSeq} มีอยู่แล้ว`);
+    seq = requestedSeq;
+  } else {
+    const rows = (await sql`select seq from monthly_reports
+      where client_id=${clientId} and period_label=${period}`) as { seq: number }[];
+    const used = new Set(rows.map((r) => Number(r.seq)));
+    seq = 1;
+    while (used.has(seq)) seq += 1;
+  }
   for (let attempt = 0; attempt < 5; attempt++) {
-    const maxRow = (await sql`select coalesce(max(seq),0)::int as m from monthly_reports
-      where client_id=${clientId} and period_label=${period}`) as { m: number }[];
-    const seq = (maxRow[0]?.m ?? 0) + 1;
     const publicId = generatePublicId();
     try {
       const rows = (await sql`insert into monthly_reports (client_id, period_label, seq, report_no, public_id, label)
@@ -328,11 +344,28 @@ export async function createMonthlyReport(
         returning *`) as Record<string, unknown>[];
       if (rows[0]) return toReport(rows[0]);
     } catch (err) {
-      // unique collision on (client, period, seq) or public_id — retry
+      // public_id collision — retry with a new key
       if (attempt === 4) throw err;
     }
   }
   throw new Error("สร้างรายงานไม่สำเร็จ");
+}
+
+export type CreateReportResult =
+  | { ok: true; report: MonthlyReport }
+  | { ok: false; error: string };
+
+export async function createMonthlyReport(
+  clientId: string,
+  period: string,
+  requestedSeq?: number | null
+): Promise<CreateReportResult> {
+  try {
+    return { ok: true, report: await insertMonthlyReport(clientId, period, requestedSeq) };
+  } catch (error) {
+    console.error("createMonthlyReport failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
 }
 
 const REPORT_EDITABLE = ["label", "report_no", "status", "issued_at"];
@@ -391,7 +424,7 @@ export async function copyReportToNewIssue(
     order by sort_order, created_at`) as Record<string, unknown>[];
   if (!prev.length) return [];
 
-  const target = await createMonthlyReport(targetClientId, targetPeriod);
+  const target = await insertMonthlyReport(targetClientId, targetPeriod);
 
   const shiftMonth = (ymd: string): string | null => {
     const m = ymd.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);

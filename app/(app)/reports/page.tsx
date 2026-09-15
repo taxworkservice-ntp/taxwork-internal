@@ -110,6 +110,7 @@ export default function ReportsPage() {
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [reports, setReports] = useState<MonthlyReport[]>([]);
   const [activeReportId, setActiveReportId] = useState("");
+  const [newRoundSeq, setNewRoundSeq] = useState("");
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -455,6 +456,12 @@ export default function ReportsPage() {
 
   const total = filings.reduce((sum, f) => sum + Number(f.amount ?? 0), 0);
   const activeReport = reports.find((r) => r.id === activeReportId) ?? null;
+  const nextRoundSeq = (() => {
+    const used = new Set(reports.map((r) => r.seq));
+    let s = 1;
+    while (used.has(s)) s += 1;
+    return s;
+  })();
   const reportLocked = activeReport?.status === "issued";
 
   const [copyOffset, setCopyOffset] = useState(1);
@@ -507,10 +514,11 @@ export default function ReportsPage() {
     try {
       let reportId = activeReportId;
       if (!reportId) {
-        const created = await createMonthlyReport(clientId, period);
-        setReports([created]);
-        setActiveReportId(created.id);
-        reportId = created.id;
+        const res = await createMonthlyReport(clientId, period);
+        if (!res.ok) throw new Error(res.error);
+        setReports([res.report]);
+        setActiveReportId(res.report.id);
+        reportId = res.report.id;
       }
       const created = await addFilingAction(clientId, period, reportId, {
         form_code: newFormCode.trim(),
@@ -600,13 +608,19 @@ export default function ReportsPage() {
     }
   }
 
-  async function addReportRound() {
+  async function addReportRound(seqInput?: number) {
     if (!clientId) return;
     setReportBusy(true);
     try {
-      const created = await createMonthlyReport(clientId, period);
-      setReports((prev) => [...prev, created]);
-      setActiveReportId(created.id);
+      const res = await createMonthlyReport(clientId, period, seqInput ?? null);
+      if (!res.ok) {
+        alert(`เพิ่มรอบรายงานไม่สำเร็จ: ${res.error}`);
+        return;
+      }
+      setReports((prev) =>
+        [...prev, res.report].sort((a, b) => a.seq - b.seq)
+      );
+      setActiveReportId(res.report.id);
     } catch (err) {
       alert(`เพิ่มรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -1099,13 +1113,29 @@ export default function ReportsPage() {
                     </button>
                   ))
                 )}
-                <button
-                  className="btn text-xs"
-                  onClick={addReportRound}
-                  disabled={reportBusy || reportsLoading}
-                >
-                  + เพิ่มรอบ
-                </button>
+                <span className="inline-flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="1"
+                    className="input w-16 px-2 py-1 text-xs"
+                    placeholder={String(nextRoundSeq)}
+                    value={newRoundSeq}
+                    onChange={(e) => setNewRoundSeq(e.target.value)}
+                    title="ครั้งที่ (เว้นว่าง = อัตโนมัติ)"
+                    aria-label="เลือกครั้งที่"
+                  />
+                  <button
+                    className="btn text-xs"
+                    onClick={() => {
+                      const trimmed = newRoundSeq.trim();
+                      addReportRound(trimmed ? Number(trimmed) : undefined);
+                      setNewRoundSeq("");
+                    }}
+                    disabled={reportBusy || reportsLoading}
+                  >
+                    + เพิ่มรอบ
+                  </button>
+                </span>
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-neutral-600">
                 <span>
