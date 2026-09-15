@@ -67,9 +67,13 @@ const THAI_MONTHS_FULL = [
   "ธันวาคม",
 ];
 
-function currentPeriod(): string {
+// Reports are issued for the previous month (e.g. in September you file August).
+function defaultPeriod(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const total = d.getFullYear() * 12 + d.getMonth() - 1;
+  const y = Math.floor(total / 12);
+  const m = (total % 12) + 1;
+  return `${y}-${String(m).padStart(2, "0")}`;
 }
 
 function shiftPeriod(period: string, delta: number): string {
@@ -103,7 +107,7 @@ function fmtMoney(n: number): string {
 export default function ReportsPage() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [clientId, setClientId] = useState("");
-  const [period, setPeriod] = useState(currentPeriod());
+  const [period, setPeriod] = useState(defaultPeriod());
   const [filings, setFilings] = useState<Filing[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(false);

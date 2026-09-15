@@ -459,7 +459,7 @@ class ReportRenderer {
     this.y -= 10;
   }
 
-  async drawFooters() {
+  async drawFooters(confidential = false) {
     const pages = this.doc.getPages();
     for (let i = 0; i < pages.length; i++) {
       const p = pages[i];
@@ -485,6 +485,17 @@ class ReportRenderer {
         { size: 8, color: COLOR_MUTED },
         p
       );
+      if (confidential) {
+        const note = "เอกสารลับเฉพาะสำหรับลูกค้า — ห้ามเผยแพร่";
+        const nw = this.measureText(note, 8, false);
+        await this.drawTextCanvas(
+          note,
+          (PAGE_W - nw) / 2,
+          M - 26,
+          { size: 8, color: COLOR_MUTED },
+          p
+        );
+      }
     }
   }
 }
@@ -1178,15 +1189,6 @@ async function drawCoverModern(
   r.y = totalTop - totalRowH - 10;
 
   await r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
-
-  r.y -= 6;
-  r.ensureSpace(20);
-  await r.text("เอกสารลับเฉพาะสำหรับลูกค้า — ห้ามเผยแพร่", {
-    size: 8,
-    color: COLOR_MUTED,
-    align: "center",
-    width: CONTENT_W,
-  });
 }
 
 function collectEvidenceItems(filings: SectionFiling[]): ReportAttachment[] {
@@ -1445,7 +1447,7 @@ export async function buildMonthlyReportPdf(
     await drawEvidencePages(r, filings);
     await drawDocumentPages(r, opts.documents ?? []);
   }
-  await r.drawFooters();
+  await r.drawFooters(style === "modern");
 
   return r.doc.save();
 }
