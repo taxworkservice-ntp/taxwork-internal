@@ -183,12 +183,16 @@ export default function ReportsPage() {
 
   useEffect(() => {
     (async () => {
-      const [codes, methods] = await Promise.all([
-        listCustomFormCodes(),
-        listCustomPaymentMethods(),
-      ]);
-      setCustomFormCodes(codes);
-      setCustomPayMethods(methods);
+      try {
+        const [codes, methods] = await Promise.all([
+          listCustomFormCodes(),
+          listCustomPaymentMethods(),
+        ]);
+        setCustomFormCodes(codes);
+        setCustomPayMethods(methods);
+      } catch (error) {
+        console.error("load presets failed:", error);
+      }
     })();
   }, []);
 
@@ -256,15 +260,22 @@ export default function ReportsPage() {
 
   useEffect(() => {
     (async () => {
-      const [clientRows, bankRows] = await Promise.all([
-        listActiveClients(),
-        listBankAccounts(),
-      ]);
-      const sorted = [...clientRows].sort((a, b) =>
-        a.name.localeCompare(b.name, "th")
-      );
-      setClients(sorted);
-      setBankAccounts(bankRows);
+      try {
+        const [clientRows, bankRows] = await Promise.all([
+          listActiveClients(),
+          listBankAccounts(),
+        ]);
+        const sorted = [...clientRows].sort((a, b) =>
+          a.name.localeCompare(b.name, "th")
+        );
+        setClients(sorted);
+        setBankAccounts(bankRows);
+      } catch (error) {
+        console.error("load clients/banks failed:", error);
+        setStatus(
+          `โหลดข้อมูลลูกค้า/บัญชีไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
+        );
+      }
     })();
   }, []);
 
@@ -335,13 +346,22 @@ export default function ReportsPage() {
 
   useEffect(() => {
     (async () => {
-      const data = await getAppSettings();
-      setLogoPath(data?.company_logo_path ?? null);
-      setLogoFileName(data?.company_logo_file_name ?? null);
-      setFirmName(data?.firm_name ?? "");
-      setPreparedBy(data?.prepared_by ?? "");
-      setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
-      setSettingsLoading(false);
+      try {
+        const data = await getAppSettings();
+        setLogoPath(data?.company_logo_path ?? null);
+        setLogoFileName(data?.company_logo_file_name ?? null);
+        setFirmName(data?.firm_name ?? "");
+        setPreparedBy(data?.prepared_by ?? "");
+        setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
+      } catch (error) {
+        console.error("load settings failed:", error);
+        setStatus(
+          `โหลดการตั้งค่ารายงานไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
+        );
+      } finally {
+        // Never leave the settings panel stuck on "กำลังโหลด...".
+        setSettingsLoading(false);
+      }
     })();
   }, []);
 
@@ -687,20 +707,33 @@ export default function ReportsPage() {
     }
   }
 
-  async function handleBankLogoUpload(bankId: string, file: File) {
-    setLogoBusyId(bankId);
+  type LogoSlot = "top" | "bottom";
+
+  async function handleBankLogoUpload(
+    bankId: string,
+    slot: LogoSlot,
+    file: File
+  ) {
+    setLogoBusyId(`${bankId}:${slot}`);
     try {
       const path = await uploadObject(file.name, file);
       const bank = bankAccounts.find((b) => b.id === bankId);
+      const oldPath = slot === "bottom" ? bank?.logo_bottom_path : bank?.logo_path;
       setBankAccounts((prev) =>
         prev.map((b) =>
           b.id === bankId
-            ? { ...b, logo_path: path, logo_mime_type: file.type || null }
+            ? slot === "bottom"
+              ? {
+                  ...b,
+                  logo_bottom_path: path,
+                  logo_bottom_mime_type: file.type || null,
+                }
+              : { ...b, logo_path: path, logo_mime_type: file.type || null }
             : b
         )
       );
-      await setBankLogo(bankId, path, file.type || null);
-      if (bank?.logo_path && bank.logo_path !== path) deleteR2Object(bank.logo_path);
+      await setBankLogo(bankId, slot, path, file.type || null);
+      if (oldPath && oldPath !== path) deleteR2Object(oldPath);
     } catch (err) {
       alert(`อัปโหลดโลโก้ธนาคารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       reloadBanks();
@@ -709,18 +742,27 @@ export default function ReportsPage() {
     }
   }
 
-  async function handleBankLogoRemove(bankId: string) {
+  async function handleBankLogoRemove(bankId: string, slot: LogoSlot) {
     const bank = bankAccounts.find((b) => b.id === bankId);
-    if (!bank?.logo_path || !confirm("ลบโลโก้ธนาคารของบัญชีนี้?")) return;
-    setLogoBusyId(bankId);
+    const oldPath = slot === "bottom" ? bank?.logo_bottom_path : bank?.logo_path;
+    if (
+      !oldPath ||
+      !confirm(`ลบโลโก้${slot === "bottom" ? "ล่าง" : "บน"}ของบัญชีนี้?`)
+    )
+      return;
+    setLogoBusyId(`${bankId}:${slot}`);
     try {
       setBankAccounts((prev) =>
         prev.map((b) =>
-          b.id === bankId ? { ...b, logo_path: null, logo_mime_type: null } : b
+          b.id === bankId
+            ? slot === "bottom"
+              ? { ...b, logo_bottom_path: null, logo_bottom_mime_type: null }
+              : { ...b, logo_path: null, logo_mime_type: null }
+            : b
         )
       );
-      await setBankLogo(bankId, null, null);
-      deleteR2Object(bank.logo_path);
+      await setBankLogo(bankId, slot, null, null);
+      deleteR2Object(oldPath);
     } finally {
       setLogoBusyId(null);
     }
@@ -737,14 +779,19 @@ export default function ReportsPage() {
     );
     const bankQrCache = new Map<string, ArrayBuffer | null>();
     const bankLogoCache = new Map<string, ArrayBuffer | null>();
+    const bankLogoBottomCache = new Map<string, ArrayBuffer | null>();
     for (const bankId of usedBanks) {
       const bank = bankAccounts.find((b) => b.id === bankId);
       // Logos are small — include them in previews too.
-      if (bank?.logo_path) {
+      for (const [path, cache] of [
+        [bank?.logo_path, bankLogoCache],
+        [bank?.logo_bottom_path, bankLogoBottomCache],
+      ] as const) {
+        if (!path) continue;
         try {
-          bankLogoCache.set(bankId, await fetchAttachmentBytes(bank.logo_path));
+          cache.set(bankId, await fetchAttachmentBytes(path));
         } catch {
-          bankLogoCache.set(bankId, null);
+          cache.set(bankId, null);
         }
       }
       if (preview) continue;
@@ -779,6 +826,7 @@ export default function ReportsPage() {
               promptpay_id: ba.promptpay_id,
               qr_bytes: bankQrCache.get(ba.id) ?? null,
               logo_bytes: bankLogoCache.get(ba.id) ?? null,
+              logo_bottom_bytes: bankLogoBottomCache.get(ba.id) ?? null,
             }
           : null,
         attachments: [],
@@ -1377,7 +1425,7 @@ export default function ReportsPage() {
                         <th>ชื่อบัญชี</th>
                         <th>PromptPay</th>
                         <th>QR สำหรับสแกนจ่าย</th>
-                        <th>โลโก้ธนาคาร</th>
+                        <th>โลโก้ บน/ล่าง</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -1421,35 +1469,53 @@ export default function ReportsPage() {
                             )}
                           </td>
                           <td>
-                            {b.logo_path ? (
-                              <span className="inline-flex items-center gap-1 rounded bg-neutral-100 px-1.5 py-0.5 text-xs">
-                                โลโก้
-                                <button
-                                  className="text-red-500 hover:text-red-700"
-                                  aria-label="ลบโลโก้ธนาคาร"
-                                  onClick={() => handleBankLogoRemove(b.id)}
-                                  disabled={logoBusyId === b.id}
-                                >
-                                  ✕
-                                </button>
-                              </span>
-                            ) : (
-                              <label className="btn inline-flex cursor-pointer text-xs">
-                                {logoBusyId === b.id ? "..." : "+โลโก้"}
-                                <input
-                                  type="file"
-                                  accept="image/png,image/jpeg"
-                                  className="hidden"
-                                  disabled={logoBusyId === b.id}
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (!file) return;
-                                    handleBankLogoUpload(b.id, file);
-                                    e.target.value = "";
-                                  }}
-                                />
-                              </label>
-                            )}
+                            <div className="flex flex-col items-start gap-1">
+                              {(["top", "bottom"] as const).map((slot) => {
+                                const path =
+                                  slot === "bottom"
+                                    ? b.logo_bottom_path
+                                    : b.logo_path;
+                                const busy = logoBusyId === `${b.id}:${slot}`;
+                                const label = slot === "bottom" ? "ล่าง" : "บน";
+                                return path ? (
+                                  <span
+                                    key={slot}
+                                    className="inline-flex items-center gap-1 rounded bg-neutral-100 px-1.5 py-0.5 text-xs"
+                                  >
+                                    {label}
+                                    <button
+                                      className="text-red-500 hover:text-red-700"
+                                      aria-label={`ลบโลโก้${label}`}
+                                      onClick={() =>
+                                        handleBankLogoRemove(b.id, slot)
+                                      }
+                                      disabled={busy}
+                                    >
+                                      ✕
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <label
+                                    key={slot}
+                                    className="btn inline-flex cursor-pointer text-xs"
+                                  >
+                                    {busy ? "..." : `+${label}`}
+                                    <input
+                                      type="file"
+                                      accept="image/png,image/jpeg"
+                                      className="hidden"
+                                      disabled={busy}
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (!file) return;
+                                        handleBankLogoUpload(b.id, slot, file);
+                                        e.target.value = "";
+                                      }}
+                                    />
+                                  </label>
+                                );
+                              })}
+                            </div>
                           </td>
                           <td className="text-right">
                             <button

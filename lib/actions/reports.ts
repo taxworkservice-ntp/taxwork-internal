@@ -25,6 +25,8 @@ export type BankAccount = {
   qr_mime_type: string | null;
   logo_path: string | null;
   logo_mime_type: string | null;
+  logo_bottom_path: string | null;
+  logo_bottom_mime_type: string | null;
 };
 
 export type Attachment = {
@@ -491,11 +493,16 @@ export async function setBankQr(bankId: string, path: string | null): Promise<vo
 
 export async function setBankLogo(
   bankId: string,
+  slot: "top" | "bottom",
   path: string | null,
   mimeType: string | null
 ): Promise<void> {
   await requireUser();
-  await sql`update bank_accounts set logo_path=${path}, logo_mime_type=${mimeType} where id=${bankId}`;
+  if (slot === "bottom") {
+    await sql`update bank_accounts set logo_bottom_path=${path}, logo_bottom_mime_type=${mimeType} where id=${bankId}`;
+  } else {
+    await sql`update bank_accounts set logo_path=${path}, logo_mime_type=${mimeType} where id=${bankId}`;
+  }
 }
 
 export async function recordReportFile(

@@ -52,6 +52,7 @@ export type ReportBankAccount = {
   promptpay_id: string | null;
   qr_bytes?: ArrayBuffer | null;
   logo_bytes?: ArrayBuffer | null;
+  logo_bottom_bytes?: ArrayBuffer | null;
 };
 
 export type ReportAttachment = {
@@ -1067,21 +1068,20 @@ async function drawCoverModern(
     const itemText = f.form_code?.trim() || "-";
     const detText = f.description?.trim() || "-";
 
-    // Optional bank logo shown after the payment-method text.
-    let logoImg: PDFImage | null = null;
-    let logoW = 0;
-    let logoH = 0;
-    const logoBytes = f.bank_account?.logo_bytes;
-    if (logoBytes) {
-      const img = await r.embedBankLogo(logoBytes);
-      if (img && img.width > 0 && img.height > 0) {
-        logoImg = img;
-        logoH = 11;
-        logoW = Math.min((img.width / img.height) * logoH, 32);
-        logoH = logoW / (img.width / img.height);
-      }
-    }
-    const methWrapW = methW - 12 - (logoImg ? logoW + 4 : 0);
+    // Bank logos: "บน" renders on the first method line (bank name) and
+    // "ล่าง" on the second (account number).
+    const embedLogo = async (bytes?: ArrayBuffer | null) => {
+      if (!bytes) return null;
+      const img = await r.embedBankLogo(bytes);
+      if (!img || !img.width || !img.height) return null;
+      const h = 11;
+      const w = Math.min((img.width / img.height) * h, 32);
+      return { img, w, h: w / (img.width / img.height) };
+    };
+    const topLogo = await embedLogo(f.bank_account?.logo_bytes);
+    const bottomLogo = await embedLogo(f.bank_account?.logo_bottom_bytes);
+    const maxLogoW = Math.max(topLogo?.w ?? 0, bottomLogo?.w ?? 0);
+    const methWrapW = methW - 12 - (maxLogoW ? maxLogoW + 4 : 0);
 
     const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 12);
     const linesDet = wrapText(detText, (s) => r.measureText(s, fontSize, false), detW - 12);
@@ -1126,16 +1126,22 @@ async function drawCoverModern(
         size: fontSize,
       });
     }
-    if (logoImg) {
-      const lastBaseline = top - 13 - (methLines.length - 1) * lh;
-      if (!r.sim)
-        r.page.drawImage(logoImg, {
-          x: methX + methW - 6 - logoW,
-          y: lastBaseline - logoH / 2 + 3,
-          width: logoW,
-          height: logoH,
-        });
-    }
+    const drawMethodLogo = (
+      logo: { img: PDFImage; w: number; h: number } | null,
+      lineIdx: number
+    ) => {
+      if (!logo || r.sim) return;
+      const idx = Math.min(lineIdx, methLines.length - 1);
+      const baseline = top - 13 - idx * lh;
+      r.page.drawImage(logo.img, {
+        x: methX + methW - 6 - logo.w,
+        y: baseline - logo.h / 2 + 3,
+        width: logo.w,
+        height: logo.h,
+      });
+    };
+    drawMethodLogo(topLogo, 0);
+    drawMethodLogo(bottomLogo, 1);
     if (!r.sim)
       r.page.drawLine({
         start: { x: M, y: top - rowH },
