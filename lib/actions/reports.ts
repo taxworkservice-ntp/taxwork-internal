@@ -23,6 +23,8 @@ export type BankAccount = {
   promptpay_id: string | null;
   qr_path: string | null;
   qr_mime_type: string | null;
+  logo_path: string | null;
+  logo_mime_type: string | null;
 };
 
 export type Attachment = {
@@ -223,11 +225,12 @@ export type AppSettings = {
   firm_name: string | null;
   brand_color: string | null;
   cover_style: string | null;
+  prepared_by: string | null;
 };
 
 export async function getAppSettings(): Promise<AppSettings | null> {
   await requireUser();
-  const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style from app_settings where id=1`) as AppSettings[];
+  const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as AppSettings[];
   return rows[0] ?? null;
 }
 
@@ -242,12 +245,13 @@ export async function saveReportBranding(input: {
   firmName: string | null;
   brandColor: string | null;
   coverStyle: string;
+  preparedBy?: string | null;
 }): Promise<void> {
   await requireUser();
   const coverStyle = input.coverStyle === "classic" ? "classic" : "modern";
-  await sql`insert into app_settings (id, firm_name, brand_color, cover_style, updated_at)
-    values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${new Date().toISOString()})
-    on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, updated_at=${new Date().toISOString()}`;
+  await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
+    values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${new Date().toISOString()})
+    on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${new Date().toISOString()}`;
 }
 
 export type FilingInput = {
@@ -483,6 +487,15 @@ export async function deleteBankAccount(id: string): Promise<void> {
 export async function setBankQr(bankId: string, path: string | null): Promise<void> {
   await requireUser();
   await sql`update bank_accounts set qr_path=${path} where id=${bankId}`;
+}
+
+export async function setBankLogo(
+  bankId: string,
+  path: string | null,
+  mimeType: string | null
+): Promise<void> {
+  await requireUser();
+  await sql`update bank_accounts set logo_path=${path}, logo_mime_type=${mimeType} where id=${bankId}`;
 }
 
 export async function recordReportFile(

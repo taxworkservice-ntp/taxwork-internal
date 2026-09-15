@@ -3,7 +3,7 @@
 -- Filings and saved report files reference their round. Additive and nullable,
 -- so legacy code paths keep working (report_id NULL = legacy period-only).
 
-create table monthly_reports (
+create table if not exists monthly_reports (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references clients(id) on delete cascade,
   period_label text not null,
@@ -58,5 +58,13 @@ create index if not exists monthly_filings_report_idx on monthly_filings (report
 create index if not exists files_report_idx on files (report_id);
 
 alter table monthly_reports enable row level security;
-create policy "authenticated all monthly_reports" on monthly_reports
-  for all to authenticated using (true) with check (true);
+
+-- Policy only where the Supabase-style "authenticated" role exists (plain
+-- Neon has no such role; the app connects as the owner and bypasses RLS).
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    execute 'create policy "authenticated all monthly_reports" on monthly_reports
+      for all to authenticated using (true) with check (true)';
+  end if;
+end $$;
