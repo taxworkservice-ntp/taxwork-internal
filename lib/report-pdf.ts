@@ -101,19 +101,14 @@ const COLOR_MUTED = rgb(0.45, 0.45, 0.5);
 const COLOR_BORDER = rgb(0.82, 0.82, 0.85);
 const COLOR_HEADER_BG = rgb(0.93, 0.94, 0.96);
 const COLOR_WHITE = rgb(1, 1, 1);
-const COLOR_ACCENT_FALLBACK = rgb(0.1, 0.16, 0.3);
-const COLOR_MASTHEAD_SUB = rgb(0.85, 0.88, 0.95);
+// Monochrome palette for the modern (print-friendly) cover.
+const COLOR_INK = rgb(0.14, 0.14, 0.16);
+const COLOR_PANEL = rgb(0.97, 0.97, 0.97);
+const COLOR_PANEL_ALT = rgb(0.955, 0.955, 0.96);
+const COLOR_ZEBRA = rgb(0.95, 0.95, 0.95);
+const COLOR_TOTAL_BG = rgb(0.86, 0.86, 0.86);
 
 export type CoverStyle = "modern" | "classic";
-
-/** Parse "#rrggbb" (with or without leading #) into a pdf-lib color. */
-function hexToRgb(hex: string | null | undefined, fallback: Color): Color {
-  if (!hex) return fallback;
-  const m = hex.trim().match(/^#?([0-9a-fA-F]{6})$/);
-  if (!m) return fallback;
-  const v = parseInt(m[1], 16);
-  return rgb(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255);
-}
 
 function resolveCoverStyle(opts: BuildOptions): CoverStyle {
   const env = process.env.NEXT_PUBLIC_REPORT_COVER_STYLE;
@@ -788,25 +783,15 @@ async function drawCoverModern(
 ) {
   const periodTh = periodToThai(opts.periodLabel);
   const firmName = opts.firmName?.trim() || "Taxwork";
-  const accent = hexToRgb(opts.accentColor, COLOR_ACCENT_FALLBACK);
   const reportNo =
     opts.reportNo?.trim() || `TW-${opts.periodLabel.replace(/[^0-9]/g, "")}`;
   const reportDate = opts.issueDate?.trim() || todayThaiDate();
   const preparedBy = opts.preparedBy?.trim() || firmName;
+  const reportLabel = opts.reportLabel?.trim() || "";
 
-  // ---- Masthead band (full bleed) ----
-  const bandH = 96;
-  const bandTop = PAGE_H;
-  if (!r.sim)
-    r.page.drawRectangle({
-      x: 0,
-      y: bandTop - bandH,
-      width: PAGE_W,
-      height: bandH,
-      color: accent,
-    });
-
-  let textX = M;
+  // ---- Letterhead: centered logo on a white band ----
+  const letterheadTop = PAGE_H - 36;
+  let letterheadBottom = letterheadTop;
   if (opts.logo?.bytes) {
     const view = new Uint8Array(opts.logo.bytes);
     try {
@@ -816,8 +801,8 @@ async function drawCoverModern(
           ? await r.doc.embedJpg(opts.logo.bytes)
           : null;
       if (img) {
-        const maxLogoH = 52;
-        const maxLogoW = 150;
+        const maxLogoH = 72;
+        const maxLogoW = 220;
         let lw = maxLogoW;
         let lh = (img.height / img.width) * lw;
         if (lh > maxLogoH) {
@@ -826,42 +811,49 @@ async function drawCoverModern(
         }
         if (!r.sim)
           r.page.drawImage(img, {
-            x: M,
-            y: bandTop - bandH / 2 - lh / 2,
+            x: (PAGE_W - lw) / 2,
+            y: letterheadTop - lh,
             width: lw,
             height: lh,
           });
-        textX = M + lw + 16;
+        letterheadBottom = letterheadTop - lh;
       }
     } catch {
       // ignore invalid logo
     }
   }
 
-  await r.drawTextCanvas(firmName, textX, bandTop - 42, {
-    size: 17,
+  r.y = letterheadBottom - 20;
+  if (!r.sim)
+    r.page.drawLine({
+      start: { x: M, y: r.y },
+      end: { x: PAGE_W - M, y: r.y },
+      thickness: 1,
+      color: COLOR_INK,
+    });
+  r.y -= 28;
+
+  // ---- Title (centered) ----
+  const titleText = `รายงานงานภาษีประจำเดือน ${periodTh}${
+    reportLabel ? ` (${reportLabel})` : ""
+  }`;
+  await r.text(titleText, {
+    size: 16,
     bold: true,
-    color: COLOR_WHITE,
+    align: "center",
+    width: CONTENT_W,
   });
-  await r.drawTextCanvas("รายงานภาษีรายเดือน", textX, bandTop - 61, {
-    size: 10.5,
-    color: COLOR_MASTHEAD_SUB,
-  });
-
-  r.y = bandTop - bandH - 30;
-
-  // ---- Title ----
-  await r.text(`รายงานงานภาษีประจำเดือน ${periodTh}`, { size: 16, bold: true });
-  r.y -= 4;
+  r.y -= 6;
+  const underlineW = 96;
   if (!r.sim)
     r.page.drawRectangle({
-      x: M,
+      x: M + (CONTENT_W - underlineW) / 2,
       y: r.y - 3,
-      width: 92,
-      height: 3,
-      color: accent,
+      width: underlineW,
+      height: 2.5,
+      color: COLOR_INK,
     });
-  r.y -= 20;
+  r.y -= 22;
 
   // ---- Client card ----
   const contactLine = [opts.client.phone, opts.client.email]
@@ -891,11 +883,9 @@ async function drawCoverModern(
       y: cardTop - cardH,
       width: CONTENT_W,
       height: cardH,
-      color: accent,
-      opacity: 0.06,
-      borderColor: accent,
+      color: COLOR_PANEL,
+      borderColor: COLOR_BORDER,
       borderWidth: 0.8,
-      borderOpacity: 0.35,
     });
   let cy = cardTop - cardPadY - 11;
   await r.drawTextCanvas(opts.client.name, M + cardPadX, cy, {
@@ -931,6 +921,7 @@ async function drawCoverModern(
     ["วันที่ออกเอกสาร", reportDate],
     ["ผู้จัดทำ", preparedBy],
   ];
+  if (reportLabel) metaItems.push(["ครั้งที่", reportLabel]);
   const colW = CONTENT_W / 2;
   const rowH = 36;
   const gridRows = Math.ceil(metaItems.length / 2);
@@ -942,8 +933,7 @@ async function drawCoverModern(
       y: gridTop - gridH,
       width: CONTENT_W,
       height: gridH,
-      color: accent,
-      opacity: 0.04,
+      color: COLOR_PANEL_ALT,
       borderColor: COLOR_BORDER,
       borderWidth: 0.6,
     });
@@ -1000,7 +990,7 @@ async function drawCoverModern(
         y: r.y - headerH,
         width: CONTENT_W,
         height: headerH,
-        color: accent,
+        color: COLOR_INK,
       });
     const baseline = r.y - 16;
     await r.drawTextCanvas("ลำดับ", idxX + 6, baseline, {
@@ -1061,8 +1051,7 @@ async function drawCoverModern(
         y: top - rowH,
         width: CONTENT_W,
         height: rowH,
-        color: accent,
-        opacity: 0.05,
+        color: COLOR_ZEBRA,
       });
     await r.drawTextCanvas(String(i + 1), idxX + 6, top - 14, {
       size: fontSize,
@@ -1107,8 +1096,7 @@ async function drawCoverModern(
       y: totalTop - totalRowH,
       width: CONTENT_W,
       height: totalRowH,
-      color: accent,
-      opacity: 0.14,
+      color: COLOR_TOTAL_BG,
     });
   const totalLabel = "ยอดรวมทั้งสิ้น";
   await r.drawTextCanvas(totalLabel, itemX + 6, totalTop - 17, {
@@ -1274,10 +1262,10 @@ type BuildOptions = {
   documents?: ReportDocument[];
   /** Cover design. "classic" keeps the original grayscale cover for rollback. */
   coverStyle?: CoverStyle;
-  /** Accent hex color, e.g. "#1e3a8a". Falls back to a neutral navy. */
-  accentColor?: string | null;
   /** Report number shown in the cover meta grid. Derived from period if omitted. */
   reportNo?: string;
+  /** Round label, e.g. "ครั้งที่ 2", shown in the title and meta grid. */
+  reportLabel?: string;
   /** Issue date shown in the cover meta grid. Defaults to today (พ.ศ.). */
   issueDate?: string;
   /** Preparer shown in the cover meta grid. Defaults to the firm name. */

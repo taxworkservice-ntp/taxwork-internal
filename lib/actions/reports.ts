@@ -2,6 +2,7 @@
 
 import { sql } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { generatePublicId } from "@/lib/ids";
 import { buildUpdate, num } from "./db-helpers";
 
 export type ClientRow = {
@@ -39,6 +40,7 @@ export type Attachment = {
 export type Filing = {
   id: string;
   client_id: string;
+  report_id: string | null;
   period_label: string;
   form_code: string;
   description: string | null;
@@ -50,6 +52,19 @@ export type Filing = {
   sort_order: number;
   created_at?: string;
   filing_attachments: Attachment[];
+};
+
+export type MonthlyReport = {
+  id: string;
+  client_id: string;
+  period_label: string;
+  seq: number;
+  report_no: string | null;
+  public_id: string;
+  label: string | null;
+  status: "draft" | "issued";
+  issued_at: string | null;
+  created_at: string;
 };
 
 function str(v: unknown): string {
@@ -81,6 +96,44 @@ function toFiling(r: Record<string, unknown>, attachments: Attachment[] = []): F
     created_at: f.created_at == null ? undefined : str(f.created_at),
     filing_attachments: attachments,
   };
+}
+
+function toReport(r: Record<string, unknown>): MonthlyReport {
+  const m = r as unknown as MonthlyReport;
+  return {
+    ...m,
+    seq: num(m.seq),
+    issued_at: m.issued_at == null ? null : str(m.issued_at),
+    created_at: str(m.created_at),
+  };
+}
+
+/** Formal number: TW-{YYMM พ.ศ.}-{NN}, e.g. period "2026-08", seq 2 -> "TW-6908-02". */
+function buildReportNo(periodLabel: string, seq: number): string {
+  const nn = String(seq).padStart(2, "0");
+  const m = periodLabel.match(/^(\d{4})-(\d{2})/);
+  if (!m) return `TW-${periodLabel}-${nn}`;
+  const yy = String((Number(m[1]) + 543) % 100).padStart(2, "0");
+  return `TW-${yy}${m[2]}-${nn}`;
+}
+
+async function assertReportEditable(
+  reportId: string | null | undefined
+): Promise<void> {
+  if (!reportId) return; // legacy filing without a round stays editable
+  const rows = (await sql`select status from monthly_reports where id=${reportId}`) as {
+    status: string;
+  }[];
+  if (rows[0]?.status === "issued") {
+    throw new Error("รายงานฉบับนี้ออกแล้ว ไม่สามารถแก้ไขได้");
+  }
+}
+
+async function assertFilingEditable(filingId: string): Promise<void> {
+  const rows = (await sql`select report_id from monthly_filings where id=${filingId}`) as {
+    report_id: string | null;
+  }[];
+  await assertReportEditable(rows[0]?.report_id ?? null);
 }
 
 export async function listCustomFormCodes(): Promise<string[]> {
@@ -124,11 +177,19 @@ export async function listBankAccounts(): Promise<BankAccount[]> {
   return (await sql`select * from bank_accounts order by created_at`) as BankAccount[];
 }
 
-export async function loadFilings(clientId: string, period: string): Promise<Filing[]> {
+export async function loadFilings(
+  clientId: string,
+  period: string,
+  reportId?: string | null
+): Promise<Filing[]> {
   await requireUser();
-  const filings = (await sql`select * from monthly_filings
-    where client_id=${clientId} and period_label=${period}
-    order by sort_order, created_at`) as Record<string, unknown>[];
+  const filings = reportId
+    ? ((await sql`select * from monthly_filings
+        where report_id=${reportId}
+        order by sort_order, created_at`) as Record<string, unknown>[])
+    : ((await sql`select * from monthly_filings
+        where client_id=${clientId} and period_label=${period}
+        order by sort_order, created_at`) as Record<string, unknown>[]);
   if (!filings.length) return [];
   const ids = filings.map((f) => (f as { id: string }).id);
   const atts = (await sql.query(
@@ -199,15 +260,96 @@ export type FilingInput = {
   sort_order?: number;
 };
 
-export async function copyMonthFilings(clientId: string, fromPeriod: string, toPeriod: string): Promise<Filing[]> {
+export async function listMonthlyReports(
+  clientId: string,
+  period: string
+): Promise<MonthlyReport[]> {
   await requireUser();
+  const rows = (await sql`select * from monthly_reports
+    where client_id=${clientId} and period_label=${period}
+    order by seq`) as Record<string, unknown>[];
+  return rows.map(toReport);
+}
+
+export async function createMonthlyReport(
+  clientId: string,
+  period: string
+): Promise<MonthlyReport> {
+  await requireUser();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const maxRow = (await sql`select coalesce(max(seq),0)::int as m from monthly_reports
+      where client_id=${clientId} and period_label=${period}`) as { m: number }[];
+    const seq = (maxRow[0]?.m ?? 0) + 1;
+    try {
+      const rows = (await sql`insert into monthly_reports (client_id, period_label, seq, report_no, public_id, label)
+        values (${clientId}, ${period}, ${seq}, ${buildReportNo(period, seq)}, ${generatePublicId()}, ${`ครั้งที่ ${seq}`})
+        returning *`) as Record<string, unknown>[];
+      if (rows[0]) return toReport(rows[0]);
+    } catch (err) {
+      // unique collision on (client, period, seq) or public_id — retry
+      if (attempt === 4) throw err;
+    }
+  }
+  throw new Error("สร้างรายงานไม่สำเร็จ");
+}
+
+const REPORT_EDITABLE = ["label", "report_no", "status", "issued_at"];
+
+export async function patchMonthlyReport(
+  id: string,
+  patch: Partial<Pick<MonthlyReport, "label" | "report_no" | "status" | "issued_at">>
+): Promise<void> {
+  await requireUser();
+  const { text, params } = buildUpdate(
+    "monthly_reports",
+    id,
+    { ...patch } as Record<string, unknown>,
+    REPORT_EDITABLE
+  );
+  await sql.query(text, params);
+}
+
+export async function issueMonthlyReport(id: string): Promise<void> {
+  await requireUser();
+  const rows = (await sql`select period_label, seq, report_no from monthly_reports where id=${id}`) as {
+    period_label: string;
+    seq: number;
+    report_no: string | null;
+  }[];
+  if (!rows[0]) throw new Error("ไม่พบรายงาน");
+  const reportNo = rows[0].report_no ?? buildReportNo(rows[0].period_label, rows[0].seq);
+  await sql`update monthly_reports
+    set status='issued', issued_at=${new Date().toISOString()}, report_no=${reportNo}
+    where id=${id}`;
+}
+
+export async function reopenMonthlyReport(id: string): Promise<void> {
+  await requireUser();
+  await sql`update monthly_reports set status='draft', issued_at=null where id=${id}`;
+}
+
+export async function deleteMonthlyReport(id: string): Promise<void> {
+  await requireUser();
+  await sql`delete from monthly_reports where id=${id}`;
+}
+
+export async function copyReportToNewIssue(
+  sourceReportId: string,
+  targetClientId: string,
+  targetPeriod: string
+): Promise<Filing[]> {
+  await requireUser();
+  const src = (await sql`select id from monthly_reports where id=${sourceReportId}`) as {
+    id: string;
+  }[];
+  if (!src[0]) return [];
   const prev = (await sql`select form_code, description, amount, due_date, payment_method, bank_account_id, sort_order
-    from monthly_filings where client_id=${clientId} and period_label=${fromPeriod}
+    from monthly_filings where report_id=${sourceReportId}
     order by sort_order, created_at`) as Record<string, unknown>[];
   if (!prev.length) return [];
-  const maxRow = (await sql`select coalesce(max(sort_order),0)::int as m from monthly_filings
-    where client_id=${clientId} and period_label=${toPeriod}`) as { m: number }[];
-  const maxSort = maxRow[0]?.m ?? 0;
+
+  const target = await createMonthlyReport(targetClientId, targetPeriod);
+
   const shiftMonth = (ymd: string): string | null => {
     const m = ymd.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return null;
@@ -221,31 +363,51 @@ export async function copyMonthFilings(clientId: string, fromPeriod: string, toP
   };
   const values: unknown[] = [];
   const groups = prev.map((f, i) => {
-    const r = f as { form_code: string; description: string | null; amount: unknown; due_date: unknown; payment_method: string | null; bank_account_id: string | null; sort_order: unknown };
+    const r = f as {
+      form_code: string;
+      description: string | null;
+      amount: unknown;
+      due_date: unknown;
+      payment_method: string | null;
+      bank_account_id: string | null;
+      sort_order: unknown;
+    };
     const base = values.length;
     values.push(
-      clientId, toPeriod, r.form_code, r.description, num(r.amount),
+      targetClientId,
+      targetPeriod,
+      target.id,
+      r.form_code,
+      r.description,
+      num(r.amount),
       r.due_date == null ? null : shiftMonth(str(r.due_date)),
       r.payment_method ?? null,
-      r.bank_account_id, maxSort + i + 1
+      r.bank_account_id,
+      i + 1
     );
     const ph = (k: number) => `$${base + k + 1}`;
-    return `(${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(ph).join(",")})`;
+    return `(${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(ph).join(",")})`;
   });
   const inserted = (await sql.query(
-    `insert into monthly_filings (client_id, period_label, form_code, description, amount, due_date, payment_method, bank_account_id, sort_order)
+    `insert into monthly_filings (client_id, period_label, report_id, form_code, description, amount, due_date, payment_method, bank_account_id, sort_order)
      values ${groups.join(",")} returning *`,
     values
   )) as Record<string, unknown>[];
   return inserted.map((f) => toFiling(f, []));
 }
 
-export async function addFiling(clientId: string, period: string, input: FilingInput): Promise<Filing> {
+export async function addFiling(
+  clientId: string,
+  period: string,
+  reportId: string,
+  input: FilingInput
+): Promise<Filing> {
   await requireUser();
+  await assertReportEditable(reportId);
   const maxRow = (await sql`select coalesce(max(sort_order),0)::int as m from monthly_filings
-    where client_id=${clientId} and period_label=${period}`) as { m: number }[];
-  const rows = (await sql`insert into monthly_filings (client_id, period_label, form_code, description, amount, due_date, payment_method, sort_order)
-    values (${clientId}, ${period}, ${input.form_code}, ${input.description}, ${input.amount}, ${input.due_date}, ${input.payment_method ?? null}, ${(maxRow[0]?.m ?? 0) + 1})
+    where report_id=${reportId}`) as { m: number }[];
+  const rows = (await sql`insert into monthly_filings (client_id, period_label, report_id, form_code, description, amount, due_date, payment_method, sort_order)
+    values (${clientId}, ${period}, ${reportId}, ${input.form_code}, ${input.description}, ${input.amount}, ${input.due_date}, ${input.payment_method ?? null}, ${(maxRow[0]?.m ?? 0) + 1})
     returning *`) as Record<string, unknown>[];
   if (!rows[0]) throw new Error("Insert failed");
   return toFiling(rows[0], []);
@@ -255,6 +417,7 @@ const FILING_EDITABLE = ["form_code", "description", "amount", "due_date", "paym
 
 export async function patchFiling(id: string, patch: Partial<Filing>): Promise<void> {
   await requireUser();
+  await assertFilingEditable(id);
   const p = { ...(patch as Record<string, unknown>) };
   if ("amount" in p) p.amount = num(p.amount);
   const { text, params } = buildUpdate("monthly_filings", id, p, FILING_EDITABLE);
@@ -263,12 +426,14 @@ export async function patchFiling(id: string, patch: Partial<Filing>): Promise<v
 
 export async function deleteFiling(id: string): Promise<void> {
   await requireUser();
+  await assertFilingEditable(id);
   await sql`delete from monthly_filings where id=${id}`;
 }
 
-export async function clearFilings(clientId: string, period: string): Promise<void> {
+export async function clearFilings(reportId: string): Promise<void> {
   await requireUser();
-  await sql`delete from monthly_filings where client_id=${clientId} and period_label=${period}`;
+  await assertReportEditable(reportId);
+  await sql`delete from monthly_filings where report_id=${reportId}`;
 }
 
 export async function addAttachment(
@@ -322,11 +487,12 @@ export async function setBankQr(bankId: string, path: string | null): Promise<vo
 
 export async function recordReportFile(
   clientId: string,
+  reportId: string,
   storage_path: string,
   file_name: string,
   size_bytes: number
 ): Promise<void> {
   const user = await requireUser();
-  await sql`insert into files (client_id, storage_path, file_name, size_bytes, mime_type, category, uploaded_by)
-    values (${clientId}, ${storage_path}, ${file_name}, ${size_bytes}, 'application/pdf', 'monthly-report', ${user.email})`;
+  await sql`insert into files (client_id, report_id, storage_path, file_name, size_bytes, mime_type, category, uploaded_by)
+    values (${clientId}, ${reportId}, ${storage_path}, ${file_name}, ${size_bytes}, 'application/pdf', 'monthly-report', ${user.email})`;
 }

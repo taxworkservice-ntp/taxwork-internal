@@ -106,7 +106,8 @@ task_instances id, template_id → templates (CASCADE), client_id, title,
 bank_accounts id, label (e.g. "MyServices"), bank_name, account_no,
               account_name, promptpay_id (nullable), created_at
 
-monthly_filings id, client_id → clients (CASCADE), period_label ("2026-08"),
+monthly_filings id, client_id → clients (CASCADE), report_id → monthly_reports (CASCADE, nullable = legacy),
+              period_label ("2026-08"),
               form_code (free text w/ presets like ภ.พ.30 / ภ.ง.ด.1),
               description, amount numeric(12,2), due_date date,
               bank_account_id → bank_accounts (nullable = show invoice block in PDF),
@@ -115,6 +116,14 @@ monthly_filings id, client_id → clients (CASCADE), period_label ("2026-08"),
 filing_attachments id, filing_id → monthly_filings (CASCADE),
               kind ('slip'|'qr'|'document'), storage_path (R2 under {clientId}/),
               file_name, size_bytes, mime_type, created_at
+
+monthly_reports id, client_id → clients (CASCADE), period_label ("2026-08"),
+              seq (round ครั้งที่ N), report_no ("TW-6908-01", TW-{YYMM พ.ศ.}-{NN}),
+              public_id (short random key used in filenames/storage), label,
+              status ('draft'|'issued'), issued_at, created_at,
+              UNIQUE(client_id, period_label, seq)
+
+files.report_id → monthly_reports (SET NULL; set for monthly-report copies)
 ```
 
 - **RLS enabled on every table**: all policies are simply `to authenticated using (true)`.
@@ -128,7 +137,8 @@ filing_attachments id, filing_id → monthly_filings (CASCADE),
 - **Hard-confirm deletes**: deleting a client or contact requires typing its exact name; final button stays disabled until match. Deleting a client cascades credentials/files/tasks.
 - **Task generation**: `generateDueTasks()` runs from the Tasks page button. It upserts instances keyed on `(template_id, period_label)` with `ignoreDuplicates` — safe to run repeatedly. Annual templates check windows starting current AND previous year. Due day clamps to last day of period (e.g. day 31 → Feb 28).
 - **Task status cycles** on click: รอทำ → กำลังทำ → เสร็จแล้ว → ข้าม.
-- **Monthly report flow** (Reports page): pick client + month → add filing rows (form code, amount, due date) → attach slip/QR/document images or PDFs per row (uploaded to R2 via the same presign flow, stored in `filing_attachments`) → optionally link a bank account for service-fee rows (renders an invoice-style block) → "สร้างรายงาน PDF" builds the client-facing PDF entirely in-browser (Sarabun embedded), downloads it, and saves a copy to R2 + `files` table with `category: 'monthly-report'`. Unsupported image types (webp/gif) are skipped with a note in the PDF; PNG/JPG and PDF attachments are embedded.
+- **Monthly report flow** (Reports page): pick client + month → choose/create a **round (ครั้งที่ N)** — a client+month can have several (`monthly_reports`, unique per `seq`) → add filing rows (form code, amount, payment method) scoped to the round → attach documents in "ส่วนที่ 2" (ordered, appended after the cover) → optionally link a bank account for service-fee rows → **ดูตัวอย่างปก** previews the actual cover-only PDF in a modal → "ดาวน์โหลด PDF" builds the client-facing PDF entirely in-browser (Sarabun embedded), downloads it, and saves a copy to R2 + `files` (`category: 'monthly-report'`, with `report_id`). Report number is `TW-{YYMM พ.ศ.}-{NN}` (see `buildReportNo`), plus a random `public_id` for filenames/storage. A round can be **issued** (locked, no edits until reopened) or left as draft. Copying from a past month creates a new round here. PDFs are generated with `buildMonthlyReportPdf`; the cover design is switchable (`cover_style` = `modern` | `classic`, or `NEXT_PUBLIC_REPORT_COVER_STYLE`) so the legacy cover remains available.
+- **Unsupported image types** (webp/gif) in the report are skipped with a note in the PDF; PNG/JPG and PDF attachments are embedded.
 - **Sort persistence**: list pages store sort state in `localStorage` (`clients.sort`, `contacts.sort`); Thai-aware `localeCompare(..., "th")`.
 - **Tables never overlap**: cells use flex + `min-w-0` + `truncate`; tables wrapped in `overflow-x-auto` with `min-w-[...]` under `table-fixed`.
 - **Mobile-first responsive**: fixed bottom tab bar (icons + labels) below `md:`; sidebar only on desktop; forms collapse to 1 column below `sm:`; content padded above/below fixed chrome; sign-out button fixed top-right on mobile.

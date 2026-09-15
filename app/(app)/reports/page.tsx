@@ -5,26 +5,32 @@ import {
   addBankAccount as addBankAccountAction,
   addFiling as addFilingAction,
   clearFilings,
-  copyMonthFilings,
+  copyReportToNewIssue,
+  createMonthlyReport,
+  deleteMonthlyReport,
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
   getAppSettings,
   deleteCustomPaymentMethod as deleteCustomPaymentMethodAction,
+  issueMonthlyReport,
   listActiveClients,
   listBankAccounts,
   listCustomFormCodes,
   listCustomPaymentMethods,
+  listMonthlyReports,
   loadFilings as loadFilingsAction,
   patchFiling as patchFilingAction,
   recordReportFile,
   rememberFormCode as rememberFormCodeAction,
   rememberPaymentMethod as rememberPaymentMethodAction,
+  reopenMonthlyReport,
   saveAppSettings,
   saveReportBranding,
   setBankQr,
   type BankAccount,
   type ClientRow,
   type Filing,
+  type MonthlyReport,
 } from "@/lib/actions/reports";
 import {
   buildMonthlyReportPdf,
@@ -101,6 +107,10 @@ export default function ReportsPage() {
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [reports, setReports] = useState<MonthlyReport[]>([]);
+  const [activeReportId, setActiveReportId] = useState("");
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [status, setStatus] = useState("");
   const [showBankManager, setShowBankManager] = useState(false);
@@ -124,7 +134,6 @@ export default function ReportsPage() {
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
   const [qrBusyId, setQrBusyId] = useState<string | null>(null);
   const [firmName, setFirmName] = useState("");
-  const [brandColor, setBrandColor] = useState("");
   const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
   const [brandingBusy, setBrandingBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -256,19 +265,46 @@ export default function ReportsPage() {
     })();
   }, []);
 
-  const loadFilings = useCallback(async () => {
+  const loadReports = useCallback(async () => {
     if (!clientId) {
+      setReports([]);
+      setActiveReportId("");
+      return;
+    }
+    setReportsLoading(true);
+    try {
+      const rows = await listMonthlyReports(clientId, period);
+      setReports(rows);
+      setActiveReportId((prev) =>
+        rows.some((r) => r.id === prev) ? prev : rows.length ? rows[rows.length - 1].id : ""
+      );
+    } catch (error) {
+      console.error("loadReports failed:", error);
+      setStatus(`โหลดรอบรายงานไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      setReports([]);
+      setActiveReportId("");
+    } finally {
+      setReportsLoading(false);
+    }
+  }, [clientId, period]);
+
+  useEffect(() => {
+    loadReports();
+  }, [loadReports]);
+
+  const loadFilings = useCallback(async () => {
+    if (!clientId || !activeReportId) {
       setFilings([]);
       setLoadedKey(null);
       return;
     }
-    const key = `${clientId}|${period}`;
+    const key = `${clientId}|${period}|${activeReportId}`;
     setLoadedKey((k) => (k === key ? k : null));
     setLoading(true);
     loadSeq.current += 1;
     const seq = loadSeq.current;
     try {
-      const ordered = await loadFilingsAction(clientId, period);
+      const ordered = await loadFilingsAction(clientId, period, activeReportId);
       if (seq !== loadSeq.current) return;
       setFilings(ordered);
     } catch (error) {
@@ -278,17 +314,16 @@ export default function ReportsPage() {
     }
     setLoadedKey(key);
     setLoading(false);
-     
-  }, [clientId, period]);
+  }, [clientId, period, activeReportId]);
 
   useEffect(() => {
     loadFilings();
   }, [loadFilings]);
 
-  // Docs belong to one cover — reset when switching client/month
+  // Docs belong to one report round — reset when switching client/month/round
   useEffect(() => {
     setDocs([]);
-  }, [clientId, period]);
+  }, [clientId, period, activeReportId]);
 
   const reloadBanks = useCallback(async () => {
     setBankAccounts(await listBankAccounts());
@@ -301,7 +336,6 @@ export default function ReportsPage() {
       setLogoPath(data?.company_logo_path ?? null);
       setLogoFileName(data?.company_logo_file_name ?? null);
       setFirmName(data?.firm_name ?? "");
-      setBrandColor(data?.brand_color ?? "");
       setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
       setSettingsLoading(false);
     })();
@@ -312,7 +346,7 @@ export default function ReportsPage() {
     try {
       await saveReportBranding({
         firmName: firmName.trim() || null,
-        brandColor: brandColor.trim() || null,
+        brandColor: null,
         coverStyle,
       });
     } catch (error) {
@@ -383,31 +417,42 @@ export default function ReportsPage() {
   }, [showSettings, logoPath]);
 
   const total = filings.reduce((sum, f) => sum + Number(f.amount ?? 0), 0);
+  const activeReport = reports.find((r) => r.id === activeReportId) ?? null;
+  const reportLocked = activeReport?.status === "issued";
 
   const [copyOffset, setCopyOffset] = useState(1);
 
+  // Copy the previously selected round from an earlier month into a new round here.
   async function copyFromPastMonth() {
     if (!clientId) return;
     const prevPeriod = shiftPeriod(period, -copyOffset);
     if (
       filings.length &&
       !confirm(
-        `มีรายการอยู่แล้ว ${filings.length} รายการ — คัดลอกจาก ${periodToThai(prevPeriod)} เพิ่มเข้าไปหรือไม่? (รายการเดิมจะไม่ถูกลบ)`
+        `มีรายการอยู่แล้ว ${filings.length} รายการ — คัดลอกจาก ${periodToThai(prevPeriod)} เป็นรอบใหม่หรือไม่? (รายการเดิมจะไม่ถูกลบ)`
       )
     )
       return;
     setCopyingFrom(true);
     try {
-      const inserted = await copyMonthFilings(clientId, prevPeriod, period);
+      const prevReports = await listMonthlyReports(clientId, prevPeriod);
+      if (!prevReports.length) {
+        alert(`ไม่พบรายงานของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
+        return;
+      }
+      const source = prevReports[prevReports.length - 1];
+      const inserted = await copyReportToNewIssue(source.id, clientId, period);
       if (!inserted.length) {
         alert(`ไม่พบรายการของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
         return;
       }
+      const rows = await listMonthlyReports(clientId, period);
+      setReports(rows);
+      if (rows.length) setActiveReportId(rows[rows.length - 1].id);
       inserted.forEach((f) => {
         rememberFormCode(f.form_code);
         if (f.payment_method) rememberPaymentMethod(f.payment_method);
       });
-      setFilings((prev) => [...prev, ...inserted]);
     } catch (err) {
       alert(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -420,9 +465,17 @@ export default function ReportsPage() {
       alert("กรอกรหัสแบบฟอร์มก่อน เช่น ภ.พ.30");
       return;
     }
+    if (reportLocked) return;
     setAdding(true);
     try {
-      const created = await addFilingAction(clientId, period, {
+      let reportId = activeReportId;
+      if (!reportId) {
+        const created = await createMonthlyReport(clientId, period);
+        setReports([created]);
+        setActiveReportId(created.id);
+        reportId = created.id;
+      }
+      const created = await addFilingAction(clientId, period, reportId, {
         form_code: newFormCode.trim(),
         description: newDescription.trim() || null,
         amount: Number(newAmount) || 0,
@@ -491,21 +544,72 @@ export default function ReportsPage() {
   }
 
   async function clearAllFilings() {
-    if (!clientId || !filings.length) return;
+    if (!clientId || !activeReportId || !filings.length || reportLocked) return;
     if (
       !confirm(
-        `ลบรายการทั้งหมด ${filings.length} รายการ ของ ${periodToThai(period)} ?\nไม่สามารถกู้คืนได้`
+        `ลบรายการทั้งหมด ${filings.length} รายการ ของ ${activeReport?.label ?? periodToThai(period)} ?\nไม่สามารถกู้คืนได้`
       )
     )
       return;
     setClearingAll(true);
     try {
-      await clearFilings(clientId, period);
+      await clearFilings(activeReportId);
       loadFilings();
     } catch (err) {
       alert(`ลบรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setClearingAll(false);
+    }
+  }
+
+  async function addReportRound() {
+    if (!clientId) return;
+    setReportBusy(true);
+    try {
+      const created = await createMonthlyReport(clientId, period);
+      setReports((prev) => [...prev, created]);
+      setActiveReportId(created.id);
+    } catch (err) {
+      alert(`เพิ่มรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function removeReportRound(report: MonthlyReport) {
+    if (!clientId) return;
+    if (reports.length <= 1) {
+      alert("ต้องมีอย่างน้อย 1 รอบรายงาน");
+      return;
+    }
+    if (!confirm(`ลบ ${report.label ?? `ครั้งที่ ${report.seq}`} และรายการทั้งหมดในรอบนี้?`)) return;
+    setReportBusy(true);
+    try {
+      await deleteMonthlyReport(report.id);
+      await loadReports();
+    } catch (err) {
+      alert(`ลบรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function toggleReportIssued(report: MonthlyReport) {
+    if (!clientId) return;
+    setReportBusy(true);
+    try {
+      if (report.status === "issued") {
+        if (!confirm(`เปิดแก้ไข ${report.label ?? `ครั้งที่ ${report.seq}`} อีกครั้ง?`)) return;
+        await reopenMonthlyReport(report.id);
+      } else {
+        if (!confirm(`ออกรายงาน ${report.report_no ?? report.label ?? ""} และล็อกไม่ให้แก้ไข?`)) return;
+        await issueMonthlyReport(report.id);
+      }
+      await loadReports();
+    } catch (err) {
+      alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setReportBusy(false);
     }
   }
 
@@ -659,14 +763,15 @@ export default function ReportsPage() {
       logo: logoBytes ? { bytes: logoBytes } : null,
       documents,
       firmName: firmName.trim() || undefined,
-      accentColor: brandColor.trim() || null,
       coverStyle,
       preview,
+      reportNo: activeReport?.report_no ?? undefined,
+      reportLabel: activeReport?.label ?? undefined,
     };
   }
 
   async function previewCover() {
-    if (!selectedClient || !filings.length) return;
+    if (!selectedClient || !activeReportId || !filings.length) return;
     setPreviewBusy(true);
     setStatus("");
     try {
@@ -696,10 +801,10 @@ export default function ReportsPage() {
   }
 
   async function generatePdf() {
-    if (!selectedClient || !filings.length) return;
+    if (!selectedClient || !activeReportId || !filings.length) return;
     if (
       !confirm(
-        `สร้างรายงาน ${periodToThai(period)} ของ "${selectedClient.name}" (${filings.length} รายการ + ${docs.length} เอกสาร)?`
+        `สร้างรายงาน ${periodToThai(period)} ${activeReport?.label ?? ""} ของ "${selectedClient.name}" (${filings.length} รายการ + ${docs.length} เอกสาร)?`
       )
     )
       return;
@@ -710,11 +815,15 @@ export default function ReportsPage() {
         await collectReportOptions(false)
       );
 
+      const seq = activeReport?.seq ?? 1;
+      const publicId = activeReport?.public_id ?? String(Date.now());
+      const roundTag = `-ครั้งที่${seq}`;
+
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
       const dlUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = dlUrl;
-      a.download = `รายงานภาษี-${selectedClient.name}-${period}.pdf`;
+      a.download = `รายงานภาษี-${selectedClient.name}-${period}${roundTag}.pdf`;
       a.click();
       URL.revokeObjectURL(dlUrl);
 
@@ -723,7 +832,7 @@ export default function ReportsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientId,
-          fileName: `monthly-report-${period}.pdf`,
+          fileName: `monthly-report-${period}-${seq}-${publicId}.pdf`,
         }),
       });
       if (!signRes.ok) throw new Error("ขอลิงก์อัปโหลดสำเนาไม่สำเร็จ");
@@ -737,8 +846,9 @@ export default function ReportsPage() {
 
       await recordReportFile(
         clientId,
+        activeReportId,
         path,
-        `รายงานภาษี ${periodToThai(period)}.pdf`,
+        `รายงานภาษี ${periodToThai(period)} ${activeReport?.label ?? ""}.pdf`.trim(),
         blob.size
       );
 
@@ -837,10 +947,79 @@ export default function ReportsPage() {
         </p>
       ) : (
         <>
+          <section className="max-w-4xl">
+            <div className="card space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">รอบรายงาน:</span>
+                {reportsLoading ? (
+                  <span className="text-xs text-neutral-500">กำลังโหลด...</span>
+                ) : (
+                  reports.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => setActiveReportId(r.id)}
+                      className={`rounded-full border px-3 py-1 text-xs ${
+                        r.id === activeReportId
+                          ? "border-neutral-900 bg-neutral-900 text-white"
+                          : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+                      }`}
+                      title={r.report_no ?? undefined}
+                    >
+                      {r.label ?? `ครั้งที่ ${r.seq}`}
+                      {r.status === "issued" ? " · ออกแล้ว" : ""}
+                    </button>
+                  ))
+                )}
+                <button
+                  className="btn text-xs"
+                  onClick={addReportRound}
+                  disabled={reportBusy || reportsLoading}
+                >
+                  + เพิ่มรอบ
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-neutral-600">
+                <span>
+                  เลขที่รายงาน:{" "}
+                  <span className="font-medium">{activeReport?.report_no ?? "-"}</span>
+                </span>
+                <span>
+                  สถานะ: {reportLocked ? "ออกแล้ว (ล็อก แก้ไขไม่ได้)" : "ฉบับร่าง"}
+                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    className="btn text-xs"
+                    onClick={() => activeReport && toggleReportIssued(activeReport)}
+                    disabled={reportBusy || !activeReport}
+                  >
+                    {reportLocked ? "เปิดแก้ไข" : "ออกรายงาน"}
+                  </button>
+                  {reports.length > 1 && (
+                    <button
+                      className="btn-danger text-xs"
+                      onClick={() => activeReport && removeReportRound(activeReport)}
+                      disabled={reportBusy}
+                    >
+                      ลบรอบนี้
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section className="max-w-4xl space-y-3">
             <h2 className="font-medium">
               ส่วนที่ 1 — ปก: รายการงานภาษี ประจำเดือน {periodToThai(period)}
+              {activeReport?.label ? ` (${activeReport.label})` : ""}
             </h2>
+
+            {reportLocked && (
+              <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                รอบนี้ {activeReport?.report_no} ออกแล้ว — เปิดแก้ไขก่อนเพื่อเพิ่ม/แก้รายการ
+                หรือสร้างรอบใหม่
+              </p>
+            )}
 
             <div className="card grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[150px_135px_minmax(0,1.7fr)_170px_auto] lg:items-end lg:gap-x-3">
               <div className="order-1 lg:order-none">
@@ -851,6 +1030,7 @@ export default function ReportsPage() {
                   placeholder="ภ.พ.30"
                   value={newFormCode}
                   onChange={(e) => setNewFormCode(e.target.value)}
+                  disabled={reportLocked}
                 />
                 <datalist id="form-presets">
                   {formPresetList.map((p) => (
@@ -867,6 +1047,7 @@ export default function ReportsPage() {
                   step="0.01"
                   value={newAmount}
                   onChange={(e) => setNewAmount(e.target.value)}
+                  disabled={reportLocked}
                 />
               </div>
               <div className="order-3 col-span-2 lg:order-none lg:col-span-1">
@@ -876,6 +1057,7 @@ export default function ReportsPage() {
                   placeholder="เช่น ภาษีมูลค่าเพิ่ม เดือน 7/69"
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
+                  disabled={reportLocked}
                 />
               </div>
               <div className="order-4 lg:order-none">
@@ -886,6 +1068,7 @@ export default function ReportsPage() {
                   placeholder="เช่น สลิป หน้า 2"
                   value={newPaymentMethod}
                   onChange={(e) => setNewPaymentMethod(e.target.value)}
+                  disabled={reportLocked}
                 />
                 <datalist id="payment-method-presets">
                   {payMethodPresetList.map((p) => (
@@ -896,7 +1079,7 @@ export default function ReportsPage() {
               <button
                 className="btn-primary order-5 col-span-2 lg:order-none lg:col-span-1"
                 onClick={addFiling}
-                disabled={adding}
+                disabled={adding || reportLocked}
               >
                 เพิ่มรายการ
               </button>
@@ -941,7 +1124,7 @@ export default function ReportsPage() {
               )}
             </details>
 
-            {loading && loadedKey !== `${clientId}|${period}` ? (
+            {loading && loadedKey !== `${clientId}|${period}|${activeReportId}` ? (
               <p className="text-sm text-neutral-500">กำลังโหลด...</p>
             ) : !filings.length ? (
               <p className="text-sm text-neutral-500">
@@ -953,6 +1136,7 @@ export default function ReportsPage() {
                   key={f.id}
                   filing={f}
                   bankAccounts={bankAccounts}
+                  locked={reportLocked}
                   onPatch={patchFiling}
                   onDelete={() => deleteFiling(f)}
                 />
@@ -971,8 +1155,8 @@ export default function ReportsPage() {
                   <button
                     className="btn-danger"
                     onClick={clearAllFilings}
-                    disabled={!filings.length || clearingAll || generating}
-                    title="ลบรายการทั้งหมดของเดือนที่เลือก"
+                    disabled={!filings.length || clearingAll || generating || reportLocked}
+                    title="ลบรายการทั้งหมดของรอบที่เลือก"
                   >
                     {clearingAll ? "กำลังลบ..." : `ลบทั้งหมด (${filings.length})`}
                   </button>
@@ -1319,41 +1503,20 @@ export default function ReportsPage() {
                   onChange={(e) => setFirmName(e.target.value)}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="label">สีหลัก (Accent)</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      className="h-9 w-12 cursor-pointer rounded border border-neutral-200 bg-white"
-                      value={brandColor || "#1a2952"}
-                      onChange={(e) => setBrandColor(e.target.value)}
-                      aria-label="เลือกสีหลัก"
-                    />
-                    <button
-                      className="text-xs text-neutral-500 hover:text-neutral-700"
-                      onClick={() => setBrandColor("")}
-                      type="button"
-                    >
-                      รีเซ็ต
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="label">รูปแบบปก</label>
-                  <select
-                    className="input"
-                    value={coverStyle}
-                    onChange={(e) =>
-                      setCoverStyle(
-                        e.target.value === "classic" ? "classic" : "modern"
-                      )
-                    }
-                  >
-                    <option value="modern">ใหม่ (สี + หัวกระดาษ)</option>
-                    <option value="classic">เดิม (ขาวดำ)</option>
-                  </select>
-                </div>
+              <div className="space-y-1">
+                <label className="label">รูปแบบปก</label>
+                <select
+                  className="input"
+                  value={coverStyle}
+                  onChange={(e) =>
+                    setCoverStyle(
+                      e.target.value === "classic" ? "classic" : "modern"
+                    )
+                  }
+                >
+                  <option value="modern">ใหม่ (ขาวดำ หัวกระดาษ + โลโก้กลาง)</option>
+                  <option value="classic">เดิม (ขาวดำ)</option>
+                </select>
               </div>
               <p className="text-xs text-neutral-500">
                 เลือก &quot;เดิม&quot; เพื่อย้อนกลับไปใช้ปกแบบก่อนหน้า (ใช้ได้ทันที
@@ -1426,11 +1589,13 @@ export default function ReportsPage() {
 function FilingCard({
   filing,
   bankAccounts,
+  locked,
   onPatch,
   onDelete,
 }: {
   filing: Filing;
   bankAccounts: BankAccount[];
+  locked?: boolean;
   onPatch: (id: string, patch: Partial<Filing>) => void;
   onDelete: () => void;
 }) {
@@ -1483,6 +1648,7 @@ function FilingCard({
   function fieldHandlers(key: Parameters<typeof commitField>[0]) {
     return {
       value: draft[key],
+      disabled: locked,
       onFocus: () => {
         editingRef.current = key;
       },
@@ -1538,6 +1704,7 @@ function FilingCard({
           <select
             className="input"
             value={filing.bank_account_id ?? ""}
+            disabled={locked}
             onChange={(e) =>
               onPatch(filing.id, { bank_account_id: e.target.value || null })
             }
@@ -1553,6 +1720,7 @@ function FilingCard({
         <button
           className="btn-danger order-6 justify-self-end self-end lg:order-none"
           onClick={onDelete}
+          disabled={locked}
         >
           ลบ
         </button>
