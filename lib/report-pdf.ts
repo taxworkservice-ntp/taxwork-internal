@@ -100,6 +100,32 @@ const COLOR_TEXT = rgb(0.09, 0.09, 0.11);
 const COLOR_MUTED = rgb(0.45, 0.45, 0.5);
 const COLOR_BORDER = rgb(0.82, 0.82, 0.85);
 const COLOR_HEADER_BG = rgb(0.93, 0.94, 0.96);
+const COLOR_WHITE = rgb(1, 1, 1);
+const COLOR_ACCENT_FALLBACK = rgb(0.1, 0.16, 0.3);
+const COLOR_MASTHEAD_SUB = rgb(0.85, 0.88, 0.95);
+
+export type CoverStyle = "modern" | "classic";
+
+/** Parse "#rrggbb" (with or without leading #) into a pdf-lib color. */
+function hexToRgb(hex: string | null | undefined, fallback: Color): Color {
+  if (!hex) return fallback;
+  const m = hex.trim().match(/^#?([0-9a-fA-F]{6})$/);
+  if (!m) return fallback;
+  const v = parseInt(m[1], 16);
+  return rgb(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255);
+}
+
+function resolveCoverStyle(opts: BuildOptions): CoverStyle {
+  const env = process.env.NEXT_PUBLIC_REPORT_COVER_STYLE;
+  if (env === "classic" || env === "modern") return env;
+  return opts.coverStyle === "classic" ? "classic" : "modern";
+}
+
+function todayThaiDate(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear() + 543}`;
+}
 
 function fmtMoney(n: number): string {
   return Number(n ?? 0).toLocaleString("en-US", {
@@ -588,7 +614,7 @@ function isPdfBytes(bytes: Uint8Array): boolean {
   );
 }
 
-async function drawCover(
+async function drawCoverClassic(
   r: ReportRenderer,
   opts: BuildOptions,
   methodOf: (f: SectionFiling) => string
@@ -755,6 +781,360 @@ async function drawCover(
   await r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
 }
 
+async function drawCoverModern(
+  r: ReportRenderer,
+  opts: BuildOptions,
+  methodOf: (f: SectionFiling) => string
+) {
+  const periodTh = periodToThai(opts.periodLabel);
+  const firmName = opts.firmName?.trim() || "Taxwork";
+  const accent = hexToRgb(opts.accentColor, COLOR_ACCENT_FALLBACK);
+  const reportNo =
+    opts.reportNo?.trim() || `TW-${opts.periodLabel.replace(/[^0-9]/g, "")}`;
+  const reportDate = opts.issueDate?.trim() || todayThaiDate();
+  const preparedBy = opts.preparedBy?.trim() || firmName;
+
+  // ---- Masthead band (full bleed) ----
+  const bandH = 96;
+  const bandTop = PAGE_H;
+  if (!r.sim)
+    r.page.drawRectangle({
+      x: 0,
+      y: bandTop - bandH,
+      width: PAGE_W,
+      height: bandH,
+      color: accent,
+    });
+
+  let textX = M;
+  if (opts.logo?.bytes) {
+    const view = new Uint8Array(opts.logo.bytes);
+    try {
+      const img = isPng(view)
+        ? await r.doc.embedPng(opts.logo.bytes)
+        : isJpeg(view)
+          ? await r.doc.embedJpg(opts.logo.bytes)
+          : null;
+      if (img) {
+        const maxLogoH = 52;
+        const maxLogoW = 150;
+        let lw = maxLogoW;
+        let lh = (img.height / img.width) * lw;
+        if (lh > maxLogoH) {
+          lh = maxLogoH;
+          lw = (img.width / img.height) * lh;
+        }
+        if (!r.sim)
+          r.page.drawImage(img, {
+            x: M,
+            y: bandTop - bandH / 2 - lh / 2,
+            width: lw,
+            height: lh,
+          });
+        textX = M + lw + 16;
+      }
+    } catch {
+      // ignore invalid logo
+    }
+  }
+
+  await r.drawTextCanvas(firmName, textX, bandTop - 42, {
+    size: 17,
+    bold: true,
+    color: COLOR_WHITE,
+  });
+  await r.drawTextCanvas("รายงานภาษีรายเดือน", textX, bandTop - 61, {
+    size: 10.5,
+    color: COLOR_MASTHEAD_SUB,
+  });
+
+  r.y = bandTop - bandH - 30;
+
+  // ---- Title ----
+  await r.text(`รายงานงานภาษีประจำเดือน ${periodTh}`, { size: 16, bold: true });
+  r.y -= 4;
+  if (!r.sim)
+    r.page.drawRectangle({
+      x: M,
+      y: r.y - 3,
+      width: 92,
+      height: 3,
+      color: accent,
+    });
+  r.y -= 20;
+
+  // ---- Client card ----
+  const contactLine = [opts.client.phone, opts.client.email]
+    .filter(Boolean)
+    .join("  ·  ");
+  const cardPadX = 14;
+  const cardPadY = 12;
+  const nameH = 16;
+  const metaLineH = 15;
+  const addrLines = opts.client.address
+    ? wrapText(
+        opts.client.address,
+        (s) => r.measureText(s, 9.5, false),
+        CONTENT_W - cardPadX * 2
+      )
+    : [];
+  const cardH =
+    cardPadY * 2 +
+    nameH +
+    (opts.client.tax_id ? metaLineH : 0) +
+    addrLines.length * metaLineH +
+    (contactLine ? metaLineH : 0);
+  const cardTop = r.y;
+  if (!r.sim)
+    r.page.drawRectangle({
+      x: M,
+      y: cardTop - cardH,
+      width: CONTENT_W,
+      height: cardH,
+      color: accent,
+      opacity: 0.06,
+      borderColor: accent,
+      borderWidth: 0.8,
+      borderOpacity: 0.35,
+    });
+  let cy = cardTop - cardPadY - 11;
+  await r.drawTextCanvas(opts.client.name, M + cardPadX, cy, {
+    size: 12,
+    bold: true,
+  });
+  cy -= nameH;
+  if (opts.client.tax_id) {
+    await r.drawTextCanvas(
+      `เลขประจำตัวผู้เสียภาษี: ${opts.client.tax_id}`,
+      M + cardPadX,
+      cy,
+      { size: 9.5, color: COLOR_MUTED }
+    );
+    cy -= metaLineH;
+  }
+  for (const line of addrLines) {
+    await r.drawTextCanvas(line, M + cardPadX, cy, { size: 9.5 });
+    cy -= metaLineH;
+  }
+  if (contactLine) {
+    await r.drawTextCanvas(contactLine, M + cardPadX, cy, {
+      size: 9.5,
+      color: COLOR_MUTED,
+    });
+  }
+  r.y = cardTop - cardH - 14;
+
+  // ---- Meta grid (2 columns) ----
+  const metaItems: [string, string][] = [
+    ["เลขที่รายงาน", reportNo],
+    ["รอบงวด", periodTh],
+    ["วันที่ออกเอกสาร", reportDate],
+    ["ผู้จัดทำ", preparedBy],
+  ];
+  const colW = CONTENT_W / 2;
+  const rowH = 36;
+  const gridRows = Math.ceil(metaItems.length / 2);
+  const gridH = gridRows * rowH + 8;
+  const gridTop = r.y;
+  if (!r.sim)
+    r.page.drawRectangle({
+      x: M,
+      y: gridTop - gridH,
+      width: CONTENT_W,
+      height: gridH,
+      color: accent,
+      opacity: 0.04,
+      borderColor: COLOR_BORDER,
+      borderWidth: 0.6,
+    });
+  for (let i = 0; i < metaItems.length; i++) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = M + col * colW + 14;
+    const rowTop = gridTop - 8 - row * rowH;
+    await r.drawTextCanvas(metaItems[i][0], x, rowTop - 9, {
+      size: 8.5,
+      color: COLOR_MUTED,
+    });
+    await r.drawTextCanvas(metaItems[i][1], x, rowTop - 25, {
+      size: 10.5,
+      bold: true,
+    });
+    if (!r.sim && col === 1 && row < gridRows)
+      r.page.drawLine({
+        start: { x: M + colW, y: rowTop - rowH + 6 },
+        end: { x: M + colW, y: rowTop - 6 },
+        thickness: 0.5,
+        color: COLOR_BORDER,
+      });
+  }
+  r.y = gridTop - gridH - 18;
+
+  // ---- Summary heading ----
+  await r.text("สรุปรายการ", { size: 12, bold: true });
+  r.y -= 4;
+
+  const rowPadY = 7;
+  const headerH = 24;
+  const fontSize = 9.5;
+  const lh = fontSize * 1.7;
+
+  // 5 cols: ลำดับ | รายการ | รายละเอียด | จำนวนเงิน (ขวา) | วิธีชำระ
+  const idxX = M;
+  const idxW = 28;
+  const itemX = idxX + idxW;
+  const itemW = 90;
+  const amtW = 90;
+  const methW = 143;
+  const detW = CONTENT_W - idxW - itemW - amtW - methW;
+  const detX = itemX + itemW;
+  const amtX = detX + detW;
+  const methX = amtX + amtW;
+  const tableRight = M + CONTENT_W;
+
+  const drawTableHeader = async () => {
+    r.ensureSpace(headerH + 30);
+    if (!r.sim)
+      r.page.drawRectangle({
+        x: M,
+        y: r.y - headerH,
+        width: CONTENT_W,
+        height: headerH,
+        color: accent,
+      });
+    const baseline = r.y - 16;
+    await r.drawTextCanvas("ลำดับ", idxX + 6, baseline, {
+      size: 9.5,
+      bold: true,
+      color: COLOR_WHITE,
+    });
+    await r.drawTextCanvas("รายการ", itemX + 6, baseline, {
+      size: 9.5,
+      bold: true,
+      color: COLOR_WHITE,
+    });
+    await r.drawTextCanvas("รายละเอียด", detX + 6, baseline, {
+      size: 9.5,
+      bold: true,
+      color: COLOR_WHITE,
+    });
+    const amtLabel = "จำนวนเงิน (บาท)";
+    const aW = r.measureText(amtLabel, 9.5, true);
+    await r.drawTextCanvas(amtLabel, amtX + amtW - 6 - aW, baseline, {
+      size: 9.5,
+      bold: true,
+      color: COLOR_WHITE,
+    });
+    await r.drawTextCanvas("วิธีชำระ", methX + 6, baseline, {
+      size: 9.5,
+      bold: true,
+      color: COLOR_WHITE,
+    });
+    r.y -= headerH;
+  };
+
+  await drawTableHeader();
+
+  const filings = opts.filings as SectionFiling[];
+  let total = 0;
+
+  for (let i = 0; i < filings.length; i++) {
+    const f = filings[i];
+    total += Number(f.amount ?? 0);
+    const itemText = f.form_code?.trim() || "-";
+    const detText = f.description?.trim() || "-";
+    const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 12);
+    const linesDet = wrapText(detText, (s) => r.measureText(s, fontSize, false), detW - 12);
+    const methLines = wrapText(methodOf(f), (s) => r.measureText(s, fontSize, false), methW - 12);
+    const maxLines = Math.max(linesItem.length, linesDet.length, methLines.length);
+    const rowH = Math.max(maxLines * lh + rowPadY * 2, 24);
+
+    if (r.y - rowH < M + 60) {
+      await r.hr();
+      await drawTableHeader();
+    }
+
+    const top = r.y;
+    if (!r.sim && i % 2 === 1)
+      r.page.drawRectangle({
+        x: M,
+        y: top - rowH,
+        width: CONTENT_W,
+        height: rowH,
+        color: accent,
+        opacity: 0.05,
+      });
+    await r.drawTextCanvas(String(i + 1), idxX + 6, top - 14, {
+      size: fontSize,
+    });
+    for (let li = 0; li < linesItem.length; li++) {
+      await r.drawTextCanvas(linesItem[li], itemX + 6, top - 14 - li * lh, {
+        size: fontSize,
+      });
+    }
+    for (let li = 0; li < linesDet.length; li++) {
+      await r.drawTextCanvas(linesDet[li], detX + 6, top - 14 - li * lh, {
+        size: fontSize,
+      });
+    }
+    const amtText = fmtMoney(Number(f.amount ?? 0));
+    const amtTw = r.measureText(amtText, fontSize, false);
+    await r.drawTextCanvas(amtText, amtX + amtW - 6 - amtTw, top - 14, {
+      size: fontSize,
+    });
+    for (let li = 0; li < methLines.length; li++) {
+      await r.drawTextCanvas(methLines[li], methX + 6, top - 14 - li * lh, {
+        size: fontSize,
+      });
+    }
+    if (!r.sim)
+      r.page.drawLine({
+        start: { x: M, y: top - rowH },
+        end: { x: tableRight, y: top - rowH },
+        thickness: 0.5,
+        color: COLOR_BORDER,
+      });
+    r.y -= rowH;
+  }
+
+  const totalRowH = 28;
+  r.y -= 4;
+  r.ensureSpace(totalRowH + 40);
+  const totalTop = r.y;
+  if (!r.sim)
+    r.page.drawRectangle({
+      x: M,
+      y: totalTop - totalRowH,
+      width: CONTENT_W,
+      height: totalRowH,
+      color: accent,
+      opacity: 0.14,
+    });
+  const totalLabel = "ยอดรวมทั้งสิ้น";
+  await r.drawTextCanvas(totalLabel, itemX + 6, totalTop - 17, {
+    size: 11,
+    bold: true,
+  });
+  const totalText = fmtMoney(total);
+  const totalTextW = r.measureText(totalText, 11, true);
+  await r.drawTextCanvas(totalText, amtX + amtW - 6 - totalTextW, totalTop - 17, {
+    size: 11,
+    bold: true,
+  });
+  r.y = totalTop - totalRowH - 14;
+
+  await r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
+
+  r.y -= 8;
+  r.ensureSpace(24);
+  await r.text("เอกสารลับเฉพาะสำหรับลูกค้า — ห้ามเผยแพร่", {
+    size: 8,
+    color: COLOR_MUTED,
+    align: "center",
+    width: CONTENT_W,
+  });
+}
+
 function collectEvidenceItems(filings: SectionFiling[]): ReportAttachment[] {
   const items: ReportAttachment[] = [];
   for (const f of filings) {
@@ -892,6 +1272,18 @@ type BuildOptions = {
   logo?: { bytes: ArrayBuffer } | null;
   /** Flat ordered documents appended after the cover, in upload order. */
   documents?: ReportDocument[];
+  /** Cover design. "classic" keeps the original grayscale cover for rollback. */
+  coverStyle?: CoverStyle;
+  /** Accent hex color, e.g. "#1e3a8a". Falls back to a neutral navy. */
+  accentColor?: string | null;
+  /** Report number shown in the cover meta grid. Derived from period if omitted. */
+  reportNo?: string;
+  /** Issue date shown in the cover meta grid. Defaults to today (พ.ศ.). */
+  issueDate?: string;
+  /** Preparer shown in the cover meta grid. Defaults to the firm name. */
+  preparedBy?: string;
+  /** When true, render only the cover page (for fast previews). */
+  preview?: boolean;
 };
 
 type SectionFiling = ReportFiling & { attachments: ReportAttachment[] };
@@ -945,37 +1337,45 @@ export async function buildMonthlyReportPdf(
   const r = new ReportRenderer();
   const filings = opts.filings as SectionFiling[];
   const orderedEvidence = collectEvidenceItems(filings);
+  const style = resolveCoverStyle(opts);
+  const drawCoverFn = style === "classic" ? drawCoverClassic : drawCoverModern;
+  const preview = opts.preview === true;
 
   let prevSig = "";
   let pageByIndex: number[] = [];
 
   // Simulated passes: resolve which report page each slip lands on.
-  for (let iter = 0; iter < 4; iter++) {
-    r.sim = true;
-    r.slipPageByAtt = new WeakMap();
-    await r.init();
-    applyDocMeta(r, opts);
-    const method = makeMethodOf(orderedEvidence, iter === 0 ? null : pageByIndex);
-    await drawCover(r, opts, method);
-    await drawEvidencePages(r, filings);
-    await drawDocumentPages(r, opts.documents ?? []);
-    pageByIndex = orderedEvidence.map(
-      (a) => r.slipPageByAtt.get(a) ?? -1
-    );
-    const sig = `${r.doc.getPageCount()}|${pageByIndex.join(",")}`;
-    if (sig === prevSig) break;
-    prevSig = sig;
+  // Skipped for cover-only previews, which never reference slip pages.
+  if (!preview) {
+    for (let iter = 0; iter < 4; iter++) {
+      r.sim = true;
+      r.slipPageByAtt = new WeakMap();
+      await r.init();
+      applyDocMeta(r, opts);
+      const method = makeMethodOf(orderedEvidence, iter === 0 ? null : pageByIndex);
+      await drawCoverFn(r, opts, method);
+      await drawEvidencePages(r, filings);
+      await drawDocumentPages(r, opts.documents ?? []);
+      pageByIndex = orderedEvidence.map(
+        (a) => r.slipPageByAtt.get(a) ?? -1
+      );
+      const sig = `${r.doc.getPageCount()}|${pageByIndex.join(",")}`;
+      if (sig === prevSig) break;
+      prevSig = sig;
+    }
   }
 
   // Real pass.
   r.sim = false;
   await r.init();
   applyDocMeta(r, opts);
-  const method = makeMethodOf(orderedEvidence, pageByIndex);
-  await drawCover(r, opts, method);
-  await drawWatermark(r, opts);
-  await drawEvidencePages(r, filings);
-  await drawDocumentPages(r, opts.documents ?? []);
+  const method = makeMethodOf(orderedEvidence, preview ? null : pageByIndex);
+  await drawCoverFn(r, opts, method);
+  if (style === "classic") await drawWatermark(r, opts);
+  if (!preview) {
+    await drawEvidencePages(r, filings);
+    await drawDocumentPages(r, opts.documents ?? []);
+  }
   await r.drawFooters();
 
   return r.doc.save();

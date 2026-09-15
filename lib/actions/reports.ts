@@ -156,12 +156,17 @@ export async function loadFilings(clientId: string, period: string): Promise<Fil
   return filings.map((f) => toFiling(f, byFiling.get((f as { id: string }).id) ?? []));
 }
 
-export async function getAppSettings(): Promise<{ company_logo_path: string | null; company_logo_file_name: string | null } | null> {
+export type AppSettings = {
+  company_logo_path: string | null;
+  company_logo_file_name: string | null;
+  firm_name: string | null;
+  brand_color: string | null;
+  cover_style: string | null;
+};
+
+export async function getAppSettings(): Promise<AppSettings | null> {
   await requireUser();
-  const rows = (await sql`select company_logo_path, company_logo_file_name from app_settings where id=1`) as {
-    company_logo_path: string | null;
-    company_logo_file_name: string | null;
-  }[];
+  const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style from app_settings where id=1`) as AppSettings[];
   return rows[0] ?? null;
 }
 
@@ -170,6 +175,18 @@ export async function saveAppSettings(path: string | null, fileName: string | nu
   await sql`insert into app_settings (id, company_logo_path, company_logo_file_name, updated_at)
     values (1, ${path}, ${fileName}, ${new Date().toISOString()})
     on conflict (id) do update set company_logo_path=${path}, company_logo_file_name=${fileName}, updated_at=${new Date().toISOString()}`;
+}
+
+export async function saveReportBranding(input: {
+  firmName: string | null;
+  brandColor: string | null;
+  coverStyle: string;
+}): Promise<void> {
+  await requireUser();
+  const coverStyle = input.coverStyle === "classic" ? "classic" : "modern";
+  await sql`insert into app_settings (id, firm_name, brand_color, cover_style, updated_at)
+    values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${new Date().toISOString()})
+    on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, updated_at=${new Date().toISOString()}`;
 }
 
 export type FilingInput = {

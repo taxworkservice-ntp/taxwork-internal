@@ -20,6 +20,7 @@ import {
   rememberFormCode as rememberFormCodeAction,
   rememberPaymentMethod as rememberPaymentMethodAction,
   saveAppSettings,
+  saveReportBranding,
   setBankQr,
   type BankAccount,
   type ClientRow,
@@ -122,6 +123,13 @@ export default function ReportsPage() {
   const [logoBusy, setLogoBusy] = useState(false);
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
   const [qrBusyId, setQrBusyId] = useState<string | null>(null);
+  const [firmName, setFirmName] = useState("");
+  const [brandColor, setBrandColor] = useState("");
+  const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
+  const [brandingBusy, setBrandingBusy] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
 
   const [bankLabel, setBankLabel] = useState("");
   const [bankName, setBankName] = useState("");
@@ -292,9 +300,27 @@ export default function ReportsPage() {
       const data = await getAppSettings();
       setLogoPath(data?.company_logo_path ?? null);
       setLogoFileName(data?.company_logo_file_name ?? null);
+      setFirmName(data?.firm_name ?? "");
+      setBrandColor(data?.brand_color ?? "");
+      setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
       setSettingsLoading(false);
     })();
   }, []);
+
+  async function saveBranding() {
+    setBrandingBusy(true);
+    try {
+      await saveReportBranding({
+        firmName: firmName.trim() || null,
+        brandColor: brandColor.trim() || null,
+        coverStyle,
+      });
+    } catch (error) {
+      alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBrandingBusy(false);
+    }
+  }
 
   async function saveSettingsLogo(path: string | null, fileName: string | null) {
     try {
@@ -550,19 +576,12 @@ export default function ReportsPage() {
     }
   }
 
-  async function generatePdf() {
-    if (!selectedClient || !filings.length) return;
-    if (
-      !confirm(
-        `สร้างรายงาน ${periodToThai(period)} ของ "${selectedClient.name}" (${filings.length} รายการ + ${docs.length} เอกสาร)?`
-      )
-    )
-      return;
-    setGenerating(true);
-    setStatus("");
-    try {
-      // Part 1: cover rows (no per-filing files anymore)
-      const bankQrCache = new Map<string, ArrayBuffer | null>();
+  async function collectReportOptions(preview: boolean) {
+    if (!selectedClient) throw new Error("ยังไม่ได้เลือกลูกค้า");
+
+    // Part 1: cover rows (no per-filing files anymore)
+    const bankQrCache = new Map<string, ArrayBuffer | null>();
+    if (!preview) {
       const usedBanks = new Set(
         filings
           .map((f) => f.bank_account_id)
@@ -580,33 +599,35 @@ export default function ReportsPage() {
           bankQrCache.set(bankId, null);
         }
       }
+    }
 
-      const enriched: ReportFiling[] = filings.map((f) => {
-        const ba = bankAccounts.find((b) => b.id === f.bank_account_id);
-        return {
-          id: f.id,
-          form_code: f.form_code,
-          description: f.description,
-          amount: Number(f.amount ?? 0),
-          due_date: f.due_date,
-          remark: f.remark ?? null,
-          payment_method: f.payment_method ?? null,
-          bank_account: ba
-            ? {
-                label: ba.label,
-                bank_name: ba.bank_name,
-                account_no: ba.account_no,
-                account_name: ba.account_name,
-                promptpay_id: ba.promptpay_id,
-                qr_bytes: bankQrCache.get(ba.id) ?? null,
-              }
-            : null,
-          attachments: [],
-        };
-      });
+    const enriched: ReportFiling[] = filings.map((f) => {
+      const ba = bankAccounts.find((b) => b.id === f.bank_account_id);
+      return {
+        id: f.id,
+        form_code: f.form_code,
+        description: f.description,
+        amount: Number(f.amount ?? 0),
+        due_date: f.due_date,
+        remark: f.remark ?? null,
+        payment_method: f.payment_method ?? null,
+        bank_account: ba
+          ? {
+              label: ba.label,
+              bank_name: ba.bank_name,
+              account_no: ba.account_no,
+              account_name: ba.account_name,
+              promptpay_id: ba.promptpay_id,
+              qr_bytes: bankQrCache.get(ba.id) ?? null,
+            }
+          : null,
+        attachments: [],
+      };
+    });
 
-      // Part 2: ordered documents, upload order = PDF order
-      const documents: ReportDocument[] = [];
+    // Part 2: ordered documents, upload order = PDF order
+    const documents: ReportDocument[] = [];
+    if (!preview) {
       for (const d of docs) {
         documents.push({
           file_name: d.file.name,
@@ -614,29 +635,80 @@ export default function ReportsPage() {
           bytes: await d.file.arrayBuffer(),
         });
       }
+    }
 
-      let logoBytes: ArrayBuffer | null = null;
-      if (logoPath) {
-        try {
-          logoBytes = await fetchAttachmentBytes(logoPath);
-        } catch {
-          logoBytes = null;
-        }
+    let logoBytes: ArrayBuffer | null = null;
+    if (logoPath) {
+      try {
+        logoBytes = await fetchAttachmentBytes(logoPath);
+      } catch {
+        logoBytes = null;
       }
+    }
 
-      const pdfBytes = await buildMonthlyReportPdf({
-        client: {
-          name: selectedClient.name,
-          tax_id: selectedClient.tax_id,
-          address: selectedClient.address,
-          phone: selectedClient.phone,
-          email: selectedClient.email,
-        },
-        periodLabel: period,
-        filings: enriched,
-        logo: logoBytes ? { bytes: logoBytes } : null,
-        documents,
+    return {
+      client: {
+        name: selectedClient.name,
+        tax_id: selectedClient.tax_id,
+        address: selectedClient.address,
+        phone: selectedClient.phone,
+        email: selectedClient.email,
+      },
+      periodLabel: period,
+      filings: enriched,
+      logo: logoBytes ? { bytes: logoBytes } : null,
+      documents,
+      firmName: firmName.trim() || undefined,
+      accentColor: brandColor.trim() || null,
+      coverStyle,
+      preview,
+    };
+  }
+
+  async function previewCover() {
+    if (!selectedClient || !filings.length) return;
+    setPreviewBusy(true);
+    setStatus("");
+    try {
+      const pdfBytes = await buildMonthlyReportPdf(await collectReportOptions(true));
+      const blob = new Blob([new Uint8Array(pdfBytes)], {
+        type: "application/pdf",
       });
+      const url = URL.createObjectURL(blob);
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+      setPreviewOpen(true);
+    } catch (err) {
+      alert(`ดูตัวอย่างไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  function closePreview() {
+    setPreviewOpen(false);
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }
+
+  async function generatePdf() {
+    if (!selectedClient || !filings.length) return;
+    if (
+      !confirm(
+        `สร้างรายงาน ${periodToThai(period)} ของ "${selectedClient.name}" (${filings.length} รายการ + ${docs.length} เอกสาร)?`
+      )
+    )
+      return;
+    setGenerating(true);
+    setStatus("");
+    try {
+      const pdfBytes = await buildMonthlyReportPdf(
+        await collectReportOptions(false)
+      );
 
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
       const dlUrl = URL.createObjectURL(blob);
@@ -1026,6 +1098,13 @@ export default function ReportsPage() {
                     <span className="text-xs text-green-700">{status}</span>
                   )}
                   <button
+                    className="btn"
+                    onClick={previewCover}
+                    disabled={previewBusy || generating}
+                  >
+                    {previewBusy ? "กำลังสร้างตัวอย่าง..." : "ดูตัวอย่างปก"}
+                  </button>
+                  <button
                     className="btn-primary"
                     onClick={generatePdf}
                     disabled={generating}
@@ -1186,9 +1265,9 @@ export default function ReportsPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="label">โลโก้บริษัท (Watermark หน้าปก)</label>
+              <label className="label">โลโก้บริษัท (หัวกระดาษหน้าปก)</label>
               <p className="text-xs text-neutral-500">
-                แสดงมุมขวาล่างของหน้าปกรายงาน PDF (ความทึบ 65%) — รองรับ PNG/JPG
+                แสดงมุมซ้ายบนของหน้าปกรายงาน PDF — รองรับ PNG/JPG
               </p>
               {settingsLoading ? (
                 <p className="text-xs text-neutral-500">กำลังโหลด...</p>
@@ -1230,12 +1309,111 @@ export default function ReportsPage() {
               )}
             </div>
 
+            <div className="space-y-3 border-t border-neutral-200 pt-3">
+              <div className="space-y-1">
+                <label className="label">ชื่อบริษัท / สำนักงาน</label>
+                <input
+                  className="input"
+                  placeholder="Taxwork"
+                  value={firmName}
+                  onChange={(e) => setFirmName(e.target.value)}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="label">สีหลัก (Accent)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      className="h-9 w-12 cursor-pointer rounded border border-neutral-200 bg-white"
+                      value={brandColor || "#1a2952"}
+                      onChange={(e) => setBrandColor(e.target.value)}
+                      aria-label="เลือกสีหลัก"
+                    />
+                    <button
+                      className="text-xs text-neutral-500 hover:text-neutral-700"
+                      onClick={() => setBrandColor("")}
+                      type="button"
+                    >
+                      รีเซ็ต
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="label">รูปแบบปก</label>
+                  <select
+                    className="input"
+                    value={coverStyle}
+                    onChange={(e) =>
+                      setCoverStyle(
+                        e.target.value === "classic" ? "classic" : "modern"
+                      )
+                    }
+                  >
+                    <option value="modern">ใหม่ (สี + หัวกระดาษ)</option>
+                    <option value="classic">เดิม (ขาวดำ)</option>
+                  </select>
+                </div>
+              </div>
+              <p className="text-xs text-neutral-500">
+                เลือก &quot;เดิม&quot; เพื่อย้อนกลับไปใช้ปกแบบก่อนหน้า (ใช้ได้ทันที
+                โดยไม่ต้อง deploy ใหม่)
+              </p>
+            </div>
+
             <div className="flex justify-end">
               <button
                 className="btn-primary"
-                onClick={() => setShowSettings(false)}
+                onClick={async () => {
+                  await saveBranding();
+                  setShowSettings(false);
+                }}
+                disabled={brandingBusy || settingsLoading}
               >
-                เสร็จสิ้น
+                {brandingBusy ? "กำลังบันทึก..." : "เสร็จสิ้น"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewOpen && previewUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={closePreview}
+        >
+          <div
+            className="flex h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
+              <h2 className="text-sm font-bold">ตัวอย่างปก (Preview)</h2>
+              <button
+                className="text-neutral-400 hover:text-neutral-700"
+                onClick={closePreview}
+                aria-label="ปิด"
+              >
+                ✕
+              </button>
+            </div>
+            <iframe
+              src={`${previewUrl}#toolbar=0&navpanes=0`}
+              title="ตัวอย่างหน้าปกรายงาน"
+              className="h-full w-full flex-1"
+            />
+            <div className="flex items-center justify-end gap-3 border-t border-neutral-200 px-4 py-3">
+              <button className="btn" onClick={closePreview}>
+                ปิด
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  closePreview();
+                  void generatePdf();
+                }}
+                disabled={generating}
+              >
+                ดาวน์โหลด PDF
               </button>
             </div>
           </div>
