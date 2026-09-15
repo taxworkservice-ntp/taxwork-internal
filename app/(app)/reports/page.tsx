@@ -347,7 +347,13 @@ export default function ReportsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const data = await getAppSettings();
+        const res = await getAppSettings();
+        if (!res.ok) {
+          console.error("load settings failed:", res.error);
+          setStatus(`โหลดการตั้งค่ารายงานไม่สำเร็จ: ${res.error}`);
+          return;
+        }
+        const data = res.settings;
         setLogoPath(data?.company_logo_path ?? null);
         setLogoFileName(data?.company_logo_file_name ?? null);
         setFirmName(data?.firm_name ?? "");
@@ -368,12 +374,15 @@ export default function ReportsPage() {
   async function saveBranding() {
     setBrandingBusy(true);
     try {
-      await saveReportBranding({
+      const res = await saveReportBranding({
         firmName: firmName.trim() || null,
         brandColor: null,
         coverStyle,
         preparedBy: preparedBy.trim() || null,
       });
+      if (!res.ok) {
+        alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
+      }
     } catch (error) {
       alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     } finally {
@@ -383,7 +392,10 @@ export default function ReportsPage() {
 
   async function saveSettingsLogo(path: string | null, fileName: string | null) {
     try {
-      await saveAppSettings(path, fileName);
+      const res = await saveAppSettings(path, fileName);
+      if (!res.ok) {
+        alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
+      }
     } catch (error) {
       alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     }
@@ -682,7 +694,9 @@ export default function ReportsPage() {
       setBankAccounts((prev) =>
         prev.map((b) => (b.id === bankId ? { ...b, qr_path: path } : b))
       );
-      await setBankQr(bankId, path);
+      await setBankQr(bankId, path).then((res) => {
+        if (!res.ok) throw new Error(res.error);
+      });
       if (bank?.qr_path && bank.qr_path !== path) deleteR2Object(bank.qr_path);
     } catch (err) {
       alert(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
@@ -700,8 +714,12 @@ export default function ReportsPage() {
       setBankAccounts((prev) =>
         prev.map((b) => (b.id === bankId ? { ...b, qr_path: null } : b))
       );
-      await setBankQr(bankId, null);
+      const res = await setBankQr(bankId, null);
+      if (!res.ok) throw new Error(res.error);
       deleteR2Object(bank.qr_path);
+    } catch (err) {
+      alert(`ลบ QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      reloadBanks();
     } finally {
       setQrBusyId(null);
     }
@@ -732,7 +750,9 @@ export default function ReportsPage() {
             : b
         )
       );
-      await setBankLogo(bankId, slot, path, file.type || null);
+      await setBankLogo(bankId, slot, path, file.type || null).then((res) => {
+        if (!res.ok) throw new Error(res.error);
+      });
       if (oldPath && oldPath !== path) deleteR2Object(oldPath);
     } catch (err) {
       alert(`อัปโหลดโลโก้ธนาคารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
@@ -761,8 +781,12 @@ export default function ReportsPage() {
             : b
         )
       );
-      await setBankLogo(bankId, slot, null, null);
+      const res = await setBankLogo(bankId, slot, null, null);
+      if (!res.ok) throw new Error(res.error);
       deleteR2Object(oldPath);
+    } catch (err) {
+      alert(`ลบโลโก้ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      reloadBanks();
     } finally {
       setLogoBusyId(null);
     }

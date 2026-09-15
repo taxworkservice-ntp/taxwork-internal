@@ -112,13 +112,13 @@ function toReport(r: Record<string, unknown>): MonthlyReport {
   };
 }
 
-/** Formal number: TW-{YYMM พ.ศ.}-{NN}, e.g. period "2026-08", seq 2 -> "TW-6908-02". */
-function buildReportNo(periodLabel: string, seq: number): string {
-  const nn = String(seq).padStart(2, "0");
+/** Formal number: TW-{YYMM พ.ศ.}-{public_id}, e.g. period "2026-08" -> "TW-6908-7F3K9Q2M".
+ *  The suffix is a random key (not the round count) so clients can't infer volume. */
+function buildReportNo(periodLabel: string, publicId: string): string {
   const m = periodLabel.match(/^(\d{4})-(\d{2})/);
-  if (!m) return `TW-${periodLabel}-${nn}`;
+  if (!m) return `TW-${periodLabel}-${publicId}`;
   const yy = String((Number(m[1]) + 543) % 100).padStart(2, "0");
-  return `TW-${yy}${m[2]}-${nn}`;
+  return `TW-${yy}${m[2]}-${publicId}`;
 }
 
 async function assertReportEditable(
@@ -221,6 +221,20 @@ export async function loadFilings(
   return filings.map((f) => toFiling(f, byFiling.get((f as { id: string }).id) ?? []));
 }
 
+// Server actions catch their own errors and return them as data: Next.js
+// masks thrown action errors on the client ("Server Components render"),
+// so returning the message is the only way to surface the real cause in dev
+// and production alike.
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+function actionError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function fail(error: unknown): ActionResult {
+  return { ok: false, error: actionError(error) };
+}
+
 export type AppSettings = {
   company_logo_path: string | null;
   company_logo_file_name: string | null;
@@ -230,17 +244,32 @@ export type AppSettings = {
   prepared_by: string | null;
 };
 
-export async function getAppSettings(): Promise<AppSettings | null> {
-  await requireUser();
-  const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as AppSettings[];
-  return rows[0] ?? null;
+export type AppSettingsResult =
+  | { ok: true; settings: AppSettings | null }
+  | { ok: false; error: string };
+
+export async function getAppSettings(): Promise<AppSettingsResult> {
+  try {
+    await requireUser();
+    const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as AppSettings[];
+    return { ok: true, settings: rows[0] ?? null };
+  } catch (error) {
+    console.error("getAppSettings failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
 }
 
-export async function saveAppSettings(path: string | null, fileName: string | null): Promise<void> {
-  await requireUser();
-  await sql`insert into app_settings (id, company_logo_path, company_logo_file_name, updated_at)
-    values (1, ${path}, ${fileName}, ${new Date().toISOString()})
-    on conflict (id) do update set company_logo_path=${path}, company_logo_file_name=${fileName}, updated_at=${new Date().toISOString()}`;
+export async function saveAppSettings(path: string | null, fileName: string | null): Promise<ActionResult> {
+  try {
+    await requireUser();
+    await sql`insert into app_settings (id, company_logo_path, company_logo_file_name, updated_at)
+      values (1, ${path}, ${fileName}, ${new Date().toISOString()})
+      on conflict (id) do update set company_logo_path=${path}, company_logo_file_name=${fileName}, updated_at=${new Date().toISOString()}`;
+    return { ok: true };
+  } catch (error) {
+    console.error("saveAppSettings failed:", error);
+    return fail(error);
+  }
 }
 
 export async function saveReportBranding(input: {
@@ -248,12 +277,18 @@ export async function saveReportBranding(input: {
   brandColor: string | null;
   coverStyle: string;
   preparedBy?: string | null;
-}): Promise<void> {
-  await requireUser();
-  const coverStyle = input.coverStyle === "classic" ? "classic" : "modern";
-  await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
-    values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${new Date().toISOString()})
-    on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${new Date().toISOString()}`;
+}): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const coverStyle = input.coverStyle === "classic" ? "classic" : "modern";
+    await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
+      values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${new Date().toISOString()})
+      on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${new Date().toISOString()}`;
+    return { ok: true };
+  } catch (error) {
+    console.error("saveReportBranding failed:", error);
+    return fail(error);
+  }
 }
 
 export type FilingInput = {
@@ -286,9 +321,10 @@ export async function createMonthlyReport(
     const maxRow = (await sql`select coalesce(max(seq),0)::int as m from monthly_reports
       where client_id=${clientId} and period_label=${period}`) as { m: number }[];
     const seq = (maxRow[0]?.m ?? 0) + 1;
+    const publicId = generatePublicId();
     try {
       const rows = (await sql`insert into monthly_reports (client_id, period_label, seq, report_no, public_id, label)
-        values (${clientId}, ${period}, ${seq}, ${buildReportNo(period, seq)}, ${generatePublicId()}, ${`ครั้งที่ ${seq}`})
+        values (${clientId}, ${period}, ${seq}, ${buildReportNo(period, publicId)}, ${publicId}, ${`ครั้งที่ ${seq}`})
         returning *`) as Record<string, unknown>[];
       if (rows[0]) return toReport(rows[0]);
     } catch (err) {
@@ -317,13 +353,14 @@ export async function patchMonthlyReport(
 
 export async function issueMonthlyReport(id: string): Promise<void> {
   await requireUser();
-  const rows = (await sql`select period_label, seq, report_no from monthly_reports where id=${id}`) as {
+  const rows = (await sql`select period_label, public_id, report_no from monthly_reports where id=${id}`) as {
     period_label: string;
-    seq: number;
+    public_id: string;
     report_no: string | null;
   }[];
   if (!rows[0]) throw new Error("ไม่พบรายงาน");
-  const reportNo = rows[0].report_no ?? buildReportNo(rows[0].period_label, rows[0].seq);
+  const reportNo =
+    rows[0].report_no ?? buildReportNo(rows[0].period_label, rows[0].public_id);
   await sql`update monthly_reports
     set status='issued', issued_at=${new Date().toISOString()}, report_no=${reportNo}
     where id=${id}`;
@@ -486,9 +523,15 @@ export async function deleteBankAccount(id: string): Promise<void> {
   await sql`delete from bank_accounts where id=${id}`;
 }
 
-export async function setBankQr(bankId: string, path: string | null): Promise<void> {
-  await requireUser();
-  await sql`update bank_accounts set qr_path=${path} where id=${bankId}`;
+export async function setBankQr(bankId: string, path: string | null): Promise<ActionResult> {
+  try {
+    await requireUser();
+    await sql`update bank_accounts set qr_path=${path} where id=${bankId}`;
+    return { ok: true };
+  } catch (error) {
+    console.error("setBankQr failed:", error);
+    return fail(error);
+  }
 }
 
 export async function setBankLogo(
@@ -496,12 +539,18 @@ export async function setBankLogo(
   slot: "top" | "bottom",
   path: string | null,
   mimeType: string | null
-): Promise<void> {
-  await requireUser();
-  if (slot === "bottom") {
-    await sql`update bank_accounts set logo_bottom_path=${path}, logo_bottom_mime_type=${mimeType} where id=${bankId}`;
-  } else {
-    await sql`update bank_accounts set logo_path=${path}, logo_mime_type=${mimeType} where id=${bankId}`;
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    if (slot === "bottom") {
+      await sql`update bank_accounts set logo_bottom_path=${path}, logo_bottom_mime_type=${mimeType} where id=${bankId}`;
+    } else {
+      await sql`update bank_accounts set logo_path=${path}, logo_mime_type=${mimeType} where id=${bankId}`;
+    }
+    return { ok: true };
+  } catch (error) {
+    console.error("setBankLogo failed:", error);
+    return fail(error);
   }
 }
 

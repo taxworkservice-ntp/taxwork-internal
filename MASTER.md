@@ -118,8 +118,8 @@ filing_attachments id, filing_id → monthly_filings (CASCADE),
               file_name, size_bytes, mime_type, created_at
 
 monthly_reports id, client_id → clients (CASCADE), period_label ("2026-08"),
-              seq (round ครั้งที่ N), report_no ("TW-6908-01", TW-{YYMM พ.ศ.}-{NN}),
-              public_id (short random key used in filenames/storage), label,
+              seq (round ครั้งที่ N), report_no ("TW-6908-7F3K9Q2M", TW-{YYMM พ.ศ.}-{public_id}),
+              public_id (short random key used in report_no + filenames/storage), label,
               status ('draft'|'issued'), issued_at, created_at,
               UNIQUE(client_id, period_label, seq)
 
@@ -137,7 +137,7 @@ files.report_id → monthly_reports (SET NULL; set for monthly-report copies)
 - **Hard-confirm deletes**: deleting a client or contact requires typing its exact name; final button stays disabled until match. Deleting a client cascades credentials/files/tasks.
 - **Task generation**: `generateDueTasks()` runs from the Tasks page button. It upserts instances keyed on `(template_id, period_label)` with `ignoreDuplicates` — safe to run repeatedly. Annual templates check windows starting current AND previous year. Due day clamps to last day of period (e.g. day 31 → Feb 28).
 - **Task status cycles** on click: รอทำ → กำลังทำ → เสร็จแล้ว → ข้าม.
-- **Monthly report flow** (Reports page): pick client + month → choose/create a **round (ครั้งที่ N)** — a client+month can have several (`monthly_reports`, unique per `seq`) → add filing rows (form code, amount, payment method) scoped to the round → attach documents in "ส่วนที่ 2" (ordered, appended after the cover) → optionally link a bank account for service-fee rows → **ดูตัวอย่างปก** previews the actual cover-only PDF in a modal → "ดาวน์โหลด PDF" builds the client-facing PDF entirely in-browser (Sarabun embedded), downloads it, and saves a copy to R2 + `files` (`category: 'monthly-report'`, with `report_id`). Report number is `TW-{YYMM พ.ศ.}-{NN}` (see `buildReportNo`), plus a random `public_id` for filenames/storage. A round can be **issued** (locked, no edits until reopened) or left as draft. Copying from a past month creates a new round here. PDFs are generated with `buildMonthlyReportPdf`; the cover design is switchable (`cover_style` = `modern` | `classic`, or `NEXT_PUBLIC_REPORT_COVER_STYLE`) so the legacy cover remains available.
+- **Monthly report flow** (Reports page): pick client + month → choose/create a **round (ครั้งที่ N)** — a client+month can have several (`monthly_reports`, unique per `seq`) → add filing rows (form code, amount, payment method) scoped to the round → attach documents in "ส่วนที่ 2" (ordered, appended after the cover) → optionally link a bank account for service-fee rows → **ดูตัวอย่างปก** previews the actual cover-only PDF in a modal → "ดาวน์โหลด PDF" builds the client-facing PDF entirely in-browser (Sarabun embedded), downloads it, and saves a copy to R2 + `files` (`category: 'monthly-report'`, with `report_id`). Report number is `TW-{YYMM พ.ศ.}-{public_id}` (see `buildReportNo`) — the random `public_id` so clients can't infer volume; the `seq` round is shown separately as ครั้งที่ N. A round can be **issued** (locked, no edits until reopened) or left as draft. Copying from a past month creates a new round here. PDFs are generated with `buildMonthlyReportPdf`; the cover design is switchable (`cover_style` = `modern` | `classic`, or `NEXT_PUBLIC_REPORT_COVER_STYLE`) so the legacy cover remains available.
 - **Unsupported image types** (webp/gif) in the report are skipped with a note in the PDF; PNG/JPG and PDF attachments are embedded.
 - **Sort persistence**: list pages store sort state in `localStorage` (`clients.sort`, `contacts.sort`); Thai-aware `localeCompare(..., "th")`.
 - **Tables never overlap**: cells use flex + `min-w-0` + `truncate`; tables wrapped in `overflow-x-auto` with `min-w-[...]` under `table-fixed`.
