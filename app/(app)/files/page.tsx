@@ -62,6 +62,7 @@ export default function FilesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNote, setEditNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [showOlder, setShowOlder] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const years = [...new Set(files.map((f) => new Date(f.uploaded_at).getFullYear()))].sort((a, b) => b - a);
@@ -192,10 +193,22 @@ export default function FilesPage() {
     return [...map.values()].sort((a, b) => a.order - b.order);
   }, [filtered]);
 
+  // Only today and yesterday are shown by default; older groups are hidden
+  // behind the "show all" toggle (and revealed automatically while searching
+  // or filtering).
+  const autoShowAll = hasFilter || search.trim() !== "";
+  const visibleGroups = showOlder || autoShowAll ? grouped : grouped.filter((g) => g.order < 2);
+  const canToggleOlder = !autoShowAll && grouped.some((g) => g.order >= 2);
+
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">ไฟล์</h1>
+        {canToggleOlder && (
+          <button className="btn text-xs" onClick={() => setShowOlder((v) => !v)}>
+            {showOlder ? "− ซ่อนไฟล์ก่อนหน้า" : "+ แสดงไฟล์ก่อนหน้าทั้งหมด"}
+          </button>
+        )}
       </div>
 
       <div className="mb-3 max-w-sm">
@@ -305,7 +318,7 @@ export default function FilesPage() {
             </tr>
           </thead>
           <tbody>
-            {grouped.map((g) => (
+            {visibleGroups.map((g) => (
               <Fragment key={`group-${g.label}`}>
                 <tr className="bg-neutral-100">
                   <td colSpan={8} className="py-1.5 text-xs font-semibold text-neutral-600">
@@ -391,9 +404,11 @@ export default function FilesPage() {
                 ))}
               </Fragment>
             ))}
-            {!filtered.length && (
+            {!visibleGroups.length && (
               <tr>
-                <td colSpan={8} className="text-neutral-500">ไม่มีไฟล์</td>
+                <td colSpan={8} className="text-neutral-500">
+                  {filtered.length ? "ไม่มีไฟล์ของวันนี้และเมื่อวาน" : "ไม่มีไฟล์"}
+                </td>
               </tr>
             )}
           </tbody>
