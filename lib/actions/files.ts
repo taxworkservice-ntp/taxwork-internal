@@ -12,6 +12,7 @@ export type FileRow = {
   size_bytes: number;
   uploaded_at: string;
   uploaded_by: string | null;
+  note: string | null;
   clients: { name: string } | null;
 };
 
@@ -22,6 +23,7 @@ export type FileMeta = {
   size_bytes: number;
   mime_type: string;
   category?: string;
+  note?: string | null;
 };
 
 function toRow(r: Record<string, unknown>): FileRow {
@@ -53,8 +55,14 @@ export async function listClientFiles(clientId: string): Promise<FileRow[]> {
 
 export async function recordFile(meta: FileMeta): Promise<void> {
   const user = await requireUser();
-  await sql`insert into files (client_id, storage_path, file_name, size_bytes, mime_type, category, uploaded_by)
-    values (${meta.client_id}, ${meta.storage_path}, ${meta.file_name}, ${meta.size_bytes}, ${meta.mime_type}, ${meta.category ?? null}, ${user.email})`;
+  const note = meta.note?.trim() ? meta.note.trim() : null;
+  await sql`insert into files (client_id, storage_path, file_name, size_bytes, mime_type, category, note, uploaded_by)
+    values (${meta.client_id}, ${meta.storage_path}, ${meta.file_name}, ${meta.size_bytes}, ${meta.mime_type}, ${meta.category ?? null}, ${note}, ${user.email})`;
+}
+
+export async function updateFileNote(id: string, note: string): Promise<void> {
+  await requireUser();
+  await sql`update files set note=${note.trim() || null} where id=${id}`;
 }
 
 export async function deleteFileRecord(id: string): Promise<void> {

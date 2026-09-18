@@ -2,8 +2,9 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { deleteFileRecord, listFiles, recordFile } from "@/lib/actions/files";
+import { deleteFileRecord, listFiles, recordFile, updateFileNote } from "@/lib/actions/files";
 import CopyButton from "@/components/copy-button";
+import CreatableSelect from "@/components/creatable-select";
 
 type FileRow = {
   id: string;
@@ -13,6 +14,7 @@ type FileRow = {
   size_bytes: number;
   uploaded_at: string;
   uploaded_by: string | null;
+  note: string | null;
   clients: { name: string } | null;
 };
 
@@ -56,10 +58,18 @@ export default function FilesPage() {
   const [filterYear, setFilterYear] = useState("");
   const [filterMonth, setFilterMonth] = useState("");
   const [filterUser, setFilterUser] = useState("");
+  const [note, setNote] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editNote, setEditNote] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const years = [...new Set(files.map((f) => new Date(f.uploaded_at).getFullYear()))].sort((a, b) => b - a);
   const users = [...new Set(files.map((f) => f.uploaded_by ?? "").filter(Boolean))].sort();
+  const noteOptions = useMemo(
+    () => [...new Set(files.map((f) => f.note).filter((n): n is string => !!n))].sort(),
+    [files]
+  );
   const hasFilter = filterYear !== "" || filterMonth !== "" || filterUser !== "";
 
   const load = useCallback(async () => {
@@ -96,10 +106,12 @@ export default function FilesPage() {
           file_name: file.name,
           size_bytes: file.size,
           mime_type: file.type,
+          note: note || null,
         });
       }
     } finally {
       setUploading(false);
+      setNote("");
       if (inputRef.current) inputRef.current.value = "";
       load();
     }
@@ -107,6 +119,22 @@ export default function FilesPage() {
 
   function upload(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files) uploadFiles(e.target.files);
+  }
+
+  function startEditNote(file: FileRow) {
+    setEditingId(file.id);
+    setEditNote(file.note ?? "");
+  }
+
+  async function saveNote(id: string) {
+    setSavingNote(true);
+    try {
+      await updateFileNote(id, editNote);
+      setEditingId(null);
+      await load();
+    } finally {
+      setSavingNote(false);
+    }
   }
 
   async function remove(file: FileRow) {
@@ -137,6 +165,7 @@ export default function FilesPage() {
       if (
         !f.file_name.toLowerCase().includes(q) &&
         !(f.uploaded_by ?? "").toLowerCase().includes(q) &&
+        !(f.note ?? "").toLowerCase().includes(q) &&
         !(f.clients?.name ?? "").toLowerCase().includes(q)
       )
         return false;
@@ -167,6 +196,17 @@ export default function FilesPage() {
     <>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">ไฟล์</h1>
+      </div>
+
+      <div className="mb-3 max-w-sm">
+        <label className="label">หมายเหตุ (ใช้กับไฟล์ที่อัปโหลดชุดนี้)</label>
+        <CreatableSelect
+          value={note}
+          onChange={setNote}
+          options={noteOptions}
+          placeholder="เลือกหรือพิมพ์หมายเหตุใหม่..."
+          disabled={uploading}
+        />
       </div>
 
       <div
@@ -257,6 +297,7 @@ export default function FilesPage() {
               <th>ผู้อัปโหลด</th>
               <th>ชื่อไฟล์</th>
               <th>ลูกค้า</th>
+              <th>หมายเหตุ</th>
               <th>ขนาด</th>
               <th>วันที่</th>
               <th>เวลา</th>
@@ -267,7 +308,7 @@ export default function FilesPage() {
             {grouped.map((g) => (
               <Fragment key={`group-${g.label}`}>
                 <tr className="bg-neutral-100">
-                  <td colSpan={7} className="py-1.5 text-xs font-semibold text-neutral-600">
+                  <td colSpan={8} className="py-1.5 text-xs font-semibold text-neutral-600">
                     {g.label} <span className="ml-1 font-normal text-neutral-400">({g.rows.length})</span>
                   </td>
                 </tr>
@@ -297,6 +338,43 @@ export default function FilesPage() {
                         "—"
                       )}
                     </td>
+                    <td className="min-w-[200px]">
+                      {editingId === f.id ? (
+                        <div className="flex items-center gap-1">
+                          <CreatableSelect
+                            value={editNote}
+                            onChange={setEditNote}
+                            options={noteOptions}
+                            className="w-48"
+                            disabled={savingNote}
+                          />
+                          <button
+                            className="btn-primary px-1.5 py-0.5 text-xs"
+                            disabled={savingNote}
+                            onClick={() => saveNote(f.id)}
+                          >
+                            บันทึก
+                          </button>
+                          <button
+                            className="btn px-1.5 py-0.5 text-xs"
+                            disabled={savingNote}
+                            onClick={() => setEditingId(null)}
+                          >
+                            ยกเลิก
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="min-w-0 truncate">{f.note || "—"}</span>
+                          <button
+                            className="shrink-0 text-xs text-blue-600 underline"
+                            onClick={() => startEditNote(f)}
+                          >
+                            แก้ไข
+                          </button>
+                        </div>
+                      )}
+                    </td>
                     <td className="whitespace-nowrap">
                       {f.size_bytes > 1048576
                         ? `${(f.size_bytes / 1048576).toFixed(1)} MB`
@@ -315,7 +393,7 @@ export default function FilesPage() {
             ))}
             {!filtered.length && (
               <tr>
-                <td colSpan={7} className="text-neutral-500">ไม่มีไฟล์</td>
+                <td colSpan={8} className="text-neutral-500">ไม่มีไฟล์</td>
               </tr>
             )}
           </tbody>
