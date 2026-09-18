@@ -18,6 +18,7 @@ import {
   listCustomFormCodes,
   listCustomPaymentMethods,
   listMonthlyReports,
+  listReportFiles,
   loadFilings as loadFilingsAction,
   patchFiling as patchFilingAction,
   recordReportFile,
@@ -32,6 +33,7 @@ import {
   type ClientRow,
   type Filing,
   type MonthlyReport,
+  type ReportFile,
 } from "@/lib/actions/reports";
 import {
   buildMonthlyReportPdf,
@@ -104,6 +106,12 @@ function fmtMoney(n: number): string {
   });
 }
 
+function fmtSize(bytes: number): string {
+  if (bytes > 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+  if (bytes > 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
 export default function ReportsPage() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [clientId, setClientId] = useState("");
@@ -130,6 +138,8 @@ export default function ReportsPage() {
   const [customFormCodes, setCustomFormCodes] = useState<string[]>([]);
   const [customPayMethods, setCustomPayMethods] = useState<string[]>([]);
   const [newPayMethodPreset, setNewPayMethodPreset] = useState("");
+  const [reportFiles, setReportFiles] = useState<ReportFile[]>([]);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const loadSeq = useRef(0);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -343,6 +353,29 @@ export default function ReportsPage() {
   useEffect(() => {
     setDocs([]);
   }, [clientId, period, activeReportId]);
+
+  // Saved report copies (history) for the active round.
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeReportId) {
+      setReportFiles([]);
+      return;
+    }
+    setReportFiles([]);
+    listReportFiles(activeReportId)
+      .then((rows) => {
+        if (!cancelled) setReportFiles(rows);
+      })
+      .catch((error) => {
+        if (!cancelled)
+          setStatus(
+            `โหลดประวัติไฟล์รายงานไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeReportId]);
 
   const reloadBanks = useCallback(async () => {
     setBankAccounts(await listBankAccounts());
@@ -947,6 +980,24 @@ export default function ReportsPage() {
     });
   }
 
+  async function downloadReportFile(file: ReportFile) {
+    setDownloadingId(file.id);
+    try {
+      const res = await fetch("/api/files/sign-download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storagePath: file.storage_path }),
+      });
+      if (!res.ok) throw new Error("ขอลิงก์ดาวน์โหลดไม่สำเร็จ");
+      const { url } = await res.json();
+      window.open(url, "_blank");
+    } catch (err) {
+      alert(`ดาวน์โหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
   async function generatePdf() {
     if (!selectedClient || !activeReportId || !filings.length) return;
     if (
@@ -999,7 +1050,11 @@ export default function ReportsPage() {
         blob.size
       );
 
-      setStatus("สร้างรายงานสำเร็จ — ดาวน์โหลดแล้ว และบันทึกสำเนาในไฟล์ของลูกค้าแล้ว");
+      listReportFiles(activeReportId)
+        .then(setReportFiles)
+        .catch(() => undefined);
+
+      setStatus("สร้างรายงานสำเร็จ — ดาวน์โหลดแล้ว และบันทึกสำเนาในประวัติไฟล์รายงานแล้ว");
     } catch (err) {
       alert(`สร้างรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -1459,6 +1514,54 @@ export default function ReportsPage() {
                     {generating ? "กำลังสร้าง..." : "ดาวน์โหลด PDF"}
                   </button>
                 </div>
+              </div>
+            </section>
+          )}
+
+          {activeReportId && (
+            <section className="max-w-4xl space-y-2">
+              <h2 className="font-medium">ประวัติไฟล์รายงาน</h2>
+              <div className="overflow-x-auto">
+                <table className="table-base w-full min-w-[620px]">
+                  <thead>
+                    <tr>
+                      <th>ชื่อไฟล์</th>
+                      <th>ขนาด</th>
+                      <th>วันที่บันทึก</th>
+                      <th>ผู้สร้าง</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportFiles.map((f) => (
+                      <tr key={f.id}>
+                        <td>{f.file_name}</td>
+                        <td className="whitespace-nowrap">{fmtSize(f.size_bytes)}</td>
+                        <td className="whitespace-nowrap">
+                          {new Date(f.uploaded_at).toLocaleString("th-TH")}
+                        </td>
+                        <td>{f.uploaded_by ?? "—"}</td>
+                        <td className="text-right">
+                          <button
+                            className="btn text-xs"
+                            onClick={() => downloadReportFile(f)}
+                            disabled={downloadingId === f.id}
+                          >
+                            {downloadingId === f.id ? "กำลังเปิด..." : "ดาวน์โหลด"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!reportFiles.length && (
+                      <tr>
+                        <td colSpan={5} className="text-neutral-500">
+                          ยังไม่มีไฟล์รายงานที่บันทึกไว้ — กด &quot;ดาวน์โหลด PDF&quot;
+                          เพื่อสร้างและเก็บสำเนา
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </section>
           )}

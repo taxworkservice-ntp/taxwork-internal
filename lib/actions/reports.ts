@@ -598,3 +598,31 @@ export async function recordReportFile(
   await sql`insert into files (client_id, report_id, storage_path, file_name, size_bytes, mime_type, category, uploaded_by)
     values (${clientId}, ${reportId}, ${storage_path}, ${file_name}, ${size_bytes}, 'application/pdf', 'monthly-report', ${user.email})`;
 }
+
+export type ReportFile = {
+  id: string;
+  file_name: string;
+  storage_path: string;
+  size_bytes: number;
+  uploaded_at: string;
+  uploaded_by: string | null;
+};
+
+/** Generated PDFs kept for a report round, newest first. */
+export async function listReportFiles(reportId: string): Promise<ReportFile[]> {
+  await requireUser();
+  const rows = (await sql`
+    select id, file_name, storage_path, size_bytes, uploaded_at, uploaded_by
+    from files
+    where report_id=${reportId} and category='monthly-report'
+    order by uploaded_at desc
+  `) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    id: String(r.id),
+    file_name: String(r.file_name),
+    storage_path: String(r.storage_path),
+    size_bytes: num(r.size_bytes),
+    uploaded_at: str(r.uploaded_at),
+    uploaded_by: r.uploaded_by == null ? null : String(r.uploaded_by),
+  }));
+}
