@@ -3,8 +3,10 @@ import {
   PDFPage,
   rgb,
   type Color,
+  type PDFFont,
   type PDFImage,
 } from "pdf-lib";
+import fontkit from "@pdf-lib/fontkit";
 
 const THAI_MONTHS_FULL = [
   "มกราคม",
@@ -162,14 +164,20 @@ function cssColor(c: Color): string {
 }
 
 let canvasFontsLoaded = false;
+/** Raw Sarabun bytes, kept for embedding a selectable text layer in the PDF. */
+let pdfFontBuffers: { regular: ArrayBuffer; bold: ArrayBuffer } | null = null;
+
 async function ensureCanvasFonts(): Promise<void> {
   if (canvasFontsLoaded) return;
   const [regularBuf, boldBuf] = await Promise.all([
     loadFont("/fonts/Sarabun-Regular.ttf"),
     loadFont("/fonts/Sarabun-Bold.ttf"),
   ]);
-  const regular = new FontFace("Sarabun", regularBuf);
-  const bold = new FontFace("Sarabun", boldBuf, { weight: "bold" });
+  pdfFontBuffers = { regular: regularBuf, bold: boldBuf };
+  // Pass copies: FontFace may detach its input, but we still need the original
+  // bytes later to embed the PDF text layer.
+  const regular = new FontFace("Sarabun", regularBuf.slice(0));
+  const bold = new FontFace("Sarabun", boldBuf.slice(0), { weight: "bold" });
   await Promise.all([regular.load(), bold.load()]);
   document.fonts.add(regular);
   document.fonts.add(bold);
@@ -265,12 +273,26 @@ class ReportRenderer {
   private ctx = this.canvas.getContext("2d")!;
   private textImageCache = new Map<string, PDFImage>();
   private bankLogoCache = new Map<ArrayBuffer, PDFImage>();
+  private pdfFontRegular: PDFFont | null = null;
+  private pdfFontBold: PDFFont | null = null;
 
   async init() {
     this.doc = await PDFDocument.create();
     this.textImageCache.clear();
     this.bankLogoCache.clear();
     await ensureCanvasFonts();
+    // Embed the real font only for the final pass. It backs an invisible text
+    // layer so amounts/bank numbers can be selected and copied, while the
+    // canvas image keeps Thai shaping pixel-perfect.
+    if (!this.sim && pdfFontBuffers) {
+      this.doc.registerFontkit(fontkit);
+      this.pdfFontRegular = await this.doc.embedFont(pdfFontBuffers.regular, {
+        subset: true,
+      });
+      this.pdfFontBold = await this.doc.embedFont(pdfFontBuffers.bold, {
+        subset: true,
+      });
+    }
     this.pageIndex = -1;
     this.newPage();
   }
@@ -369,6 +391,17 @@ class ReportRenderer {
     const drawH = Math.ceil(size * scale * 1.9) / scale;
     const imgY = baselineY - size * 0.6;
     page.drawImage(img, { x, y: imgY, width: drawW, height: drawH });
+
+    // Invisible, selectable text layer on the same baseline as the image so
+    // the client can copy amounts and bank account numbers from the PDF.
+    const font = bold ? this.pdfFontBold : this.pdfFontRegular;
+    if (font) {
+      try {
+        page.drawText(value, { x, y: baselineY, size, font, color, opacity: 0 });
+      } catch {
+        // Glyph missing from the font — keep the visual image only.
+      }
+    }
 
     return drawW;
   }
