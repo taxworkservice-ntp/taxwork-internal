@@ -62,7 +62,7 @@ export default function FilesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNote, setEditNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const [closedGroups, setClosedGroups] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const years = [...new Set(files.map((f) => new Date(f.uploaded_at).getFullYear()))].sort((a, b) => b - a);
@@ -193,13 +193,11 @@ export default function FilesPage() {
     return [...map.values()].sort((a, b) => a.order - b.order);
   }, [filtered]);
 
-  // Today and yesterday are expanded by default; older groups stay visible as
-  // collapsed headers that can be expanded individually. While searching or
-  // filtering every group is expanded automatically.
-  const autoShowAll = hasFilter || search.trim() !== "";
-
+  // All date groups are shown inline by default; older groups (older than
+  // yesterday) can be collapsed and expanded individually by clicking their
+  // header row.
   function toggleGroup(label: string) {
-    setOpenGroups((prev) => {
+    setClosedGroups((prev) => {
       const next = new Set(prev);
       if (next.has(label)) next.delete(label);
       else next.add(label);
@@ -321,8 +319,8 @@ export default function FilesPage() {
           </thead>
           <tbody>
             {grouped.map((g) => {
-              const collapsible = g.order >= 2 && !autoShowAll;
-              const open = !collapsible || openGroups.has(g.label);
+              const collapsible = g.order >= 2;
+              const open = !collapsible || !closedGroups.has(g.label);
               return (
               <Fragment key={`group-${g.label}`}>
                 <tr
