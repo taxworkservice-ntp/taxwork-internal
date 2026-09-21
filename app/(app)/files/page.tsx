@@ -62,7 +62,7 @@ export default function FilesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNote, setEditNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
-  const [showOlder, setShowOlder] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const years = [...new Set(files.map((f) => new Date(f.uploaded_at).getFullYear()))].sort((a, b) => b - a);
@@ -193,22 +193,24 @@ export default function FilesPage() {
     return [...map.values()].sort((a, b) => a.order - b.order);
   }, [filtered]);
 
-  // Only today and yesterday are shown by default; older groups are hidden
-  // behind the "show all" toggle (and revealed automatically while searching
-  // or filtering).
+  // Today and yesterday are expanded by default; older groups stay visible as
+  // collapsed headers that can be expanded individually. While searching or
+  // filtering every group is expanded automatically.
   const autoShowAll = hasFilter || search.trim() !== "";
-  const visibleGroups = showOlder || autoShowAll ? grouped : grouped.filter((g) => g.order < 2);
-  const canToggleOlder = !autoShowAll && grouped.some((g) => g.order >= 2);
+
+  function toggleGroup(label: string) {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }
 
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">ไฟล์</h1>
-        {canToggleOlder && (
-          <button className="btn text-xs" onClick={() => setShowOlder((v) => !v)}>
-            {showOlder ? "− ซ่อนไฟล์ก่อนหน้า" : "+ แสดงไฟล์ก่อนหน้าทั้งหมด"}
-          </button>
-        )}
       </div>
 
       <div className="mb-3 max-w-sm">
@@ -318,14 +320,23 @@ export default function FilesPage() {
             </tr>
           </thead>
           <tbody>
-            {visibleGroups.map((g) => (
+            {grouped.map((g) => {
+              const collapsible = g.order >= 2 && !autoShowAll;
+              const open = !collapsible || openGroups.has(g.label);
+              return (
               <Fragment key={`group-${g.label}`}>
-                <tr className="bg-neutral-100">
+                <tr
+                  className={`bg-neutral-100 ${collapsible ? "cursor-pointer hover:bg-neutral-200" : ""}`}
+                  onClick={collapsible ? () => toggleGroup(g.label) : undefined}
+                >
                   <td colSpan={8} className="py-1.5 text-xs font-semibold text-neutral-600">
+                    {collapsible && (
+                      <span className="mr-1 inline-block w-3 text-neutral-400">{open ? "▼" : "▶"}</span>
+                    )}
                     {g.label} <span className="ml-1 font-normal text-neutral-400">({g.rows.length})</span>
                   </td>
                 </tr>
-                {g.rows.map((f) => (
+                {open && g.rows.map((f) => (
                   <tr key={f.id}>
                     <td className="overflow-hidden">
                       {f.uploaded_by ? (
@@ -403,12 +414,11 @@ export default function FilesPage() {
                   </tr>
                 ))}
               </Fragment>
-            ))}
-            {!visibleGroups.length && (
+              );
+            })}
+            {!grouped.length && (
               <tr>
-                <td colSpan={8} className="text-neutral-500">
-                  {filtered.length ? "ไม่มีไฟล์ของวันนี้และเมื่อวาน" : "ไม่มีไฟล์"}
-                </td>
+                <td colSpan={8} className="text-neutral-500">ไม่มีไฟล์</td>
               </tr>
             )}
           </tbody>
