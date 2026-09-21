@@ -2,6 +2,8 @@ import {
   PDFDocument,
   PDFPage,
   rgb,
+  setTextRenderingMode,
+  TextRenderingMode,
   type Color,
   type PDFFont,
   type PDFImage,
@@ -394,12 +396,17 @@ class ReportRenderer {
 
     // Invisible, selectable text layer on the same baseline as the image so
     // the client can copy amounts and bank account numbers from the PDF.
+    // Uses text render mode 3 (Invisible) — the same technique OCR text
+    // layers use — which stays selectable in every PDF viewer.
     const font = bold ? this.pdfFontBold : this.pdfFontRegular;
     if (font) {
       try {
-        page.drawText(value, { x, y: baselineY, size, font, color, opacity: 0 });
+        page.pushOperators(setTextRenderingMode(TextRenderingMode.Invisible));
+        page.drawText(value, { x, y: baselineY, size, font, color });
       } catch {
         // Glyph missing from the font — keep the visual image only.
+      } finally {
+        page.pushOperators(setTextRenderingMode(TextRenderingMode.Fill));
       }
     }
 
