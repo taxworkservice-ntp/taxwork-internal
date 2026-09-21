@@ -5,6 +5,7 @@ import Link from "next/link";
 import { deleteFileRecord, listFiles, recordFile, updateFileNote } from "@/lib/actions/files";
 import CopyButton from "@/components/copy-button";
 import CreatableSelect from "@/components/creatable-select";
+import { ToastStack, useToasts } from "@/components/toast";
 
 type FileRow = {
   id: string;
@@ -18,6 +19,8 @@ type FileRow = {
   clients: { name: string } | null;
 };
 
+type QueueItem = { id: string; name: string; status: "uploading" | "done" | "error" };
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
 function fmtDate(iso: string) {
@@ -28,6 +31,12 @@ function fmtDate(iso: string) {
 function fmtTime(iso: string) {
   const d = new Date(iso);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function fmtSize(bytes: number) {
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.ceil(bytes / 1024)} KB`;
+  return `${bytes} B`;
 }
 
 const THAI_MONTHS = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
@@ -50,11 +59,29 @@ function getFileGroup(iso: string, now = new Date()): { label: string; order: nu
   return { label, order };
 }
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      className={`transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+    >
+      <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export default function FilesPage() {
   const [files, setFiles] = useState<FileRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const [filterYear, setFilterYear] = useState("");
   const [filterMonth, setFilterMonth] = useState("");
   const [filterUser, setFilterUser] = useState("");
@@ -63,7 +90,12 @@ export default function FilesPage() {
   const [editNote, setEditNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const batchRef = useRef(0);
+  const { toasts, push, dismiss } = useToasts();
 
   const years = [...new Set(files.map((f) => new Date(f.uploaded_at).getFullYear()))].sort((a, b) => b - a);
   const users = [...new Set(files.map((f) => f.uploaded_by ?? "").filter(Boolean))].sort();
@@ -72,35 +104,45 @@ export default function FilesPage() {
     [files]
   );
   const hasFilter = filterYear !== "" || filterMonth !== "" || filterUser !== "";
+  const activeFilterCount = [filterYear, filterMonth, filterUser].filter(Boolean).length;
 
   const load = useCallback(async () => {
     setFiles(await listFiles());
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   async function uploadFiles(list: FileList | File[]) {
     const arr = Array.from(list);
     if (!arr.length) return;
+    const batch = ++batchRef.current;
     setUploading(true);
-    try {
-      for (const file of arr) {
+    const items: QueueItem[] = arr.map((f, i) => ({ id: `${batch}-${i}`, name: f.name, status: "uploading" }));
+    setQueue(items);
+    const setStatus = (index: number, status: QueueItem["status"]) =>
+      setQueue((prev) => prev.map((it, i) => (i === index ? { ...it, status } : it)));
+
+    let ok = 0;
+    let failed = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const file = arr[i];
+      try {
         const signRes = await fetch("/api/files/sign-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ clientId: "", fileName: file.name }),
         });
-        if (!signRes.ok) continue;
+        if (!signRes.ok) throw new Error("sign");
         const { url, path } = await signRes.json();
         const putRes = await fetch(url, {
           method: "PUT",
           body: file,
           headers: { "Content-Type": file.type || "application/octet-stream" },
         });
-        if (!putRes.ok) continue;
+        if (!putRes.ok) throw new Error("put");
         await recordFile({
           client_id: null,
           storage_path: path,
@@ -109,20 +151,38 @@ export default function FilesPage() {
           mime_type: file.type,
           note: note || null,
         });
+        setStatus(i, "done");
+        ok++;
+      } catch {
+        setStatus(i, "error");
+        failed++;
       }
-    } finally {
-      setUploading(false);
-      setNote("");
-      if (inputRef.current) inputRef.current.value = "";
-      load();
     }
+
+    setUploading(false);
+    setNote("");
+    if (inputRef.current) inputRef.current.value = "";
+    await load();
+
+    if (ok && failed) push({ type: "info", message: `อัปโหลดสำเร็จ ${ok} ไฟล์ · ล้มเหลว ${failed} ไฟล์` });
+    else if (ok) push({ type: "success", message: `อัปโหลดสำเร็จ ${ok} ไฟล์` });
+    else if (failed) push({ type: "error", message: `อัปโหลดไม่สำเร็จ ${failed} ไฟล์` });
+
+    setTimeout(() => {
+      if (batchRef.current === batch) setQueue([]);
+    }, 4000);
   }
 
   function upload(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files) uploadFiles(e.target.files);
   }
 
+  function openPicker() {
+    inputRef.current?.click();
+  }
+
   function startEditNote(file: FileRow) {
+    setExpandedId(file.id);
     setEditingId(file.id);
     setEditNote(file.note ?? "");
   }
@@ -133,31 +193,50 @@ export default function FilesPage() {
       await updateFileNote(id, editNote);
       setEditingId(null);
       await load();
+      push({ type: "success", message: "บันทึกหมายเหตุแล้ว" });
+    } catch {
+      push({ type: "error", message: "บันทึกหมายเหตุไม่สำเร็จ" });
     } finally {
       setSavingNote(false);
     }
   }
 
   async function remove(file: FileRow) {
-    if (!confirm(`ลบไฟล์ ${file.file_name}?`)) return;
-    await fetch("/api/files/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ storagePath: file.storage_path }),
-    });
-    await deleteFileRecord(file.id);
-    load();
+    setConfirmingId(null);
+    try {
+      await fetch("/api/files/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storagePath: file.storage_path }),
+      });
+      await deleteFileRecord(file.id);
+      setExpandedId(null);
+      await load();
+      push({ type: "success", message: `ลบ "${file.file_name}" แล้ว` });
+    } catch {
+      push({ type: "error", message: `ลบ "${file.file_name}" ไม่สำเร็จ` });
+    }
   }
 
   async function download(file: FileRow) {
-    const res = await fetch("/api/files/sign-download", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ storagePath: file.storage_path }),
-    });
-    if (!res.ok) return;
-    const { url } = await res.json();
-    window.open(url, "_blank");
+    try {
+      const res = await fetch("/api/files/sign-download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storagePath: file.storage_path }),
+      });
+      if (!res.ok) throw new Error("sign");
+      const { url } = await res.json();
+      window.open(url, "_blank");
+    } catch {
+      push({ type: "error", message: "เปิดไฟล์ไม่สำเร็จ" });
+    }
+  }
+
+  function clearFilters() {
+    setFilterYear("");
+    setFilterMonth("");
+    setFilterUser("");
   }
 
   const filtered = files.filter((f) => {
@@ -193,8 +272,6 @@ export default function FilesPage() {
     return [...map.values()].sort((a, b) => a.order - b.order);
   }, [filtered]);
 
-  // Today and yesterday are expanded by default; older groups are collapsed
-  // and can be expanded individually by clicking their header row.
   function toggleGroup(label: string) {
     setOpenGroups((prev) => {
       const next = new Set(prev);
@@ -206,221 +283,481 @@ export default function FilesPage() {
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold">ไฟล์</h1>
+      <input ref={inputRef} type="file" multiple className="hidden" onChange={upload} disabled={uploading} />
+
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-neutral-900">ไฟล์</h1>
+          <p className="mt-0.5 text-sm text-neutral-500">อัปโหลด ค้นหา และจัดการไฟล์ทั้งหมด</p>
+        </div>
+        <button
+          className="btn-primary inline-flex items-center gap-2 px-4 py-2"
+          onClick={openPicker}
+          disabled={uploading}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M8 11V3M5 6l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M3 13h10" strokeLinecap="round" />
+          </svg>
+          {uploading ? "กำลังอัปโหลด..." : "อัปโหลดไฟล์"}
+        </button>
       </div>
 
-      <div className="mb-3 max-w-sm">
-        <label className="label">หมายเหตุ (ใช้กับไฟล์ที่อัปโหลดชุดนี้)</label>
+      {/* Upload zone */}
+      <div className="card mb-5">
+        <label className="label">หมายเหตุสำหรับไฟล์ชุดนี้ (ไม่บังคับ)</label>
         <CreatableSelect
           value={note}
           onChange={setNote}
           options={noteOptions}
           placeholder="เลือกหรือพิมพ์หมายเหตุใหม่..."
           disabled={uploading}
+          className="mb-3 max-w-md"
         />
-      </div>
-
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => inputRef.current?.click()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
-        }}
-        className={`mb-4 flex cursor-pointer flex-col items-center justify-center gap-1 rounded border-2 border-dashed px-4 py-6 text-center transition-colors ${
-          dragging ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:border-neutral-400"
-        } ${uploading ? "pointer-events-none opacity-60" : ""}`}
-      >
-        <p className="text-sm font-medium text-neutral-700">
-          {uploading ? "กำลังอัปโหลด..." : dragging ? "วางไฟล์เพื่ออัปโหลด" : "ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์"}
-        </p>
-        <p className="text-xs text-neutral-500">รองรับหลายไฟล์พร้อมกัน</p>
-        <input ref={inputRef} type="file" multiple className="hidden" onChange={upload} disabled={uploading} />
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <input
-          className="input w-full sm:max-w-xs"
-          placeholder="ค้นหา..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select
-          className="input w-32"
-          value={filterYear}
-          onChange={(e) => setFilterYear(e.target.value)}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={openPicker}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              openPicker();
+            }
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
+          }}
+          className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors focus:outline-none focus-visible:border-blue-500 ${
+            dragging ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:border-neutral-400"
+          } ${uploading ? "pointer-events-none opacity-60" : ""}`}
         >
-          <option value="">ทุกปี</option>
-          {years.map((y) => (
-            <option key={y} value={y}>{y}</option>
-          ))}
-        </select>
-        <select
-          className="input w-36"
-          value={filterMonth}
-          onChange={(e) => setFilterMonth(e.target.value)}
-        >
-          <option value="">ทุกเดือน</option>
-          {["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"].map(
-            (m, i) => (
-              <option key={i + 1} value={i + 1}>{m}</option>
-            )
-          )}
-        </select>
-        <select
-          className="input w-56"
-          value={filterUser}
-          onChange={(e) => setFilterUser(e.target.value)}
-        >
-          <option value="">ผู้อัปโหลดทั้งหมด</option>
-          {users.map((u) => (
-            <option key={u} value={u}>{u}</option>
-          ))}
-        </select>
-        {hasFilter && (
-          <button
-            className="btn"
-            onClick={() => {
-              setFilterYear("");
-              setFilterMonth("");
-              setFilterUser("");
-            }}
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            className="text-neutral-400"
           >
-            ✕ ล้างตัวกรอง
-          </button>
+            <path d="M12 16V4M8 8l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" strokeLinecap="round" />
+          </svg>
+          <p className="text-sm font-medium text-neutral-700">
+            {uploading ? "กำลังอัปโหลด..." : dragging ? "วางไฟล์ที่นี่" : "ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์"}
+          </p>
+          <p className="text-xs text-neutral-500">รองรับหลายไฟล์พร้อมกัน</p>
+        </div>
+
+        {queue.length > 0 && (
+          <ul className="mt-3 space-y-1.5">
+            {queue.map((q) => (
+              <li key={q.id} className="flex items-center gap-2 text-xs">
+                <span
+                  className={`inline-flex h-4 w-4 shrink-0 items-center justify-center ${
+                    q.status === "done"
+                      ? "text-emerald-600"
+                      : q.status === "error"
+                        ? "text-red-600"
+                        : "text-blue-600"
+                  }`}
+                >
+                  {q.status === "uploading" ? (
+                    <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+                      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                    </svg>
+                  ) : q.status === "done" ? (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 8.5L6.5 12L13 4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+                    </svg>
+                  )}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-neutral-700">{q.name}</span>
+                <span className="shrink-0 text-neutral-500">
+                  {q.status === "uploading" ? "กำลังอัปโหลด" : q.status === "done" ? "สำเร็จ" : "ล้มเหลว"}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="table-base w-full min-w-[760px]">
+      {/* Search + filters */}
+      <div className="mb-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] flex-1">
+            <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-neutral-400">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="M10.5 10.5L14 14" strokeLinecap="round" />
+              </svg>
+            </span>
+            <input
+              className="input pl-9 pr-8"
+              placeholder="ค้นหาไฟล์ ลูกค้า ผู้ัปโหลด หรือหมายเหตุ..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                type="button"
+                aria-label="ล้างคำค้นหา"
+                className="absolute top-1/2 right-2 -translate-y-1/2 text-lg leading-none text-neutral-400 hover:text-neutral-600"
+                onClick={() => setSearch("")}
+              >
+                ×
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            className={`btn inline-flex items-center gap-2 ${showFilters ? "border-blue-400 text-blue-700" : ""}`}
+            onClick={() => setShowFilters((v) => !v)}
+            aria-expanded={showFilters}
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <path d="M2 4h12M4 8h8M6.5 12h3" strokeLinecap="round" />
+            </svg>
+            ตัวกรอง
+            {activeFilterCount > 0 && (
+              <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-semibold text-white">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {showFilters && (
+          <div className="card animate-fade-in flex flex-wrap items-end gap-3">
+            <div className="min-w-[120px]">
+              <label className="label">ปี</label>
+              <select className="input" value={filterYear} onChange={(e) => setFilterYear(e.target.value)}>
+                <option value="">ทุกปี</option>
+                {years.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <div className="min-w-[140px]">
+              <label className="label">เดือน</label>
+              <select className="input" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}>
+                <option value="">ทุกเดือน</option>
+                {THAI_MONTHS.map((m, i) => (
+                  <option key={i + 1} value={i + 1}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div className="min-w-[200px]">
+              <label className="label">ผู้อัปโหลด</label>
+              <select className="input" value={filterUser} onChange={(e) => setFilterUser(e.target.value)}>
+                <option value="">ผู้อัปโหลดทั้งหมด</option>
+                {users.map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
+            </div>
+            {hasFilter && (
+              <button type="button" className="btn" onClick={clearFilters}>
+                ล้างตัวกรอง
+              </button>
+            )}
+          </div>
+        )}
+
+        {activeFilterCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-neutral-500">กำลังกรอง:</span>
+            {filterYear && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-neutral-700 hover:bg-neutral-200"
+                onClick={() => setFilterYear("")}
+              >
+                ปี {filterYear} <span className="text-neutral-400">×</span>
+              </button>
+            )}
+            {filterMonth && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-neutral-700 hover:bg-neutral-200"
+                onClick={() => setFilterMonth("")}
+              >
+                {THAI_MONTHS[Number(filterMonth) - 1]} <span className="text-neutral-400">×</span>
+              </button>
+            )}
+            {filterUser && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-neutral-700 hover:bg-neutral-200"
+                onClick={() => setFilterUser("")}
+              >
+                {filterUser} <span className="text-neutral-400">×</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* File list */}
+      <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">
+        <table className="table-base w-full min-w-[720px]">
           <thead>
             <tr>
-              <th>ผู้อัปโหลด</th>
-              <th>ชื่อไฟล์</th>
-              <th>ลูกค้า</th>
-              <th>หมายเหตุ</th>
-              <th>ขนาด</th>
-              <th>วันที่</th>
-              <th>เวลา</th>
-              <th></th>
+              <th className="w-10"></th>
+              <th>ไฟล์</th>
+              <th className="w-44">ลูกค้า</th>
+              <th className="w-32">วันที่</th>
+              <th className="w-64"></th>
             </tr>
           </thead>
           <tbody>
-            {grouped.map((g) => {
-              const collapsible = g.order >= 2;
-              const open = !collapsible || openGroups.has(g.label);
-              return (
-              <Fragment key={`group-${g.label}`}>
-                <tr
-                  className={`bg-neutral-100 ${collapsible ? "cursor-pointer hover:bg-neutral-200" : ""}`}
-                  onClick={collapsible ? () => toggleGroup(g.label) : undefined}
-                >
-                  <td colSpan={8} className="py-1.5 text-xs font-semibold text-neutral-600">
-                    {collapsible && (
-                      <span className="mr-1 inline-block w-3 text-neutral-400">{open ? "▼" : "▶"}</span>
-                    )}
-                    {g.label} <span className="ml-1 font-normal text-neutral-400">({g.rows.length})</span>
-                  </td>
-                </tr>
-                {open && g.rows.map((f) => (
-                  <tr key={f.id}>
-                    <td className="overflow-hidden">
-                      {f.uploaded_by ? (
-                        <span className="inline-flex items-center">
-                          <CopyButton text={f.uploaded_by} />
-                          <span className="ml-1 truncate">{f.uploaded_by}</span>
-                        </span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>
-                      <button className="text-blue-600 underline" onClick={() => download(f)}>
-                        {f.file_name}
-                      </button>
-                    </td>
-                    <td>
-                      {f.clients ? (
-                        <Link href={`/clients/${f.client_id}`} className="text-blue-600 underline">
-                          {f.clients.name}
-                        </Link>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="min-w-[200px]">
-                      {editingId === f.id ? (
-                        <div className="flex items-center gap-1">
-                          <CreatableSelect
-                            value={editNote}
-                            onChange={setEditNote}
-                            options={noteOptions}
-                            className="w-48"
-                            disabled={savingNote}
-                          />
-                          <button
-                            className="btn-primary px-1.5 py-0.5 text-xs"
-                            disabled={savingNote}
-                            onClick={() => saveNote(f.id)}
-                          >
-                            บันทึก
-                          </button>
-                          <button
-                            className="btn px-1.5 py-0.5 text-xs"
-                            disabled={savingNote}
-                            onClick={() => setEditingId(null)}
-                          >
-                            ยกเลิก
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="min-w-0 truncate">{f.note || "—"}</span>
-                          <button
-                            className="shrink-0 text-xs text-blue-600 underline"
-                            onClick={() => startEditNote(f)}
-                          >
-                            แก้ไข
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap">
-                      {f.size_bytes > 1048576
-                        ? `${(f.size_bytes / 1048576).toFixed(1)} MB`
-                        : `${Math.ceil(f.size_bytes / 1024)} KB`}
-                    </td>
-                    <td className="whitespace-nowrap">{fmtDate(f.uploaded_at)}</td>
-                    <td className="whitespace-nowrap">{fmtTime(f.uploaded_at)}</td>
-                    <td className="text-right">
-                      <button className="btn-danger px-1.5 py-0.5 text-xs" onClick={() => remove(f)}>
-                        ลบ
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </Fragment>
-              );
-            })}
-            {!grouped.length && (
+            {loading && (
               <tr>
-                <td colSpan={8} className="text-neutral-500">ไม่มีไฟล์</td>
+                <td colSpan={5} className="py-14 text-center text-sm text-neutral-400">
+                  กำลังโหลด...
+                </td>
+              </tr>
+            )}
+
+            {!loading &&
+              grouped.map((g) => {
+                const collapsible = g.order >= 2;
+                const open = !collapsible || openGroups.has(g.label);
+                return (
+                  <Fragment key={g.label}>
+                    <tr className="bg-neutral-50">
+                      <td colSpan={5} className="py-1.5">
+                        <button
+                          type="button"
+                          disabled={!collapsible}
+                          onClick={() => collapsible && toggleGroup(g.label)}
+                          aria-expanded={collapsible ? open : undefined}
+                          className={`inline-flex items-center gap-2 text-xs font-semibold text-neutral-600 ${
+                            collapsible ? "cursor-pointer rounded px-1 hover:text-neutral-900" : "cursor-default"
+                          }`}
+                        >
+                          <span className="inline-flex w-3 justify-center text-neutral-400">
+                            {collapsible ? <Chevron open={open} /> : null}
+                          </span>
+                          {g.label}
+                          <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600">
+                            {g.rows.length}
+                          </span>
+                        </button>
+                      </td>
+                    </tr>
+
+                    {open &&
+                      g.rows.map((f) => {
+                        const expanded = expandedId === f.id;
+                        return (
+                          <Fragment key={f.id}>
+                            <tr className={expanded ? "bg-blue-50/40" : "hover:bg-neutral-50"}>
+                              <td className="text-neutral-400">
+                                <button
+                                  type="button"
+                                  aria-label="รายละเอียดไฟล์"
+                                  aria-expanded={expanded}
+                                  className="rounded p-1 hover:text-neutral-700"
+                                  onClick={() => setExpandedId(expanded ? null : f.id)}
+                                >
+                                  <Chevron open={expanded} />
+                                </button>
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="text-left font-medium text-blue-700 hover:underline"
+                                  onClick={() => download(f)}
+                                >
+                                  {f.file_name}
+                                </button>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-neutral-500">
+                                  <span>{fmtSize(f.size_bytes)}</span>
+                                  {f.note && (
+                                    <>
+                                      <span className="text-neutral-300">·</span>
+                                      <span className="truncate">หมายเหตุ: {f.note}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                              <td>
+                                {f.clients ? (
+                                  <Link href={`/clients/${f.client_id}`} className="text-blue-600 underline">
+                                    {f.clients.name}
+                                  </Link>
+                                ) : (
+                                  <span className="text-neutral-400">—</span>
+                                )}
+                              </td>
+                              <td className="whitespace-nowrap">
+                                <div className="text-neutral-700">{fmtDate(f.uploaded_at)}</div>
+                                <div className="text-xs text-neutral-500">{fmtTime(f.uploaded_at)}</div>
+                              </td>
+                              <td className="text-right">
+                                {confirmingId === f.id ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span className="text-xs text-red-600">ลบไฟล์นี้?</span>
+                                    <button
+                                      type="button"
+                                      className="btn-danger px-2 py-1 text-xs"
+                                      onClick={() => remove(f)}
+                                    >
+                                      ลบ
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn px-2 py-1 text-xs"
+                                      onClick={() => setConfirmingId(null)}
+                                    >
+                                      ยกเลิก
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <button type="button" className="btn px-2 py-1 text-xs" onClick={() => download(f)}>
+                                      ดาวน์โหลด
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn px-2 py-1 text-xs"
+                                      onClick={() => startEditNote(f)}
+                                    >
+                                      หมายเหตุ
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-danger px-2 py-1 text-xs"
+                                      onClick={() => setConfirmingId(f.id)}
+                                    >
+                                      ลบ
+                                    </button>
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+
+                            {expanded && (
+                              <tr className="bg-neutral-50/70">
+                                <td></td>
+                                <td colSpan={4} className="pb-4">
+                                  <div className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+                                    <div>
+                                      <div className="text-xs text-neutral-500">ผู้อัปโหลด</div>
+                                      {f.uploaded_by ? (
+                                        <span className="inline-flex items-center text-neutral-800">
+                                          {f.uploaded_by}
+                                          <CopyButton text={f.uploaded_by} />
+                                        </span>
+                                      ) : (
+                                        <span className="text-neutral-400">—</span>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <div className="text-xs text-neutral-500">ขนาดไฟล์</div>
+                                      <div className="text-neutral-800">{fmtSize(f.size_bytes)}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-xs text-neutral-500">เวลาอัปโหลด</div>
+                                      <div className="text-neutral-800">
+                                        {fmtDate(f.uploaded_at)} {fmtTime(f.uploaded_at)}
+                                      </div>
+                                    </div>
+                                    <div className="sm:col-span-3">
+                                      <div className="text-xs text-neutral-500">ที่เก็บไฟล์</div>
+                                      <div className="break-all font-mono text-xs text-neutral-500">
+                                        {f.storage_path}
+                                      </div>
+                                    </div>
+                                    <div className="sm:col-span-3">
+                                      <div className="mb-1 text-xs text-neutral-500">หมายเหตุ</div>
+                                      {editingId === f.id ? (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <CreatableSelect
+                                            value={editNote}
+                                            onChange={setEditNote}
+                                            options={noteOptions}
+                                            className="w-64"
+                                            disabled={savingNote}
+                                          />
+                                          <button
+                                            type="button"
+                                            className="btn-primary px-2 py-1 text-xs"
+                                            disabled={savingNote}
+                                            onClick={() => saveNote(f.id)}
+                                          >
+                                            บันทึก
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn px-2 py-1 text-xs"
+                                            disabled={savingNote}
+                                            onClick={() => setEditingId(null)}
+                                          >
+                                            ยกเลิก
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-2">
+                                          <span>{f.note || <span className="text-neutral-400">—</span>}</span>
+                                          <button
+                                            type="button"
+                                            className="text-xs text-blue-600 underline"
+                                            onClick={() => startEditNote(f)}
+                                          >
+                                            แก้ไข
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                  </Fragment>
+                );
+              })}
+
+            {!loading && !grouped.length && (
+              <tr>
+                <td colSpan={5} className="py-14 text-center">
+                  <div className="flex flex-col items-center gap-1.5 text-neutral-500">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" />
+                    </svg>
+                    <p className="text-sm font-medium text-neutral-600">
+                      {search.trim() || hasFilter ? "ไม่พบไฟล์ที่ตรงกับเงื่อนไข" : "ยังไม่มีไฟล์"}
+                    </p>
+                    <p className="text-xs">
+                      {search.trim() || hasFilter
+                        ? "ลองเปลี่ยนคำค้นหาหรือล้างตัวกรอง"
+                        : "เริ่มต้นด้วยการอัปโหลดไฟล์ด้านบน"}
+                    </p>
+                  </div>
+                </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
     </>
   );
 }
