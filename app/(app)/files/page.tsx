@@ -5,6 +5,10 @@ import Link from "next/link";
 import { deleteFileRecord, listFiles, recordFile, updateFileNote } from "@/lib/actions/files";
 import CopyButton from "@/components/copy-button";
 import CreatableSelect from "@/components/creatable-select";
+import PageHeader from "@/components/page-header";
+import SearchInput from "@/components/search-input";
+import EmptyState from "@/components/empty-state";
+import InlineConfirm from "@/components/inline-confirm";
 import { ToastStack, useToasts } from "@/components/toast";
 
 type FileRow = {
@@ -285,23 +289,23 @@ export default function FilesPage() {
     <>
       <input ref={inputRef} type="file" multiple className="hidden" onChange={upload} disabled={uploading} />
 
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-neutral-900">ไฟล์</h1>
-          <p className="mt-0.5 text-sm text-neutral-500">อัปโหลด ค้นหา และจัดการไฟล์ทั้งหมด</p>
-        </div>
-        <button
-          className="btn-primary inline-flex items-center gap-2 px-4 py-2"
-          onClick={openPicker}
-          disabled={uploading}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M8 11V3M5 6l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M3 13h10" strokeLinecap="round" />
-          </svg>
-          {uploading ? "กำลังอัปโหลด..." : "อัปโหลดไฟล์"}
-        </button>
-      </div>
+      <PageHeader
+        title="ไฟล์"
+        subtitle="อัปโหลด ค้นหา และจัดการไฟล์ทั้งหมด"
+        actions={
+          <button
+            className="btn-primary inline-flex items-center gap-2 px-4 py-2"
+            onClick={openPicker}
+            disabled={uploading}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M8 11V3M5 6l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M3 13h10" strokeLinecap="round" />
+            </svg>
+            {uploading ? "กำลังอัปโหลด..." : "อัปโหลดไฟล์"}
+          </button>
+        }
+      />
 
       {/* Upload zone */}
       <div className="card mb-5">
@@ -397,30 +401,11 @@ export default function FilesPage() {
       {/* Search + filters */}
       <div className="mb-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[220px] flex-1">
-            <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-neutral-400">
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-                <circle cx="7" cy="7" r="4.5" />
-                <path d="M10.5 10.5L14 14" strokeLinecap="round" />
-              </svg>
-            </span>
-            <input
-              className="input pl-9 pr-8"
-              placeholder="ค้นหาไฟล์ ลูกค้า ผู้ัปโหลด หรือหมายเหตุ..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {search && (
-              <button
-                type="button"
-                aria-label="ล้างคำค้นหา"
-                className="absolute top-1/2 right-2 -translate-y-1/2 text-lg leading-none text-neutral-400 hover:text-neutral-600"
-                onClick={() => setSearch("")}
-              >
-                ×
-              </button>
-            )}
-          </div>
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="ค้นหาไฟล์ ลูกค้า ผู้ัปโหลด หรือหมายเหตุ..."
+          />
           <button
             type="button"
             className={`btn inline-flex items-center gap-2 ${showFilters ? "border-blue-400 text-blue-700" : ""}`}
@@ -609,23 +594,12 @@ export default function FilesPage() {
                               </td>
                               <td className="text-right">
                                 {confirmingId === f.id ? (
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <span className="text-xs text-red-600">ลบไฟล์นี้?</span>
-                                    <button
-                                      type="button"
-                                      className="btn-danger px-2 py-1 text-xs"
-                                      onClick={() => remove(f)}
-                                    >
-                                      ลบ
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn px-2 py-1 text-xs"
-                                      onClick={() => setConfirmingId(null)}
-                                    >
-                                      ยกเลิก
-                                    </button>
-                                  </span>
+                                  <InlineConfirm
+                                    message="ลบไฟล์นี้?"
+                                    confirmLabel="ลบ"
+                                    onConfirm={() => remove(f)}
+                                    onCancel={() => setConfirmingId(null)}
+                                  />
                                 ) : (
                                   <span className="inline-flex items-center gap-1.5">
                                     <button type="button" className="btn px-2 py-1 text-xs" onClick={() => download(f)}>
@@ -736,20 +710,15 @@ export default function FilesPage() {
 
             {!loading && !grouped.length && (
               <tr>
-                <td colSpan={5} className="py-14 text-center">
-                  <div className="flex flex-col items-center gap-1.5 text-neutral-500">
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" />
-                    </svg>
-                    <p className="text-sm font-medium text-neutral-600">
-                      {search.trim() || hasFilter ? "ไม่พบไฟล์ที่ตรงกับเงื่อนไข" : "ยังไม่มีไฟล์"}
-                    </p>
-                    <p className="text-xs">
-                      {search.trim() || hasFilter
+                <td colSpan={5}>
+                  <EmptyState
+                    title={search.trim() || hasFilter ? "ไม่พบไฟล์ที่ตรงกับเงื่อนไข" : "ยังไม่มีไฟล์"}
+                    hint={
+                      search.trim() || hasFilter
                         ? "ลองเปลี่ยนคำค้นหาหรือล้างตัวกรอง"
-                        : "เริ่มต้นด้วยการอัปโหลดไฟล์ด้านบน"}
-                    </p>
-                  </div>
+                        : "เริ่มต้นด้วยการอัปโหลดไฟล์ด้านบน"
+                    }
+                  />
                 </td>
               </tr>
             )}

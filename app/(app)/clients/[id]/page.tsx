@@ -19,6 +19,11 @@ import {
 import CredentialRow from "@/components/credential-row";
 import FileSection from "@/components/file-section";
 import CopyButton from "@/components/copy-button";
+import Badge from "@/components/badge";
+import EmptyState from "@/components/empty-state";
+import InlineConfirm from "@/components/inline-confirm";
+import PasswordValue from "@/components/password-value";
+import { ToastStack, useToasts } from "@/components/toast";
 
 type Client = {
   id: string;
@@ -76,12 +81,28 @@ const emptyShareholder = {
   notes: "",
 };
 
-function ValueRow({ label, value }: { label: string; value: string | null | undefined }) {
+function ValueRow({
+  label,
+  value,
+  href,
+}: {
+  label: string;
+  value: string | null | undefined;
+  href?: string;
+}) {
   const text = value || "—";
   return (
     <div className="flex items-start justify-between gap-3 border-b border-neutral-100 py-2 last:border-b-0">
       <span className="shrink-0 text-xs font-medium text-neutral-500">{label}</span>
-      <span className="min-w-0 text-right text-sm text-neutral-800">{text}</span>
+      <span className="flex min-w-0 items-center gap-1 text-right text-sm text-neutral-800">
+        <span className="min-w-0 break-words">{text}</span>
+        {value && href && (
+          <a href={href} className="shrink-0 text-xs text-blue-600 underline">
+            เปิด
+          </a>
+        )}
+        {value && <CopyButton text={value} />}
+      </span>
     </div>
   );
 }
@@ -101,6 +122,10 @@ export default function ClientDetailPage() {
   const [showEditForm, setShowEditForm] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteInput, setDeleteInput] = useState("");
+  const [confirmingCredId, setConfirmingCredId] = useState<string | null>(null);
+  const [confirmingShId, setConfirmingShId] = useState<string | null>(null);
+  const [savingClient, setSavingClient] = useState(false);
+  const { toasts, push, dismiss } = useToasts();
 
   const load = useCallback(async () => {
     const d = await getClientDetail(id);
@@ -126,27 +151,43 @@ export default function ClientDetailPage() {
   }, [load]);
 
   async function saveClient() {
-    await updateClient(id, edit);
-    setShowEditForm(false);
-    load();
+    if (savingClient) return;
+    setSavingClient(true);
+    try {
+      await updateClient(id, edit);
+      setShowEditForm(false);
+      await load();
+      push({ type: "success", message: "บันทึกข้อมูลลูกค้าแล้ว" });
+    } catch {
+      push({ type: "error", message: "บันทึกข้อมูลไม่สำเร็จ" });
+    } finally {
+      setSavingClient(false);
+    }
   }
 
   async function deleteClient() {
-    await deleteClientAction(id);
-    window.location.href = "/clients";
+    try {
+      await deleteClientAction(id);
+      window.location.href = "/clients";
+    } catch {
+      push({ type: "error", message: "ลบลูกค้าไม่สำเร็จ" });
+    }
   }
 
   async function saveCredential(e: React.FormEvent) {
     e.preventDefault();
-    if (editingCredId) {
-      await updateCredentialAction(editingCredId, cred);
-    } else {
-      await addCredentialAction(id, cred);
+    const isEdit = Boolean(editingCredId);
+    try {
+      if (editingCredId) await updateCredentialAction(editingCredId, cred);
+      else await addCredentialAction(id, cred);
+      setCred(emptyCred);
+      setEditingCredId(null);
+      setShowCredForm(false);
+      await load();
+      push({ type: "success", message: isEdit ? "แก้ไขข้อมูลเข้าระบบแล้ว" : "เพิ่มข้อมูลเข้าระบบแล้ว" });
+    } catch {
+      push({ type: "error", message: "บันทึกข้อมูลเข้าระบบไม่สำเร็จ" });
     }
-    setCred(emptyCred);
-    setEditingCredId(null);
-    setShowCredForm(false);
-    load();
   }
 
   function startEditCredential(c: Credential) {
@@ -168,33 +209,56 @@ export default function ClientDetailPage() {
   }
 
   async function deleteCredential(cid: string) {
-    if (!confirm("Delete this credential?")) return;
-    await deleteCredentialAction(cid);
-    load();
+    setConfirmingCredId(null);
+    try {
+      await deleteCredentialAction(cid);
+      await load();
+      push({ type: "success", message: "ลบข้อมูลเข้าระบบแล้ว" });
+    } catch {
+      push({ type: "error", message: "ลบข้อมูลเข้าระบบไม่สำเร็จ" });
+    }
   }
 
   async function addShareholder(e: React.FormEvent) {
     e.preventDefault();
-    await addShareholderAction(id, sh);
-    setSh(emptyShareholder);
-    setShowShForm(false);
-    load();
+    try {
+      await addShareholderAction(id, sh);
+      setSh(emptyShareholder);
+      setShowShForm(false);
+      await load();
+      push({ type: "success", message: "เพิ่มผู้ถือหุ้นแล้ว" });
+    } catch {
+      push({ type: "error", message: "เพิ่มผู้ถือหุ้นไม่สำเร็จ" });
+    }
   }
 
   async function deleteShareholder(sid: string) {
-    if (!confirm("Delete this shareholder?")) return;
-    await deleteShareholderAction(sid);
-    load();
+    setConfirmingShId(null);
+    try {
+      await deleteShareholderAction(sid);
+      await load();
+      push({ type: "success", message: "ลบผู้ถือหุ้นแล้ว" });
+    } catch {
+      push({ type: "error", message: "ลบผู้ถือหุ้นไม่สำเร็จ" });
+    }
   }
 
   async function toggleDirector(shh: Shareholder) {
-    await setDirector(id, shh.id);
-    load();
+    try {
+      await setDirector(id, shh.id);
+      await load();
+    } catch {
+      push({ type: "error", message: "ตั้งกรรมการไม่สำเร็จ" });
+    }
   }
 
   async function toggleTask(task: TaskInstance) {
-    await toggleTaskStatus(task.id, task.status === "done" ? "todo" : "done");
-    load();
+    try {
+      await toggleTaskStatus(task.id, task.status === "done" ? "todo" : "done");
+      await load();
+    } catch {
+      push({ type: "error", message: "อัปเดตงานไม่สำเร็จ" });
+    }
   }
 
   if (!client) return <p className="text-sm text-neutral-500">กำลังโหลด...</p>;
@@ -216,9 +280,9 @@ export default function ClientDetailPage() {
               {client.tax_id ? `เลขภาษี ${client.tax_id}` : "ยังไม่มีเลขผู้เสียภาษี"}
             </p>
           </div>
-          <span className="shrink-0 rounded-full bg-green-50 px-2 py-1 text-xs text-green-700">
+          <Badge tone={client.status === "active" ? "success" : "neutral"}>
             {client.status === "active" ? "ใช้งาน" : "เก็บถาวร"}
-          </span>
+          </Badge>
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2">
@@ -262,8 +326,8 @@ export default function ClientDetailPage() {
         </div>
         {!showEditForm ? (
           <div>
-            <ValueRow label="โทรศัพท์" value={client.phone} />
-            <ValueRow label="อีเมล" value={client.email} />
+            <ValueRow label="โทรศัพท์" value={client.phone} href={client.phone ? `tel:${client.phone}` : undefined} />
+            <ValueRow label="อีเมล" value={client.email} href={client.email ? `mailto:${client.email}` : undefined} />
             <ValueRow label="ที่อยู่" value={client.address} />
             <ValueRow label="หมายเหตุ" value={client.notes} />
             <ValueRow label="กรรมการ" value={director?.name} />
@@ -294,8 +358,8 @@ export default function ClientDetailPage() {
               <label className="label">หมายเหตุ</label>
               <textarea className="input" rows={2} value={edit.notes ?? ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} />
             </div>
-            <button className="btn-primary w-fit sm:col-span-2" onClick={saveClient}>
-              บันทึกการแก้ไข
+            <button className="btn-primary w-fit sm:col-span-2" onClick={saveClient} disabled={savingClient}>
+              {savingClient ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
             </button>
           </div>
         )}
@@ -360,12 +424,23 @@ export default function ClientDetailPage() {
               <div className="mb-2 flex items-start justify-between gap-2">
                 <h3 className="text-sm font-medium">{c.label}</h3>
                 <div className="flex shrink-0 items-center gap-3">
-                  <button className="text-xs text-blue-600 underline" onClick={() => startEditCredential(c)}>
-                    แก้ไข
-                  </button>
-                  <button className="text-xs text-red-600 underline" onClick={() => deleteCredential(c.id)}>
-                    ลบ
-                  </button>
+                  {confirmingCredId === c.id ? (
+                    <InlineConfirm
+                      message="ลบข้อมูลนี้?"
+                      confirmLabel="ลบ"
+                      onConfirm={() => deleteCredential(c.id)}
+                      onCancel={() => setConfirmingCredId(null)}
+                    />
+                  ) : (
+                    <>
+                      <button className="text-xs text-blue-600 underline" onClick={() => startEditCredential(c)}>
+                        แก้ไข
+                      </button>
+                      <button className="text-xs text-red-600 underline" onClick={() => setConfirmingCredId(c.id)}>
+                        ลบ
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
               <div className="space-y-1 text-sm">
@@ -378,15 +453,12 @@ export default function ClientDetailPage() {
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-neutral-500">รหัสผ่าน</span>
-                  <span className="flex min-w-0 items-center gap-1">
-                    <span className="truncate">{c.password || "—"}</span>
-                    {c.password && <CopyButton text={c.password} />}
-                  </span>
+                  <PasswordValue value={c.password} />
                 </div>
               </div>
             </div>
           ))}
-          {!credentials.length && <p className="text-sm text-neutral-500">ไม่มีข้อมูล</p>}
+          {!credentials.length && <EmptyState title="ยังไม่มีข้อมูลเข้าระบบ" hint="กดเพิ่มข้อมูลเข้าระบบด้านบน" />}
         </div>
         <table className="table-base hidden md:table">
           <thead>
@@ -397,12 +469,19 @@ export default function ClientDetailPage() {
               <CredentialRow
                 key={c.id}
                 credential={c}
-                onDelete={() => deleteCredential(c.id)}
+                confirming={confirmingCredId === c.id}
                 onEdit={() => startEditCredential(c)}
+                onRequestDelete={() => setConfirmingCredId(c.id)}
+                onConfirmDelete={() => deleteCredential(c.id)}
+                onCancelDelete={() => setConfirmingCredId(null)}
               />
             ))}
             {!credentials.length && (
-              <tr><td colSpan={4} className="text-neutral-500">ไม่มีข้อมูล</td></tr>
+              <tr>
+                <td colSpan={4}>
+                  <EmptyState title="ยังไม่มีข้อมูลเข้าระบบ" hint="กดเพิ่มข้อมูลเข้าระบบด้านบน" />
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -501,9 +580,18 @@ export default function ClientDetailPage() {
                   <h3 className="text-sm font-medium">{s.name}</h3>
                   {s.is_director && <p className="text-xs text-blue-700">กรรมการผู้จัดการ / ผู้มีอำนาจลงนาม</p>}
                 </div>
-                <button className="text-xs text-red-600 underline" onClick={() => deleteShareholder(s.id)}>
-                  ลบ
-                </button>
+                {confirmingShId === s.id ? (
+                  <InlineConfirm
+                    message="ลบผู้ถือหุ้น?"
+                    confirmLabel="ลบ"
+                    onConfirm={() => deleteShareholder(s.id)}
+                    onCancel={() => setConfirmingShId(null)}
+                  />
+                ) : (
+                  <button className="text-xs text-red-600 underline" onClick={() => setConfirmingShId(s.id)}>
+                    ลบ
+                  </button>
+                )}
               </div>
               <div className="space-y-1 text-sm text-neutral-700">
                 <p>เลขภาษี: {s.tax_id || "—"}</p>
@@ -518,7 +606,7 @@ export default function ClientDetailPage() {
               )}
             </div>
           ))}
-          {!shareholders.length && <p className="text-sm text-neutral-500">ไม่มีข้อมูล</p>}
+          {!shareholders.length && <EmptyState title="ยังไม่มีผู้ถือหุ้น" hint="กดเพิ่มผู้ถือหุ้นด้านบน" />}
         </div>
         <table className="table-base hidden md:table">
           <thead>
@@ -548,18 +636,31 @@ export default function ClientDetailPage() {
                 <td>{s.email || "—"}</td>
                 <td>{s.phone || "—"}</td>
                 <td>{s.shares ?? "—"}</td>
-                <td>
-                  <button
-                    className="text-xs text-red-600 underline"
-                    onClick={() => deleteShareholder(s.id)}
-                  >
-                    ลบ
-                  </button>
+                <td className="text-right">
+                  {confirmingShId === s.id ? (
+                    <InlineConfirm
+                      message="ลบ?"
+                      confirmLabel="ลบ"
+                      onConfirm={() => deleteShareholder(s.id)}
+                      onCancel={() => setConfirmingShId(null)}
+                    />
+                  ) : (
+                    <button
+                      className="text-xs text-red-600 underline"
+                      onClick={() => setConfirmingShId(s.id)}
+                    >
+                      ลบ
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
             {!shareholders.length && (
-              <tr><td colSpan={7} className="text-neutral-500">ไม่มีข้อมูล</td></tr>
+              <tr>
+                <td colSpan={7}>
+                  <EmptyState title="ยังไม่มีผู้ถือหุ้น" hint="กดเพิ่มผู้ถือหุ้นด้านบน" />
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -585,7 +686,7 @@ export default function ClientDetailPage() {
               </span>
             </label>
           ))}
-          {!tasks.length && <p className="text-sm text-neutral-500">ไม่มีงาน</p>}
+          {!tasks.length && <EmptyState title="ยังไม่มีงาน" />}
         </div>
         <table className="table-base hidden md:table">
           <thead>
@@ -603,7 +704,11 @@ export default function ClientDetailPage() {
               </tr>
             ))}
             {!tasks.length && (
-              <tr><td colSpan={4} className="text-neutral-500">ไม่มีงาน</td></tr>
+              <tr>
+                <td colSpan={4}>
+                  <EmptyState title="ยังไม่มีงาน" />
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -647,6 +752,8 @@ export default function ClientDetailPage() {
           </div>
         )}
       </section>
+
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }
