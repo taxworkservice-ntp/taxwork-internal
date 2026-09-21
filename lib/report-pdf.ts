@@ -5,7 +5,6 @@ import {
   type Color,
   type PDFImage,
 } from "pdf-lib";
-import { thaiBahtText } from "@/lib/thai-baht-text";
 
 const THAI_MONTHS_FULL = [
   "มกราคม",
@@ -109,7 +108,6 @@ const COLOR_INK = rgb(0.14, 0.14, 0.16);
 const COLOR_PANEL = rgb(0.97, 0.97, 0.97);
 const COLOR_PANEL_ALT = rgb(0.955, 0.955, 0.96);
 const COLOR_ZEBRA = rgb(0.95, 0.95, 0.95);
-const COLOR_TOTAL_BG = rgb(0.86, 0.86, 0.86);
 
 export type CoverStyle = "modern" | "classic";
 
@@ -147,12 +145,6 @@ function periodToThai(periodLabel: string): string {
   const [y, m] = periodLabel.split("-").map(Number);
   if (!y || !m || m < 1 || m > 12) return periodLabel;
   return `${THAI_MONTHS_FULL[m - 1]} ${y + 543}`;
-}
-
-function nowThai(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear() + 543} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 async function loadFont(url: string): Promise<ArrayBuffer> {
@@ -261,7 +253,6 @@ class ReportRenderer {
   doc!: PDFDocument;
   page!: PDFPage;
   y!: number;
-  footerDate: string;
   sim = false;
   pageIndex = 0;
   slipPageByAtt = new WeakMap<ReportAttachment, number>();
@@ -274,10 +265,6 @@ class ReportRenderer {
   private ctx = this.canvas.getContext("2d")!;
   private textImageCache = new Map<string, PDFImage>();
   private bankLogoCache = new Map<ArrayBuffer, PDFImage>();
-
-  constructor() {
-    this.footerDate = nowThai();
-  }
 
   async init() {
     this.doc = await PDFDocument.create();
@@ -459,44 +446,17 @@ class ReportRenderer {
     this.y -= 10;
   }
 
-  async drawFooters(confidential = false) {
+  /**
+   * Draw how many pages the document has, once, on the cover only.
+   * Attached evidence/document pages are intentionally left unmarked.
+   */
+  async drawCoverPageCount() {
     const pages = this.doc.getPages();
-    for (let i = 0; i < pages.length; i++) {
-      const p = pages[i];
-      p.drawLine({
-        start: { x: M, y: M - 14 },
-        end: { x: PAGE_W - M, y: M - 14 },
-        thickness: 0.5,
-        color: COLOR_BORDER,
-      });
-      await this.drawTextCanvas(
-        `ออกเอกสาร ${this.footerDate}`,
-        M,
-        M - 26,
-        { size: 8, color: COLOR_MUTED },
-        p
-      );
-      const label = `หน้า ${i + 1}/${pages.length}`;
-      const w = this.measureText(label, 8, false);
-      await this.drawTextCanvas(
-        label,
-        PAGE_W - M - w,
-        M - 26,
-        { size: 8, color: COLOR_MUTED },
-        p
-      );
-      if (confidential) {
-        const note = "เอกสารลับเฉพาะสำหรับลูกค้า — ห้ามเผยแพร่";
-        const nw = this.measureText(note, 8, false);
-        await this.drawTextCanvas(
-          note,
-          (PAGE_W - nw) / 2,
-          M - 26,
-          { size: 8, color: COLOR_MUTED },
-          p
-        );
-      }
-    }
+    if (!pages.length) return;
+    const label = `เอกสารนี้มีทั้งหมด ${pages.length} หน้า`;
+    // Bottom-left so it never collides with the classic cover watermark
+    // (bottom-right). Only the cover is marked.
+    await this.drawTextCanvas(label, M, M - 6, { size: 9, color: COLOR_MUTED }, pages[0]);
   }
 }
 
@@ -745,11 +705,9 @@ async function drawCoverClassic(
   await drawTableHeader();
 
   const filings = opts.filings as SectionFiling[];
-  let total = 0;
 
   for (let i = 0; i < filings.length; i++) {
     const f = filings[i];
-    total += Number(f.amount ?? 0);
     const itemText = f.form_code?.trim() || "-";
     const detText = f.description?.trim() || "-";
     const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 12);
@@ -796,24 +754,6 @@ async function drawCoverClassic(
       });
     r.y -= rowH;
   }
-
-  const totalRowH = 26;
-  r.y -= 4;
-  r.ensureSpace(totalRowH + 40);
-  const totalLabel = "ยอดรวมทั้งสิ้น";
-  await r.drawTextCanvas(totalLabel, itemX + 6, r.y - 15, {
-    size: 11,
-    bold: true,
-  });
-  const totalText = fmtMoney(total);
-  const totalTextW = r.measureText(totalText, 11, true);
-  await r.drawTextCanvas(totalText, amtX + amtW - 6 - totalTextW, r.y - 15, {
-    size: 11,
-    bold: true,
-  });
-  r.y -= totalRowH;
-
-  await r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
 }
 
 async function drawCoverModern(
@@ -1071,11 +1011,9 @@ async function drawCoverModern(
   await drawTableHeader();
 
   const filings = opts.filings as SectionFiling[];
-  let total = 0;
 
   for (let i = 0; i < filings.length; i++) {
     const f = filings[i];
-    total += Number(f.amount ?? 0);
     const itemText = f.form_code?.trim() || "-";
     const detText = f.description?.trim() || "-";
 
@@ -1162,33 +1100,6 @@ async function drawCoverModern(
       });
     r.y -= rowH;
   }
-
-  const totalRowH = 26;
-  r.y -= 3;
-  r.ensureSpace(totalRowH + 34);
-  const totalTop = r.y;
-  if (!r.sim)
-    r.page.drawRectangle({
-      x: M,
-      y: totalTop - totalRowH,
-      width: CONTENT_W,
-      height: totalRowH,
-      color: COLOR_TOTAL_BG,
-    });
-  const totalLabel = "ยอดรวมทั้งสิ้น";
-  await r.drawTextCanvas(totalLabel, itemX + 6, totalTop - 16, {
-    size: 11,
-    bold: true,
-  });
-  const totalText = fmtMoney(total);
-  const totalTextW = r.measureText(totalText, 11, true);
-  await r.drawTextCanvas(totalText, amtX + amtW - 6 - totalTextW, totalTop - 16, {
-    size: 11,
-    bold: true,
-  });
-  r.y = totalTop - totalRowH - 10;
-
-  await r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
 }
 
 function collectEvidenceItems(filings: SectionFiling[]): ReportAttachment[] {
@@ -1446,8 +1357,9 @@ export async function buildMonthlyReportPdf(
   if (!preview) {
     await drawEvidencePages(r, filings);
     await drawDocumentPages(r, opts.documents ?? []);
+    // Page count goes on the cover only — attached documents stay clean.
+    await r.drawCoverPageCount();
   }
-  await r.drawFooters(style === "modern");
 
   return r.doc.save();
 }
