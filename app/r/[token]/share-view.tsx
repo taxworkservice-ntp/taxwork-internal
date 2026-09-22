@@ -346,15 +346,22 @@ export default function ShareView({
                               hint="แตะที่สลิปเพื่อคัดลอกรูป"
                             />
                           ) : (
-                            <a
-                              key={slip.id}
-                              href={`/r/${token}/slip/${slip.id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="block rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-center text-sm font-medium text-neutral-800"
-                            >
-                              เปิดสลิป (PDF) · {slip.file_name}
-                            </a>
+                            <div key={slip.id}>
+                              <a
+                                href={`/r/${token}/slip/${slip.id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-center text-sm font-semibold text-emerald-700 active:bg-emerald-100"
+                              >
+                                เปิดสลิป (PDF)
+                              </a>
+                              <div
+                                className="mt-1 truncate text-xs text-neutral-500"
+                                title={slip.file_name}
+                              >
+                                {slip.file_name}
+                              </div>
+                            </div>
                           )
                         )}
                       </div>
