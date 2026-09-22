@@ -120,6 +120,22 @@ function fmtMoney(n: number): string {
   });
 }
 
+/** Strip grouping/commas and non-numeric chars, returning a clean number string. */
+function parseAmountInput(raw: string): string {
+  const cleaned = raw.replace(/,/g, "").replace(/[^0-9.]/g, "");
+  const parts = cleaned.split(".");
+  const intPart = parts[0] ?? "";
+  const decPart = parts.length > 1 ? parts[1].slice(0, 2) : null;
+  const out = decPart === null ? intPart : `${intPart}.${decPart}`;
+  return out;
+}
+
+/** Amount for display: thousands-separated, 2 decimals (e.g. "1,001.33"). */
+function fmtAmountInput(raw: string): string {
+  const n = Number(parseAmountInput(raw) || "0");
+  return fmtMoney(n);
+}
+
 function fmtSize(bytes: number): string {
   if (bytes > 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
   if (bytes > 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -1650,11 +1666,13 @@ export default function ReportsPage() {
                 <label className="label">จำนวนเงิน</label>
                 <input
                   className="input"
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  inputMode="decimal"
                   value={newAmount}
-                  onChange={(e) => setNewAmount(e.target.value)}
+                  onChange={(e) => setNewAmount(parseAmountInput(e.target.value))}
+                  onBlur={() =>
+                    setNewAmount((v) => (v ? fmtAmountInput(v) : v))
+                  }
+                  placeholder="0.00"
                   disabled={reportLocked}
                 />
               </div>
@@ -2447,7 +2465,7 @@ function FilingCard({
   const [draft, setDraft] = useState({
     form_code: filing.form_code,
     description: filing.description ?? "",
-    amount: String(Number(filing.amount)),
+    amount: fmtAmountInput(String(Number(filing.amount))),
     payment_method: filing.payment_method ?? "",
   });
 
@@ -2463,10 +2481,10 @@ function FilingCard({
           ? prev.description
           : filing.description ?? "",
       amount:
-        Number(prev.amount) !== Number(filing.amount) &&
+        Number(parseAmountInput(prev.amount) || "0") !== Number(filing.amount) &&
         editingRef.current === "amount"
           ? prev.amount
-          : String(Number(filing.amount)),
+          : fmtAmountInput(String(Number(filing.amount))),
       payment_method:
         prev.payment_method !== (filing.payment_method ?? "") &&
         editingRef.current === "payment_method"
@@ -2480,9 +2498,9 @@ function FilingCard({
   ) {
     const raw = draft[key];
     if (key === "amount") {
-      const num = Number(raw) || 0;
+      const num = Number(parseAmountInput(raw) || "0");
       if (num !== Number(filing.amount)) onPatch(filing.id, { amount: num });
-      else setDraft((p) => ({ ...p, amount: String(Number(filing.amount)) }));
+      else setDraft((p) => ({ ...p, amount: fmtAmountInput(String(num)) }));
       return;
     }
     const val = raw.trim() || null;
@@ -2521,10 +2539,20 @@ function FilingCard({
           <label className="label">จำนวนเงิน</label>
           <input
             className="input"
-            type="number"
-            min="0"
-            step="0.01"
-            {...fieldHandlers("amount")}
+            inputMode="decimal"
+            value={draft.amount}
+            disabled={locked}
+            onFocus={() => {
+              editingRef.current = "amount";
+            }}
+            onBlur={() => {
+              editingRef.current = null;
+              commitField("amount");
+            }}
+            onChange={(e) =>
+              setDraft((p) => ({ ...p, amount: parseAmountInput(e.target.value) }))
+            }
+            placeholder="0.00"
           />
         </div>
         <div className="order-3 col-span-2 lg:order-none lg:col-span-1">

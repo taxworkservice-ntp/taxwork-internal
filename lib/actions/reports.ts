@@ -465,9 +465,12 @@ export async function copyReportToNewIssue(
     const pad = (n: number) => String(n).padStart(2, "0");
     return `${ny}-${pad(nm)}-${pad(nd)}`;
   };
-  const values: unknown[] = [];
-  const groups = prev.map((f, i) => {
-    const r = f as {
+  // Insert one row at a time with the tagged template. A single multi-row
+  // VALUES with all-parameter values can trip Postgres type inference
+  // ("could not determine data type of parameter $1").
+  const inserted: Record<string, unknown>[] = [];
+  for (let i = 0; i < prev.length; i++) {
+    const r = prev[i] as {
       form_code: string;
       description: string | null;
       amount: unknown;
@@ -476,27 +479,11 @@ export async function copyReportToNewIssue(
       bank_account_id: string | null;
       sort_order: unknown;
     };
-    const base = values.length;
-    values.push(
-      targetClientId,
-      targetPeriod,
-      target.id,
-      r.form_code,
-      r.description,
-      num(r.amount),
-      r.due_date == null ? null : shiftMonth(str(r.due_date)),
-      r.payment_method ?? null,
-      r.bank_account_id,
-      i + 1
-    );
-    const ph = (k: number) => `$${base + k + 1}`;
-    return `(${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(ph).join(",")})`;
-  });
-  const inserted = (await sql.query(
-    `insert into monthly_filings (client_id, period_label, report_id, form_code, description, amount, due_date, payment_method, bank_account_id, sort_order)
-     values ${groups.join(",")} returning *`,
-    values
-  )) as Record<string, unknown>[];
+    const rows = (await sql`insert into monthly_filings (client_id, period_label, report_id, form_code, description, amount, due_date, payment_method, bank_account_id, sort_order)
+      values (${targetClientId}, ${targetPeriod}, ${target.id}, ${r.form_code}, ${r.description}, ${num(r.amount)}, ${r.due_date == null ? null : shiftMonth(str(r.due_date))}, ${r.payment_method ?? null}, ${r.bank_account_id}, ${i + 1})
+      returning *`) as Record<string, unknown>[];
+    if (rows[0]) inserted.push(rows[0]);
+  }
   return inserted.map((f) => toFiling(f, []));
 }
 
