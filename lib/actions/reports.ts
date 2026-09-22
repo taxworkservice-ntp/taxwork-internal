@@ -258,7 +258,15 @@ export type AppSettingsResult =
 export async function getAppSettings(): Promise<AppSettingsResult> {
   try {
     await requireUser();
-    const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer from app_settings where id=1`) as AppSettings[];
+    let rows: AppSettings[];
+    try {
+      rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer from app_settings where id=1`) as AppSettings[];
+    } catch {
+      // report_renderer column not migrated yet — fall back to the legacy
+      // schema so the settings page keeps working.
+      const legacy = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as Omit<AppSettings, "report_renderer">[];
+      rows = legacy.map((r) => ({ ...r, report_renderer: null }));
+    }
     return { ok: true, settings: rows[0] ?? null };
   } catch (error) {
     console.error("getAppSettings failed:", error);
@@ -290,9 +298,16 @@ export async function saveReportBranding(input: {
     await requireUser();
     const coverStyle = input.coverStyle === "classic" ? "classic" : "modern";
     const renderer = normalizeRenderer(input.reportRenderer);
-    await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, updated_at)
-      values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${new Date().toISOString()})
-      on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, updated_at=${new Date().toISOString()}`;
+    try {
+      await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, updated_at)
+        values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${new Date().toISOString()})
+        on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, updated_at=${new Date().toISOString()}`;
+    } catch {
+      // report_renderer column not migrated yet — save branding without it.
+      await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
+        values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${new Date().toISOString()})
+        on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${new Date().toISOString()}`;
+    }
     return { ok: true };
   } catch (error) {
     console.error("saveReportBranding failed:", error);
