@@ -2472,25 +2472,15 @@ function FilingCard({
             </button>
           </>
         ) : (
-          <label
-            className={`btn text-xs ${locked || slipBusy ? "pointer-events-none opacity-50" : "cursor-pointer"}`}
-          >
-            {slipBusy ? "กำลังอัปโหลด..." : "+ แนบสลิป"}
-            <input
-              type="file"
-              accept="image/png,image/jpeg,application/pdf"
-              className="hidden"
-              disabled={locked || slipBusy}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) onUploadSlip(file);
-                e.target.value = "";
-              }}
-            />
-          </label>
+          <DropZone
+            label={slipBusy ? "กำลังอัปโหลด..." : "+ แนบสลิป"}
+            accept="image/png,image/jpeg,application/pdf"
+            disabled={locked || slipBusy}
+            onFile={onUploadSlip}
+          />
         )}
         <span className="text-[11px] text-neutral-400">
-          ใบนำฝากจะถูกวางหลังหน้าปก
+          ลากไฟล์มาวางได้ · วางหลังหน้าปก
         </span>
       </div>
 
@@ -2512,28 +2502,67 @@ function FilingCard({
             </button>
           </>
         ) : (
-          <label
-            className={`btn text-xs ${locked || qrBusy ? "pointer-events-none opacity-50" : "cursor-pointer"}`}
-          >
-            {qrBusy ? "กำลังอัปโหลด..." : "+ แนบ QR"}
-            <input
-              type="file"
-              accept="image/png,image/jpeg"
-              className="hidden"
-              disabled={locked || qrBusy}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) onUploadQr(file);
-                e.target.value = "";
-              }}
-            />
-          </label>
+          <DropZone
+            label={qrBusy ? "กำลังอัปโหลด..." : "+ แนบ QR"}
+            accept="image/png,image/jpeg"
+            disabled={locked || qrBusy}
+            onFile={onUploadQr}
+          />
         )}
         <span className="text-[11px] text-neutral-400">
-          QR สร้างใหม่ต่อการยื่นแต่ละครั้ง
+          ลากไฟล์มาวางได้ · QR สร้างใหม่ต่อการยื่น
         </span>
       </div>
     </div>
+  );
+}
+
+function DropZone({
+  label,
+  accept,
+  disabled,
+  onFile,
+}: {
+  label: string;
+  accept: string;
+  disabled?: boolean;
+  onFile: (file: File) => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <label
+      onDragOver={(e) => {
+        if (disabled) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        if (disabled) return;
+        e.preventDefault();
+        setDragging(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file) onFile(file);
+      }}
+      className={`btn text-xs ${dragging ? "border-blue-500 bg-blue-50" : ""} ${
+        disabled ? "pointer-events-none opacity-50" : "cursor-pointer"
+      }`}
+    >
+      {label}
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        className="hidden"
+        disabled={disabled}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onFile(file);
+          e.target.value = "";
+        }}
+      />
+    </label>
   );
 }
 
