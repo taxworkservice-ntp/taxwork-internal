@@ -10,6 +10,7 @@ import SearchInput from "@/components/search-input";
 import EmptyState from "@/components/empty-state";
 import InlineConfirm from "@/components/inline-confirm";
 import { ToastStack, useToasts } from "@/components/toast";
+import ReportFilesPanel from "./report-files-panel";
 
 type FileRow = {
   id: string;
@@ -82,6 +83,7 @@ function Chevron({ open }: { open: boolean }) {
 export default function FilesPage() {
   const [files, setFiles] = useState<FileRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"general" | "reports">("general");
   const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -291,21 +293,51 @@ export default function FilesPage() {
 
       <PageHeader
         title="ไฟล์"
-        subtitle="อัปโหลด ค้นหา และจัดการไฟล์ทั้งหมด"
+        subtitle={
+          tab === "general"
+            ? "อัปโหลด ค้นหา และจัดการไฟล์ทั้งหมด"
+            : "ไฟล์ทั้งหมดที่สร้างจากรายงานประจำเดือน"
+        }
         actions={
-          <button
-            className="btn-primary inline-flex items-center gap-2 px-4 py-2"
-            onClick={openPicker}
-            disabled={uploading}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M8 11V3M5 6l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M3 13h10" strokeLinecap="round" />
-            </svg>
-            {uploading ? "กำลังอัปโหลด..." : "อัปโหลดไฟล์"}
-          </button>
+          tab === "general" ? (
+            <button
+              className="btn-primary inline-flex items-center gap-2 px-4 py-2"
+              onClick={openPicker}
+              disabled={uploading}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M8 11V3M5 6l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M3 13h10" strokeLinecap="round" />
+              </svg>
+              {uploading ? "กำลังอัปโหลด..." : "อัปโหลดไฟล์"}
+            </button>
+          ) : undefined
         }
       />
+
+      {/* Tabs */}
+      <div className="mb-4 inline-flex rounded-lg border border-neutral-200 bg-neutral-100 p-0.5">
+        {([
+          { key: "general", label: "ไฟล์ทั่วไป" },
+          { key: "reports", label: "ไฟล์รายงาน" },
+        ] as const).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+              tab === t.key
+                ? "bg-white text-neutral-900 shadow-sm"
+                : "text-neutral-500 hover:text-neutral-800"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "general" ? (
+        <>
 
       {/* Upload zone */}
       <div className="card mb-5">
@@ -725,6 +757,10 @@ export default function FilesPage() {
           </tbody>
         </table>
       </div>
+        </>
+      ) : (
+        <ReportFilesPanel />
+      )}
 
       <ToastStack toasts={toasts} onDismiss={dismiss} />
     </>
