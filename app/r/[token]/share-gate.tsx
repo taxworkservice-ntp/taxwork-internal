@@ -18,7 +18,9 @@ function formatExpiry(value: string | null | undefined): string | null {
 /**
  * Client-facing tax-ID gate shown before a shared report is revealed. On a
  * correct number the server sets a signed access cookie, then we refresh so the
- * server component re-renders with the report.
+ * server component re-renders with the report. The submit shows a two-stage
+ * overlay ("checking" → "opening") so the wait is legible rather than a frozen
+ * form.
  */
 export default function ShareGate({
   token,
@@ -34,26 +36,30 @@ export default function ShareGate({
   const router = useRouter();
   const [taxId, setTaxId] = useState("");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<"idle" | "verifying" | "opening">("idle");
   const expiry = formatExpiry(expiresAt);
   const digits = 4;
+  const busy = stage !== "idle";
+  const stageLabel =
+    stage === "verifying" ? "กำลังตรวจสอบข้อมูล..." : "กำลังเปิดรายงาน...";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (busy) return;
-    setBusy(true);
+    setStage("verifying");
     setError("");
     try {
       const res = await verifyShareTaxId(token, taxId);
       if (res.ok) {
+        setStage("opening");
         router.refresh();
         return;
       }
       setError(res.error);
+      setStage("idle");
     } catch {
       setError("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
-    } finally {
-      setBusy(false);
+      setStage("idle");
     }
   }
 
@@ -68,51 +74,77 @@ export default function ShareGate({
         </h1>
       </header>
 
-      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <section
+        className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"
+        aria-busy={busy}
+      >
         {hasTaxId ? (
-          <form onSubmit={submit} className="space-y-3">
-            <div>
-              <label htmlFor="share-tax-id" className="label">
-                เลขท้าย {digits} หลักของเลขประจำตัวผู้เสียภาษี
-              </label>
-              <input
-                id="share-tax-id"
-                className="input font-mono tracking-[0.4em]"
-                inputMode="numeric"
-                autoComplete="off"
-                autoFocus
-                maxLength={digits}
-                placeholder="0000"
-                value={taxId}
-                disabled={busy}
-                onChange={(e) =>
-                  setTaxId(e.target.value.replace(/\D+/g, "").slice(0, digits))
-                }
-              />
-            </div>
-
-            {error && (
-              <p
-                role="alert"
-                className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
-              >
-                {error}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              disabled={busy || taxId.length !== digits}
-              className="btn-primary w-full"
+          <div className="relative">
+            <form
+              onSubmit={submit}
+              className={`space-y-3 transition-opacity ${
+                busy ? "pointer-events-none opacity-40" : ""
+              }`}
             >
-              {busy ? "กำลังตรวจสอบ..." : "เปิดรายงาน"}
-            </button>
+              <div>
+                <label htmlFor="share-tax-id" className="label">
+                  เลขท้าย {digits} หลักของเลขประจำตัวผู้เสียภาษี
+                </label>
+                <input
+                  id="share-tax-id"
+                  className="input font-mono tracking-[0.4em]"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  autoFocus
+                  maxLength={digits}
+                  placeholder="0000"
+                  value={taxId}
+                  disabled={busy}
+                  onChange={(e) =>
+                    setTaxId(e.target.value.replace(/\D+/g, "").slice(0, digits))
+                  }
+                />
+              </div>
 
-            <p className="text-xs leading-relaxed text-neutral-500">
-              ไม่ทราบเลขท้าย {digits} หลัก? ดูได้จากใบกำกับภาษี หนังสือรับรองบริษัท
-              หรือแบบ ภ.พ.30
-            </p>
-          </form>
+              {error && (
+                <p
+                  role="alert"
+                  className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+                >
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={busy || taxId.length !== digits}
+                className="btn-primary w-full"
+              >
+                {busy ? stageLabel : "เปิดรายงาน"}
+              </button>
+
+              <p className="text-xs leading-relaxed text-neutral-500">
+                ไม่ทราบเลขท้าย {digits} หลัก? ดูได้จากใบกำกับภาษี หนังสือรับรองบริษัท
+                หรือแบบ ภ.พ.30
+              </p>
+            </form>
+
+            {busy && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="animate-fade-in absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-white/70 text-center"
+              >
+                <span
+                  aria-hidden="true"
+                  className="h-6 w-6 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-900"
+                />
+                <span className="text-sm font-medium text-neutral-700">
+                  {stageLabel}
+                </span>
+              </div>
+            )}
+          </div>
         ) : (
           <p className="text-sm text-neutral-600">
             ลิงก์นี้ยังไม่พร้อมใช้งาน กรุณาติดต่อเจ้าหน้าที่ผู้ดูแล
