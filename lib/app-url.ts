@@ -11,6 +11,15 @@ function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+/**
+ * Vercel deployment URLs (`*.vercel.app`) are always behind Deployment
+ * Protection, so a share link pointing at one would hit a Vercel login. Skip
+ * them and fall back to the configured/production domain instead.
+ */
+export function isProtectedHost(host: string): boolean {
+  return host.toLowerCase().endsWith(".vercel.app");
+}
+
 export type OriginInput = {
   override?: string | null;
   forwardedHost?: string | null;
@@ -24,7 +33,7 @@ export function resolveOrigin(input: OriginInput): string {
   if (override) return stripTrailingSlash(override);
 
   const host = input.forwardedHost?.trim() || input.host?.trim();
-  if (host) {
+  if (host && !isProtectedHost(host)) {
     const proto = input.forwardedProto?.trim() || "https";
     return `${proto}://${host}`;
   }

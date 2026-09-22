@@ -15,11 +15,36 @@ describe("resolveOrigin", () => {
   it("uses the forwarded host + proto when no override", () => {
     expect(
       resolveOrigin({
-        forwardedHost: "preview.vercel.app",
+        forwardedHost: "preview.example.com",
         forwardedProto: "https",
         host: "internal",
       })
-    ).toBe("https://preview.vercel.app");
+    ).toBe("https://preview.example.com");
+  });
+
+  it("skips Vercel deployment hosts (always login-protected)", () => {
+    expect(
+      resolveOrigin({
+        forwardedHost: "taxwork-internal-abc123.vercel.app",
+        forwardedProto: "https",
+        fallback: "https://internal.taxworkaccount.com",
+      })
+    ).toBe("https://internal.taxworkaccount.com");
+  });
+
+  it("skips a bare *.vercel.app host and uses the default", () => {
+    expect(resolveOrigin({ host: "my-app.vercel.app" })).toBe(
+      "https://internal.taxworkaccount.com"
+    );
+  });
+
+  it("override wins even when the request host is a vercel.app", () => {
+    expect(
+      resolveOrigin({
+        override: "https://internal.taxworkaccount.com",
+        host: "my-app.vercel.app",
+      })
+    ).toBe("https://internal.taxworkaccount.com");
   });
 
   it("falls back to host with a default https proto", () => {
