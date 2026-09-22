@@ -7,6 +7,7 @@ import {
   addFiling as addFilingAction,
   addReportDocument,
   clearFilings,
+  clearReportDocuments,
   copyReportToNewIssue,
   createMonthlyReport,
   createReportShareLink,
@@ -33,6 +34,7 @@ import {
   rememberFormCode as rememberFormCodeAction,
   rememberPaymentMethod as rememberPaymentMethodAction,
   reopenMonthlyReport,
+  reorderReportDocuments,
   saveAppSettings,
   saveReportBranding,
   setBankLogo,
@@ -42,6 +44,7 @@ import {
   type ClientRow,
   type Filing,
   type MonthlyReport,
+  type ReportDocument as SavedDocument,
   type ReportFile,
   type ReportShare,
 } from "@/lib/actions/reports";
@@ -179,36 +182,93 @@ export default function ReportsPage() {
   const [bankAcctName, setBankAcctName] = useState("");
   const [bankPromptpay, setBankPromptpay] = useState("");
 
-  // Part 2: ordered documents (upload order = PDF order, session-local)
-  const [docs, setDocs] = useState<{ id: string; file: File }[]>([]);
+  // Part 2: ordered documents (persisted per round; upload order = PDF order)
+  const [docs, setDocs] = useState<SavedDocument[]>([]);
   const [docsDragActive, setDocsDragActive] = useState(false);
+  const [docsBusy, setDocsBusy] = useState(false);
   const docsInputRef = useRef<HTMLInputElement>(null);
 
-  function addDocs(files: FileList | File[]) {
+  async function refreshDocs(reportId = activeReportId) {
+    if (!reportId) {
+      setDocs([]);
+      return;
+    }
+    try {
+      setDocs(await listReportDocuments(reportId));
+    } catch {
+      setDocs([]);
+    }
+  }
+
+  async function addDocs(files: FileList | File[]) {
     const list = Array.from(files);
-    if (!list.length) return;
-    setDocs((prev) => [
-      ...prev,
-      ...list.map((file) => ({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`,
-        file,
-      })),
-    ]);
+    if (!list.length || !activeReportId || reportLocked) return;
+    setDocsBusy(true);
+    try {
+      let order = docs.length;
+      for (const file of list) {
+        const path = await uploadObject(file.name, file);
+        order += 1;
+        await addReportDocument(activeReportId, {
+          storage_path: path,
+          file_name: file.name,
+          size_bytes: file.size,
+          mime_type: file.type || null,
+          sort_order: order,
+        });
+      }
+      await refreshDocs();
+    } catch (err) {
+      alert(`อัปโหลดเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setDocsBusy(false);
+      if (docsInputRef.current) docsInputRef.current.value = "";
+    }
   }
 
-  function moveDoc(id: string, delta: -1 | 1) {
-    setDocs((prev) => {
-      const i = prev.findIndex((d) => d.id === id);
-      const j = i + delta;
-      if (i < 0 || j < 0 || j >= prev.length) return prev;
-      const next = [...prev];
-      [next[i], next[j]] = [next[i], next[j]];
-      return next;
-    });
+  async function moveDoc(id: string, delta: -1 | 1) {
+    const i = docs.findIndex((d) => d.id === id);
+    const j = i + delta;
+    if (!activeReportId || i < 0 || j < 0 || j >= docs.length) return;
+    const next = [...docs];
+    [next[i], next[j]] = [next[j], next[i]];
+    setDocs(next);
+    try {
+      await reorderReportDocuments(
+        activeReportId,
+        next.map((d) => d.id)
+      );
+    } catch (err) {
+      alert(`จัดลำดับไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      await refreshDocs();
+    }
   }
 
-  function removeDoc(id: string) {
-    setDocs((prev) => prev.filter((d) => d.id !== id));
+  async function removeDoc(id: string) {
+    const doc = docs.find((d) => d.id === id);
+    if (!doc) return;
+    try {
+      await deleteR2Object(doc.storage_path);
+      await deleteReportDocument(doc.id);
+      await refreshDocs();
+    } catch (err) {
+      alert(`ลบเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  async function clearDocs() {
+    if (!activeReportId || !docs.length) return;
+    if (!confirm(`ล้างเอกสารทั้งหมด ${docs.length} ไฟล์?`)) return;
+    setDocsBusy(true);
+    try {
+      for (const d of docs) await deleteR2Object(d.storage_path);
+      await clearReportDocuments(activeReportId);
+      await refreshDocs();
+    } catch (err) {
+      alert(`ล้างเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setDocsBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -364,10 +424,25 @@ export default function ReportsPage() {
     loadFilings();
   }, [loadFilings]);
 
-  // Docs belong to one report round — reset when switching client/month/round
+  // Load persisted Part 2 documents for the active round.
   useEffect(() => {
+    let cancelled = false;
+    if (!activeReportId) {
+      setDocs([]);
+      return;
+    }
     setDocs([]);
-  }, [clientId, period, activeReportId]);
+    listReportDocuments(activeReportId)
+      .then((rows) => {
+        if (!cancelled) setDocs(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDocs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeReportId]);
 
   // Saved report copies (history) for the active round.
   useEffect(() => {
@@ -1003,15 +1078,19 @@ export default function ReportsPage() {
       })
     );
 
-    // Part 2: ordered documents, upload order = PDF order
+    // Part 2: ordered documents (persisted), upload order = PDF order
     const documents: ReportDocument[] = [];
     if (!preview) {
       for (const d of docs) {
-        documents.push({
-          file_name: d.file.name,
-          mime_type: d.file.type || null,
-          bytes: await d.file.arrayBuffer(),
-        });
+        try {
+          documents.push({
+            file_name: d.file_name,
+            mime_type: d.mime_type,
+            bytes: await fetchAttachmentBytes(d.storage_path),
+          });
+        } catch {
+          // skip unreadable document
+        }
       }
     }
 
@@ -1045,34 +1124,8 @@ export default function ReportsPage() {
     };
   }
 
-  /**
-   * Persist the session's Part 2 documents (R2 + report_documents) so the
-   * server-side renderer can append them. Clears previous rows first to keep
-   * order deterministic and avoid orphaned objects. Only used when
-   * report_renderer = "server".
-   */
-  async function syncDocumentsToServer(reportId: string) {
-    const existing = await listReportDocuments(reportId);
-    for (const e of existing) {
-      await deleteR2Object(e.storage_path);
-      await deleteReportDocument(e.id);
-    }
-    for (let i = 0; i < docs.length; i++) {
-      const d = docs[i];
-      const path = await uploadObject(d.file.name, d.file);
-      await addReportDocument(reportId, {
-        storage_path: path,
-        file_name: d.file.name,
-        size_bytes: d.file.size,
-        mime_type: d.file.type || null,
-        sort_order: i + 1,
-      });
-    }
-  }
-
   async function renderServerPdf(preview: boolean): Promise<Uint8Array> {
     if (!activeReportId) throw new Error("ยังไม่ได้เลือกรอบรายงาน");
-    if (!preview) await syncDocumentsToServer(activeReportId);
     const res = await fetch("/api/reports/render", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1576,6 +1629,7 @@ export default function ReportsPage() {
             <div className="card space-y-3">
               <div
                 onDragOver={(e) => {
+                  if (reportLocked || docsBusy) return;
                   e.preventDefault();
                   setDocsDragActive(true);
                 }}
@@ -1583,13 +1637,20 @@ export default function ReportsPage() {
                 onDrop={(e) => {
                   e.preventDefault();
                   setDocsDragActive(false);
-                  if (e.dataTransfer.files?.length) addDocs(e.dataTransfer.files);
+                  if (!reportLocked && !docsBusy && e.dataTransfer.files?.length)
+                    addDocs(e.dataTransfer.files);
                 }}
-                onClick={() => docsInputRef.current?.click()}
-                className={`flex min-h-36 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
-                  docsDragActive
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+                onClick={() => {
+                  if (!reportLocked && !docsBusy) docsInputRef.current?.click();
+                }}
+                className={`flex min-h-36 flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
+                  reportLocked || docsBusy
+                    ? "cursor-not-allowed border-neutral-200 bg-neutral-50 opacity-60"
+                    : `cursor-pointer ${
+                        docsDragActive
+                          ? "border-blue-500 bg-blue-50"
+                          : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+                      }`
                 }`}
               >
                 <input
@@ -1598,19 +1659,27 @@ export default function ReportsPage() {
                   multiple
                   accept="application/pdf,image/png,image/jpeg"
                   className="hidden"
+                  disabled={reportLocked || docsBusy}
                   onChange={(e) => {
                     if (e.target.files?.length) addDocs(e.target.files);
                     e.target.value = "";
                   }}
                 />
-                ลากไฟล์มาวาง หรือคลิกเพื่อเลือก (PDF / PNG / JPG — เลือกได้หลายไฟล์)
+                {docsBusy
+                  ? "กำลังอัปโหลด..."
+                  : "ลากไฟล์มาวาง หรือคลิกเพื่อเลือก (PDF / PNG / JPG — เลือกได้หลายไฟล์)"}
               </div>
               {!docs.length ? (
                 <p className="text-sm text-neutral-500">
-                  ยังไม่มีเอกสาร — ไฟล์จะต่อท้ายปกตามลำดับที่แสดง
+                  {reportLocked
+                    ? "รายงานออกแล้ว — เปิดแก้ไขก่อนเพื่อเพิ่มเอกสาร"
+                    : "ยังไม่มีเอกสาร — ไฟล์จะต่อท้ายปกตามลำดับที่แสดง"}
                 </p>
               ) : (
                 <>
+                  <p className="text-xs text-neutral-500">
+                    บันทึกไว้แล้ว {docs.length} ไฟล์ (ลำดับ = ลำดับในไฟล์ PDF)
+                  </p>
                   <ol className="space-y-1 text-sm text-neutral-600">
                     {docs.map((d, i) => (
                       <li
@@ -1618,10 +1687,10 @@ export default function ReportsPage() {
                         className="flex items-center gap-1 rounded border border-neutral-100 px-2 py-1"
                       >
                         <span className="mr-1 text-xs text-neutral-400">{i + 1}.</span>
-                        <span className="min-w-0 flex-1 truncate" title={d.file.name}>
-                          {d.file.name}
+                        <span className="min-w-0 flex-1 truncate" title={d.file_name}>
+                          {d.file_name}
                           <span className="ml-1 text-xs text-neutral-400">
-                            {(d.file.size / 1024).toFixed(0)} KB
+                            {(d.size_bytes / 1024).toFixed(0)} KB
                           </span>
                         </span>
                         <button
@@ -1630,7 +1699,7 @@ export default function ReportsPage() {
                             e.stopPropagation();
                             moveDoc(d.id, -1);
                           }}
-                          disabled={i === 0}
+                          disabled={i === 0 || reportLocked}
                           aria-label="เลื่อนขึ้น"
                         >
                           ↑
@@ -1641,17 +1710,18 @@ export default function ReportsPage() {
                             e.stopPropagation();
                             moveDoc(d.id, 1);
                           }}
-                          disabled={i === docs.length - 1}
+                          disabled={i === docs.length - 1 || reportLocked}
                           aria-label="เลื่อนลง"
                         >
                           ↓
                         </button>
                         <button
-                          className="text-neutral-400 hover:text-red-600"
+                          className="text-neutral-400 hover:text-red-600 disabled:opacity-50"
                           onClick={(e) => {
                             e.stopPropagation();
                             removeDoc(d.id);
                           }}
+                          disabled={reportLocked}
                           aria-label="ลบเอกสาร"
                         >
                           ✕
@@ -1660,7 +1730,11 @@ export default function ReportsPage() {
                     ))}
                   </ol>
                   <div>
-                    <button className="btn-danger text-xs" onClick={() => setDocs([])}>
+                    <button
+                      className="btn-danger text-xs"
+                      onClick={clearDocs}
+                      disabled={docsBusy || reportLocked}
+                    >
                       ล้างเอกสาร ({docs.length})
                     </button>
                   </div>

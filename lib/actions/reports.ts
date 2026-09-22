@@ -718,6 +718,26 @@ export async function clearReportDocuments(reportId: string): Promise<void> {
   await sql`delete from report_documents where report_id=${reportId}`;
 }
 
+/** Persist a new append order for a round's documents. */
+export async function reorderReportDocuments(
+  reportId: string,
+  ids: string[]
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    await assertReportEditable(reportId);
+    let order = 0;
+    for (const id of ids) {
+      order += 1;
+      await sql`update report_documents set sort_order=${order} where id=${id} and report_id=${reportId}`;
+    }
+    return { ok: true };
+  } catch (error) {
+    console.error("reorderReportDocuments failed:", error);
+    return fail(error);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Temporary share links
 // ---------------------------------------------------------------------------
