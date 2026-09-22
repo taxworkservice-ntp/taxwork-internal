@@ -158,41 +158,17 @@ function ImageBlock({
   fileName: string;
   hint: string;
 }) {
-  const [state, setState] = useState<"idle" | "copied" | "error">("idle");
-
-  async function handleCopy() {
-    try {
-      const blob = dataUriToBlob(dataUri);
-      if (
-        blob &&
-        typeof ClipboardItem !== "undefined" &&
-        navigator.clipboard?.write
-      ) {
-        await navigator.clipboard.write([
-          new ClipboardItem({ [blob.type]: blob }),
-        ]);
-        setState("copied");
-        setTimeout(() => setState("idle"), 2000);
-        return;
-      }
-    } catch {
-      // fall through
-    }
-    setState("error");
-    setTimeout(() => setState("idle"), 3000);
-  }
-
   return (
     <div className="flex flex-col items-center gap-2">
-      <button
-        type="button"
-        onClick={handleCopy}
-        aria-label="แตะเพื่อคัดลอกรูป"
+      <a
+        href={dataUri}
+        download={fileName}
+        aria-label="แตะเพื่อดาวน์โหลด"
         className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm transition-transform active:scale-[0.98]"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={dataUri} alt={fileName} className="h-56 w-56 object-contain" />
-      </button>
+      </a>
       <div className="flex items-center gap-2 text-xs">
         <a
           href={dataUri}
@@ -201,13 +177,7 @@ function ImageBlock({
         >
           บันทึกไฟล์
         </a>
-        <span className="text-neutral-500">
-          {state === "copied"
-            ? "คัดลอกรูปแล้ว"
-            : state === "error"
-              ? "คัดลอกอัตโนมัติไม่ได้ — ใช้ “บันทึกไฟล์”"
-              : hint}
-        </span>
+        <span className="text-neutral-500">{hint}</span>
       </div>
     </div>
   );
@@ -239,21 +209,32 @@ function QrBlock({ dataUri, fileName }: { dataUri: string; fileName: string }) {
   }
 
   return (
-    <div className="flex flex-col items-center">
-      <button
-        type="button"
-        onClick={handleCopy}
-        aria-label="แตะเพื่อคัดลอกรูป QR"
+    <div className="flex flex-col items-center gap-2">
+      <a
+        href={dataUri}
+        download={fileName}
+        aria-label="แตะเพื่อดาวน์โหลด QR"
         className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm transition-transform active:scale-[0.98]"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={dataUri} alt={fileName} className="h-56 w-56 object-contain" />
-      </button>
-      {state !== "idle" && (
-        <span className="mt-1 text-xs text-neutral-500">
-          {state === "copied" ? "คัดลอกรูปแล้ว" : "คัดลอกไม่ได้ — แตะค้างเพื่อบันทึก"}
+      </a>
+      <div className="flex items-center gap-2 text-xs">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 font-medium text-neutral-700"
+        >
+          คัดลอกรูป QR
+        </button>
+        <span className="text-neutral-500">
+          {state === "copied"
+            ? "คัดลอกรูปแล้ว"
+            : state === "error"
+              ? "คัดลอกไม่ได้ — แตะค้างที่รูปเพื่อบันทึก"
+              : "แตะที่รูปเพื่อดาวน์โหลด"}
         </span>
-      )}
+      </div>
     </div>
   );
 }
@@ -327,8 +308,8 @@ export default function ShareView({
             <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
               <div className="mb-1 font-medium text-neutral-700">วิธีชำระเงิน</div>
               <ol className="list-inside list-decimal space-y-0.5">
-                <li>แตะที่รูป QR / สลิป เพื่อคัดลอกรูป หรือกด “บันทึกไฟล์”</li>
-                <li>เปิดแอปธนาคาร แล้วเลือกสแกน / อัปโหลด QR จากอัลบั้ม</li>
+                <li>แตะที่รูป QR หรือสลิปเพื่อบันทึกภาพ</li>
+                <li>เปิดแอปธนาคาร แล้วเลือกสแกน / อัปโหลดจากอัลบั้ม</li>
                 <li>หรือโอนเข้าบัญชี / พร้อมเพย์ ตามหมายเลขที่แสดง</li>
               </ol>
             </div>
@@ -354,8 +335,18 @@ export default function ShareView({
                           {i + 1}
                         </span>
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-bold text-neutral-900">
-                            {s.title}
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-sm font-bold text-neutral-900">
+                              {s.title}
+                            </span>
+                            {s.bankLogos[0] && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={s.bankLogos[0]}
+                                alt=""
+                                className="h-4 max-w-[56px] shrink-0 rounded object-contain"
+                              />
+                            )}
                           </div>
                           {s.description && (
                             <div className="truncate text-xs text-neutral-500">
@@ -403,14 +394,14 @@ export default function ShareView({
                               href={`/r/${token}/slip/${slip.id}`}
                               target="_blank"
                               rel="noreferrer"
-                              className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white p-3 transition-colors hover:bg-neutral-50 active:bg-neutral-100"
+                              className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 transition-colors hover:bg-emerald-50 active:bg-emerald-100"
                             >
-                              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-[10px] font-bold text-neutral-500">
+                              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-[10px] font-bold text-emerald-700">
                                 PDF
                               </span>
                               <span className="min-w-0 flex-1">
-                                <span className="block text-sm font-medium text-neutral-800">
-                                  เปิดใบนำฝาก
+                                <span className="block text-sm font-semibold text-emerald-800">
+                                  เปิด / ดาวน์โหลดใบนำฝาก
                                 </span>
                                 <span
                                   className="block truncate text-xs text-neutral-500"
@@ -420,16 +411,16 @@ export default function ShareView({
                                 </span>
                               </span>
                               <svg
-                                width="16"
-                                height="16"
+                                width="18"
+                                height="18"
                                 viewBox="0 0 16 16"
                                 fill="none"
                                 stroke="currentColor"
                                 strokeWidth="1.6"
-                                className="shrink-0 text-neutral-400"
+                                className="shrink-0 text-emerald-600"
                               >
                                 <path
-                                  d="M6 3h7v7M13 3L6.5 9.5"
+                                  d="M8 3v7M5 7.5l3 3 3-3M3 13h10"
                                   strokeLinecap="round"
                                   strokeLinejoin="round"
                                 />
@@ -451,7 +442,7 @@ export default function ShareView({
                             {s.bankName || (hasQr ? s.paymentMethod?.trim() || "ชำระผ่าน QR" : "")}
                           </div>
                           <div className="flex shrink-0 flex-col items-end gap-1">
-                            {hasQr && (
+                            {hasQr && !hasBank && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                                 QR code
@@ -490,7 +481,7 @@ export default function ShareView({
                         {hasQr && (
                           <div className="mt-3">
                             <p className="mb-2 text-xs text-neutral-600">
-                              สแกน QR ด้านล่างเพื่อชำระเงิน — หรือแตะที่รูปเพื่อคัดลอก
+                              บันทึกภาพ QR แล้วสแกนจากอัลบั้มในแอปธนาคาร — แตะที่รูปเพื่อดาวน์โหลด
                             </p>
                             <QrBlock
                               dataUri={s.qr!}
