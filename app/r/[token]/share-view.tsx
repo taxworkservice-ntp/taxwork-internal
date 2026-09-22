@@ -336,9 +336,10 @@ export default function ShareView({
             <div className="space-y-4">
               {sections.map((s, i) => {
                 const hasBank = Boolean(
-                  s.bankName || s.accountNo || s.promptpay || s.qr
+                  s.bankName || s.accountNo || s.promptpay || s.bankLogos.length
                 );
                 const hasSlip = s.slips.length > 0;
+                const hasQr = Boolean(s.qr);
                 const slipPage =
                   s.slips.find((x) => x.pdfPage)?.pdfPage ?? null;
                 return (
@@ -409,35 +410,38 @@ export default function ShareView({
                     )}
 
                     {/* bank / QR */}
-                    {hasBank && (
+                    {(hasBank || hasQr) && (
                       <div className="px-4 py-3">
-                        {s.bankName && (
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0 text-sm font-medium text-neutral-800">
-                              {s.bankName}
-                            </div>
-                            <div className="flex shrink-0 flex-col items-end gap-1">
-                              {hasSlip && (
-                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                                  Pay-in slip
-                                </span>
-                              )}
-                              {s.bankLogos.length > 0 && (
-                                <div className="flex flex-col items-end gap-1">
-                                  {s.bankLogos.map((logo, li) => (
-                                    // eslint-disable-next-line @next/next/no-img-element
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 text-sm font-medium text-neutral-800">
+                            {s.bankName || (hasQr ? s.paymentMethod?.trim() || "ชำระผ่าน QR" : "")}
+                          </div>
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            {hasSlip && (
+                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                Pay-in slip
+                              </span>
+                            )}
+                            {hasQr && (
+                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                QR code
+                              </span>
+                            )}
+                            {s.bankLogos.length > 0 && (
+                              <div className="flex flex-col items-end gap-1">
+                                {s.bankLogos.map((logo, li) => (
+                                  // eslint-disable-next-line @next/next/no-img-element
                                   <img
                                     key={li}
                                     src={logo}
                                     alt=""
                                     className="h-5 max-w-[88px] rounded object-contain"
                                   />
-                                  ))}
-                                </div>
-                              )}
-                            </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        )}
+                        </div>
                         {s.accountName && (
                           <div className="text-xs text-neutral-500">
                             ชื่อบัญชี {s.accountName}
@@ -453,10 +457,10 @@ export default function ShareView({
                             )}
                           </div>
                         )}
-                        {s.qr && (
+                        {hasQr && (
                           <div className="mt-3">
                             <QrBlock
-                              dataUri={s.qr}
+                              dataUri={s.qr!}
                               fileName={`qr-${s.title.replace(/\s+/g, "-")}.png`}
                             />
                           </div>
@@ -465,14 +469,14 @@ export default function ShareView({
                     )}
 
                     {/* method text / fallback */}
-                    {!hasBank && !hasSlip && (
+                    {!hasBank && !hasSlip && !hasQr && (
                       <div className="px-4 py-3 text-xs text-neutral-500">
                         {s.paymentMethod
                           ? `วิธีชำระ: ${s.paymentMethod}`
                           : "ชำระตามช่องทางที่เจ้าหน้าที่แจ้ง"}
                       </div>
                     )}
-                    {!hasBank && hasSlip && (
+                    {!hasBank && !hasQr && hasSlip && (
                       <div className="flex justify-end border-t border-neutral-100 px-4 py-2">
                         <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                           Pay-in slip
