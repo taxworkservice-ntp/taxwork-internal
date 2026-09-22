@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ReportModel, ReportModelFiling } from "@/lib/report-model";
-import { paymentSummary } from "@/lib/payments";
+import type { ReportModel } from "@/lib/report-model";
 
 const THAI_MONTHS_FULL = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -38,38 +37,30 @@ function dataUriToBlob(uri: string): Blob | null {
   }
 }
 
-type Group = {
-  key: string;
+type Section = {
+  id: string;
   title: string;
+  description: string | null;
+  amount: number;
+  bankName: string | null;
   accountName: string | null;
-  qr: string | null;
   accountNo: string | null;
   promptpay: string | null;
-  items: ReportModelFiling[];
+  qr: string | null;
 };
 
-function groupFilings(model: ReportModel): Group[] {
-  const map = new Map<string, Group>();
-  for (const f of model.filings) {
-    if (!f.bank && !f.qrDataUri && !f.payment_method) continue;
-    const key = f.bank?.id ?? `qr-${f.id}`;
-    if (!map.has(key)) {
-      const b = f.bank;
-      map.set(key, {
-        key,
-        title: b?.bank_name || b?.label || f.form_code || "QR",
-        accountName: b?.account_name || null,
-        qr: b?.qrDataUri ?? null,
-        accountNo: b?.account_no ?? null,
-        promptpay: b?.promptpay_id ?? null,
-        items: [],
-      });
-    }
-    const g = map.get(key)!;
-    if (f.qrDataUri && !g.qr) g.qr = f.qrDataUri;
-    g.items.push(f);
-  }
-  return [...map.values()];
+function buildSections(model: ReportModel): Section[] {
+  return model.filings.map((f) => ({
+    id: f.id,
+    title: f.form_code?.trim() || "รายการ",
+    description: f.description?.trim() || null,
+    amount: Number(f.amount ?? 0),
+    bankName: f.bank?.bank_name || f.bank?.label || null,
+    accountName: f.bank?.account_name || null,
+    accountNo: f.bank?.account_no || null,
+    promptpay: f.bank?.promptpay_id || null,
+    qr: f.qrDataUri ?? f.bank?.qrDataUri ?? null,
+  }));
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -78,6 +69,28 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
       <span className="h-4 w-1 rounded-full bg-neutral-900" />
       {children}
     </h2>
+  );
+}
+
+function AmountCopy({ amount }: { amount: number }) {
+  const [copied, setCopied] = useState(false);
+  const text = amount.toFixed(2);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // clipboard unavailable
+        }
+      }}
+      className="text-[11px] font-medium text-blue-600 underline-offset-2 hover:underline"
+    >
+      {copied ? "คัดลอกแล้ว" : "คัดลอกจำนวนเงิน"}
+    </button>
   );
 }
 
@@ -174,20 +187,13 @@ export default function ShareView({
   model,
   hasPdf,
   token,
-  payment,
 }: {
   model: ReportModel;
   hasPdf: boolean;
   token: string;
-  payment: { due: number; paid: number };
 }) {
-  const groups = groupFilings(model);
-  const grandTotal = groups.reduce(
-    (sum, g) => sum + g.items.reduce((s, f) => s + Number(f.amount ?? 0), 0),
-    0
-  );
-  const status = paymentSummary(payment.due, payment.paid);
-  const settled = status.status === "paid";
+  const sections = buildSections(model);
+  const grandTotal = sections.reduce((sum, s) => sum + s.amount, 0);
 
   return (
     <main className="mx-auto max-w-md space-y-6 p-4 pb-20">
@@ -205,19 +211,6 @@ export default function ShareView({
             เลขที่รายงาน {model.reportNo}
           </div>
         )}
-        {status.status !== "unpaid" && (
-          <div
-            className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-              settled
-                ? "bg-emerald-100 text-emerald-700"
-                : "bg-amber-100 text-amber-800"
-            }`}
-          >
-            {settled
-              ? "ชำระครบถ้วนแล้ว"
-              : `ชำระแล้ว ${fmtMoney(status.paid)} · คงเหลือ ${fmtMoney(status.remaining)}`}
-          </div>
-        )}
       </header>
 
       {/* Download */}
@@ -230,40 +223,11 @@ export default function ShareView({
         </a>
       )}
 
-      {/* Summary */}
+      {/* Items */}
       <section>
-        <SectionTitle>สรุปยอด</SectionTitle>
-        <div className="grid grid-cols-3 divide-x divide-neutral-100 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-          <div className="p-3">
-            <div className="text-[11px] text-neutral-400">ยอดที่ต้องชำระ</div>
-            <div className="mt-0.5 text-sm font-semibold text-neutral-900">
-              {fmtMoney(status.due)}
-            </div>
-          </div>
-          <div className="p-3">
-            <div className="text-[11px] text-neutral-400">รับชำระแล้ว</div>
-            <div className="mt-0.5 text-sm font-semibold text-emerald-700">
-              {fmtMoney(status.paid)}
-            </div>
-          </div>
-          <div className="p-3">
-            <div className="text-[11px] text-neutral-400">คงเหลือ</div>
-            <div className="mt-0.5 text-sm font-semibold text-red-600">
-              {fmtMoney(status.remaining)}
-            </div>
-          </div>
-        </div>
-      </section>
+        <SectionTitle>รายการที่ต้องชำระ</SectionTitle>
 
-      {/* Payment */}
-      <section>
-        <SectionTitle>ช่องทางการชำระเงิน</SectionTitle>
-
-        {settled ? (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 shadow-sm">
-            รายการนี้ชำระครบถ้วนแล้ว ไม่ต้องชำระเพิ่ม
-          </div>
-        ) : groups.length === 0 ? (
+        {sections.length === 0 ? (
           <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-sm text-neutral-500 shadow-sm">
             ไม่มีรายการที่ต้องชำระ
           </div>
@@ -279,91 +243,88 @@ export default function ShareView({
             </div>
 
             <div className="space-y-4">
-              {groups.map((g) => {
-                const subtotal = g.items.reduce(
-                  (s, f) => s + Number(f.amount ?? 0),
-                  0
+              {sections.map((s, i) => {
+                const hasPay = Boolean(
+                  s.bankName || s.accountNo || s.promptpay || s.qr
                 );
                 return (
                   <div
-                    key={g.key}
+                    key={s.id}
                     className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm"
                   >
-                    {/* card header */}
-                    <div className="border-b border-neutral-100 bg-neutral-50/70 px-4 py-3">
-                      <div className="text-sm font-bold text-neutral-900">
-                        {g.title}
-                      </div>
-                      {g.accountName && (
-                        <div className="text-xs text-neutral-500">
-                          ชื่อบัญชี {g.accountName}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* account details */}
-                    {(g.accountNo || g.promptpay) && (
-                      <div className="divide-y divide-neutral-100 px-4">
-                        {g.accountNo && (
-                          <CopyRow label="เลขที่บัญชี" value={g.accountNo} />
-                        )}
-                        {g.promptpay && (
-                          <CopyRow label="พร้อมเพย์" value={g.promptpay} />
-                        )}
-                      </div>
-                    )}
-
-                    {/* QR */}
-                    {g.qr && (
-                      <div className="border-t border-neutral-100 px-4 py-4">
-                        <QrBlock
-                          dataUri={g.qr}
-                          fileName={`qr-${g.title.replace(/\s+/g, "-")}.png`}
-                        />
-                      </div>
-                    )}
-
-                    {/* items */}
-                    <div className="border-t border-neutral-100 px-4 py-3">
-                      <ul className="divide-y divide-neutral-100">
-                        {g.items.map((f) => (
-                          <li
-                            key={f.id}
-                            className="flex items-center justify-between gap-3 py-1.5 text-sm"
-                          >
-                            <span className="min-w-0 truncate text-neutral-700">
-                              {f.form_code || "-"}
-                              {f.description ? (
-                                <span className="text-neutral-400">
-                                  {" · "}
-                                  {f.description}
-                                </span>
-                              ) : null}
-                            </span>
-                            <span className="shrink-0 tabular-nums text-neutral-800">
-                              {fmtMoney(f.amount)}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                      <div className="mt-2 flex items-center justify-between border-t border-neutral-200 pt-2 text-sm font-semibold text-neutral-900">
-                        <span>รวมบัญชีนี้</span>
-                        <span className="tabular-nums">
-                          {fmtMoney(subtotal)} บาท
+                    {/* header: number + form name + amount */}
+                    <div className="flex items-start justify-between gap-3 border-b border-neutral-100 bg-neutral-50/70 px-4 py-3">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-[11px] font-semibold text-white">
+                          {i + 1}
                         </span>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-bold text-neutral-900">
+                            {s.title}
+                          </div>
+                          {s.description && (
+                            <div className="truncate text-xs text-neutral-500">
+                              {s.description}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-sm font-bold tabular-nums text-neutral-900">
+                          {fmtMoney(s.amount)}
+                        </div>
+                        <AmountCopy amount={s.amount} />
                       </div>
                     </div>
+
+                    {/* payment details */}
+                    {hasPay ? (
+                      <>
+                        <div className="px-4 py-3">
+                          {s.bankName && (
+                            <div className="text-sm font-medium text-neutral-800">
+                              {s.bankName}
+                            </div>
+                          )}
+                          {s.accountName && (
+                            <div className="text-xs text-neutral-500">
+                              ชื่อบัญชี {s.accountName}
+                            </div>
+                          )}
+                          {(s.accountNo || s.promptpay) && (
+                            <div className="mt-1 divide-y divide-neutral-100">
+                              {s.accountNo && (
+                                <CopyRow label="เลขที่บัญชี" value={s.accountNo} />
+                              )}
+                              {s.promptpay && (
+                                <CopyRow label="พร้อมเพย์" value={s.promptpay} />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        {s.qr && (
+                          <div className="border-t border-neutral-100 px-4 py-4">
+                            <QrBlock
+                              dataUri={s.qr}
+                              fileName={`qr-${s.title.replace(/\s+/g, "-")}.png`}
+                            />
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="px-4 py-3 text-xs text-neutral-500">
+                        ชำระตามช่องทางที่เจ้าหน้าที่แจ้ง
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
 
-            {groups.length > 0 && (
-              <div className="mt-4 flex items-center justify-between rounded-2xl bg-neutral-900 px-4 py-3 text-base font-bold text-white shadow-sm">
-                <span>ยอดรวมทั้งสิ้น</span>
-                <span className="tabular-nums">{fmtMoney(grandTotal)} บาท</span>
-              </div>
-            )}
+            <div className="mt-4 flex items-center justify-between rounded-2xl bg-neutral-900 px-4 py-3 text-base font-bold text-white shadow-sm">
+              <span>ยอดรวมทั้งสิ้น</span>
+              <span className="tabular-nums">{fmtMoney(grandTotal)} บาท</span>
+            </div>
           </>
         )}
 

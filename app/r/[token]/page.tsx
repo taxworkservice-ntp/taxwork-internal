@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { resolveShareToken, latestReportFile, getReportPaymentTotals } from "@/lib/actions/reports";
+import { resolveShareToken, latestReportFile } from "@/lib/actions/reports";
 import { buildReportModel } from "@/lib/report-model";
 import ShareView from "./share-view";
 
@@ -29,18 +29,10 @@ export default async function SharePage({
     );
   }
 
-  const [model, file, payment] = await Promise.all([
+  const [model, file] = await Promise.all([
     buildReportModel(reportId),
     latestReportFile(reportId),
-    getReportPaymentTotals(reportId),
   ]);
 
-  return (
-    <ShareView
-      model={model}
-      hasPdf={Boolean(file)}
-      token={token}
-      payment={payment}
-    />
-  );
+  return <ShareView model={model} hasPdf={Boolean(file)} token={token} />;
 }

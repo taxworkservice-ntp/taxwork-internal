@@ -6,7 +6,6 @@ import {
   addBankAccount as addBankAccountAction,
   addFiling as addFilingAction,
   addReportDocument,
-  addReportPayment,
   clearFilings,
   copyReportToNewIssue,
   createMonthlyReport,
@@ -14,7 +13,6 @@ import {
   deleteMonthlyReport,
   deleteAttachment,
   deleteReportDocument,
-  deleteReportPayment,
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
   getAppSettings,
@@ -29,7 +27,6 @@ import {
   listMonthlyReports,
   listReportFiles,
   listReportDocuments,
-  listReportPayments,
   loadFilings as loadFilingsAction,
   patchFiling as patchFilingAction,
   recordReportFile,
@@ -46,7 +43,6 @@ import {
   type Filing,
   type MonthlyReport,
   type ReportFile,
-  type ReportPayment,
   type ReportShare,
 } from "@/lib/actions/reports";
 import {
@@ -57,7 +53,6 @@ import {
   type ReportFiling,
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
-import { paymentSummary } from "@/lib/payments";
 
 const FORM_PRESETS = [
   "ภ.พ.30",
@@ -157,11 +152,6 @@ export default function ReportsPage() {
   const [reportFiles, setReportFiles] = useState<ReportFile[]>([]);
   const [share, setShare] = useState<ReportShare | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
-  const [payments, setPayments] = useState<ReportPayment[]>([]);
-  const [payAmount, setPayAmount] = useState("");
-  const [payMethod, setPayMethod] = useState("");
-  const [payNote, setPayNote] = useState("");
-  const [payBusy, setPayBusy] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const loadSeq = useRef(0);
 
@@ -415,25 +405,6 @@ export default function ReportsPage() {
       })
       .catch(() => {
         if (!cancelled) setShare(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeReportId]);
-
-  // Recorded payments for the round.
-  useEffect(() => {
-    let cancelled = false;
-    if (!activeReportId) {
-      setPayments([]);
-      return;
-    }
-    listReportPayments(activeReportId)
-      .then((rows) => {
-        if (!cancelled) setPayments(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setPayments([]);
       });
     return () => {
       cancelled = true;
@@ -1208,50 +1179,6 @@ export default function ReportsPage() {
     }
   }
 
-  const totalPaid = payments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
-  const paySummary = paymentSummary(total, totalPaid);
-
-  async function refreshPayments() {
-    if (activeReportId) setPayments(await listReportPayments(activeReportId));
-  }
-
-  async function addPayment() {
-    if (!activeReportId) return;
-    const amount = Number(payAmount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      alert("กรอกจำนวนเงินที่รับชำระให้ถูกต้อง");
-      return;
-    }
-    setPayBusy(true);
-    try {
-      const res = await addReportPayment(activeReportId, {
-        amount,
-        method: payMethod,
-        note: payNote,
-      });
-      if (!res.ok) {
-        alert(res.error);
-        return;
-      }
-      setPayAmount("");
-      setPayMethod("");
-      setPayNote("");
-      await refreshPayments();
-    } finally {
-      setPayBusy(false);
-    }
-  }
-
-  async function removePayment(id: string) {
-    if (!confirm("ลบรายการชำระเงินนี้?")) return;
-    const res = await deleteReportPayment(id);
-    if (!res.ok) {
-      alert(res.error);
-      return;
-    }
-    await refreshPayments();
-  }
-
   async function generatePdf() {
     if (!selectedClient || !activeReportId || !filings.length) return;
     if (
@@ -1637,96 +1564,6 @@ export default function ReportsPage() {
                     {clearingAll ? "กำลังลบ..." : `ลบทั้งหมด (${filings.length})`}
                   </button>
                 </div>
-              </div>
-            )}
-
-            {activeReportId && (
-              <div className="card space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-medium">การชำระเงิน</h3>
-                  <PaymentBadge status={paySummary.status} />
-                </div>
-
-                <div className="grid grid-cols-3 gap-3 text-sm">
-                  <div>
-                    <div className="text-xs text-neutral-500">ยอดที่ต้องชำระ</div>
-                    <div className="font-medium">{fmtMoney(paySummary.due)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-neutral-500">รับชำระแล้ว</div>
-                    <div className="font-medium text-emerald-700">
-                      {fmtMoney(paySummary.paid)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-neutral-500">คงเหลือ</div>
-                    <div className="font-medium text-red-600">
-                      {fmtMoney(paySummary.remaining)}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] lg:grid-cols-[130px_150px_minmax(0,1fr)_auto] lg:items-end">
-                  <div>
-                    <label className="label">จำนวนเงิน</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={payAmount}
-                      onChange={(e) => setPayAmount(e.target.value)}
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div>
-                    <label className="label">วิธีชำระ</label>
-                    <input
-                      className="input"
-                      value={payMethod}
-                      onChange={(e) => setPayMethod(e.target.value)}
-                      placeholder="โอน / QR / เงินสด"
-                    />
-                  </div>
-                  <div>
-                    <label className="label">หมายเหตุ</label>
-                    <input
-                      className="input"
-                      value={payNote}
-                      onChange={(e) => setPayNote(e.target.value)}
-                    />
-                  </div>
-                  <button
-                    className="btn-primary"
-                    onClick={addPayment}
-                    disabled={payBusy}
-                  >
-                    {payBusy ? "กำลังบันทึก..." : "บันทึกรับชำระ"}
-                  </button>
-                </div>
-
-                {payments.length > 0 && (
-                  <ul className="divide-y divide-neutral-100 border-t border-neutral-100 text-sm">
-                    {payments.map((p) => (
-                      <li key={p.id} className="flex items-center gap-3 py-1.5">
-                        <span className="w-28 text-neutral-500">
-                          {new Date(p.paid_at).toLocaleDateString("th-TH")}
-                        </span>
-                        <span className="w-28 font-medium">{fmtMoney(p.amount)}</span>
-                        <span className="min-w-0 flex-1 truncate text-neutral-600">
-                          {[p.method, p.note].filter(Boolean).join(" · ") || "—"}
-                        </span>
-                        <button
-                          type="button"
-                          className="text-xs text-red-600 hover:underline"
-                          onClick={() => removePayment(p.id)}
-                        >
-                          ลบ
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
             )}
           </section>
@@ -2557,20 +2394,6 @@ function QrThumb({ storagePath }: { storagePath: string }) {
       alt="QR"
       className="h-9 w-9 shrink-0 rounded border border-neutral-200 object-contain"
     />
-  );
-}
-
-function PaymentBadge({ status }: { status: "unpaid" | "partial" | "paid" }) {
-  const map = {
-    paid: { text: "ชำระครบแล้ว", cls: "bg-emerald-100 text-emerald-700" },
-    partial: { text: "ชำระบางส่วน", cls: "bg-amber-100 text-amber-800" },
-    unpaid: { text: "ยังไม่ชำระ", cls: "bg-neutral-100 text-neutral-600" },
-  } as const;
-  const s = map[status];
-  return (
-    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.cls}`}>
-      {s.text}
-    </span>
   );
 }
 
