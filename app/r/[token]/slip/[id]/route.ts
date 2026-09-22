@@ -22,11 +22,11 @@ export async function GET(
   { params }: { params: Promise<{ token: string; id: string }> }
 ) {
   const { token, id } = await params;
-  const reportId = await resolveShareToken(token);
-  if (!reportId) {
+  const resolved = await resolveShareToken(token);
+  if (!resolved) {
     return NextResponse.json({ error: "expired or invalid link" }, { status: 404 });
   }
-  const slip = await resolveSlip(reportId, id);
+  const slip = await resolveSlip(resolved.reportId, id);
   if (!slip) {
     return NextResponse.json({ error: "slip not found" }, { status: 404 });
   }

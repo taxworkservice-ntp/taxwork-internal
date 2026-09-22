@@ -213,19 +213,36 @@ export default function ShareView({
   model,
   hasPdf,
   token,
+  expiresAt,
 }: {
   model: ReportModel;
   hasPdf: boolean;
   token: string;
+  expiresAt?: string | null;
 }) {
   const sections = buildSections(model);
   const grandTotal = sections.reduce((sum, s) => sum + s.amount, 0);
+  const expiryLabel = expiresAt
+    ? new Date(expiresAt).toLocaleDateString("th-TH", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : null;
 
   return (
     <main className="mx-auto max-w-md space-y-6 p-4 pb-20">
       {/* Header */}
       <header className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+        {model.logoDataUri && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={model.logoDataUri}
+            alt={model.firmName}
+            className="h-9 w-auto object-contain"
+          />
+        )}
+        <div className="mt-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
           {model.firmName}
         </div>
         <h1 className="mt-1 text-lg font-bold leading-tight text-neutral-900">
@@ -241,12 +258,19 @@ export default function ShareView({
 
       {/* Download */}
       {hasPdf && (
-        <a
-          href={`/r/${token}/pdf`}
-          className="block rounded-xl bg-neutral-900 px-4 py-3 text-center text-sm font-semibold text-white shadow-sm active:bg-neutral-800"
-        >
-          ดาวน์โหลดรายงาน (PDF)
-        </a>
+        <>
+          <a
+            href={`/r/${token}/pdf`}
+            className="block rounded-xl bg-neutral-900 px-4 py-3 text-center text-sm font-semibold text-white shadow-sm active:bg-neutral-800"
+          >
+            ดาวน์โหลดรายงาน (PDF)
+          </a>
+          {expiryLabel && (
+            <p className="mt-1 text-center text-xs text-neutral-400">
+              ลิงก์นี้ใช้ได้ถึง {expiryLabel}
+            </p>
+          )}
+        </>
       )}
 
       {/* Items */}

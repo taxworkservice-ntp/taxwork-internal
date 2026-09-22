@@ -2,6 +2,7 @@ import "server-only";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { sql } from "@/lib/db";
 import { appOrigin } from "@/lib/app-url";
+import { shareSlug, shareUrl } from "@/lib/share-link";
 import { r2, R2_BUCKET } from "@/lib/r2";
 
 /**
@@ -281,7 +282,13 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     Boolean(shareToken) &&
     !shareRevoked &&
     (!shareExpires || new Date(shareExpires).getTime() > Date.now());
-  const shareUrl = shareActive ? `${await appOrigin()}/r/${shareToken}` : null;
+  const shareUrlValue = shareActive
+    ? shareUrl(
+        await appOrigin(),
+        shareSlug(String(report.period_label ?? ""), Number(report.seq ?? 1)),
+        shareToken!
+      )
+    : null;
 
   return {
     reportId,
@@ -302,6 +309,6 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     filings,
     documents,
     total,
-    shareUrl,
+    shareUrl: shareUrlValue,
   };
 }

@@ -16,9 +16,9 @@ export default async function SharePage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const reportId = await resolveShareToken(token);
+  const resolved = await resolveShareToken(token);
 
-  if (!reportId) {
+  if (!resolved) {
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-2 p-6 text-center">
         <h1 className="text-lg font-bold">ลิงก์หมดอายุหรือถูกยกเลิก</h1>
@@ -30,9 +30,16 @@ export default async function SharePage({
   }
 
   const [model, file] = await Promise.all([
-    buildReportModel(reportId),
-    latestReportFile(reportId),
+    buildReportModel(resolved.reportId),
+    latestReportFile(resolved.reportId),
   ]);
 
-  return <ShareView model={model} hasPdf={Boolean(file)} token={token} />;
+  return (
+    <ShareView
+      model={model}
+      hasPdf={Boolean(file)}
+      token={token}
+      expiresAt={resolved.expiresAt}
+    />
+  );
 }

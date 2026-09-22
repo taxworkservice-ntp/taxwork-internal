@@ -4,6 +4,7 @@ import { sql } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { generatePublicId } from "@/lib/ids";
 import { appOrigin } from "@/lib/app-url";
+import { shareSlug, shareTokenFromSegment, shareUrl } from "@/lib/share-link";
 import { buildUpdate, num } from "./db-helpers";
 
 export type ClientRow = {
@@ -803,15 +804,21 @@ function isShareActive(row: {
 export async function getReportShare(reportId: string): Promise<ReportShare | null> {
   await requireUser();
   const rows = (await sql`
-    select share_token, share_expires_at, share_revoked_at
+    select share_token, share_expires_at, share_revoked_at, period_label, seq
     from monthly_reports where id=${reportId}
-  `) as { share_token: string | null; share_expires_at: string | null; share_revoked_at: string | null }[];
+  `) as {
+    share_token: string | null;
+    share_expires_at: string | null;
+    share_revoked_at: string | null;
+    period_label: string;
+    seq: number;
+  }[];
   const row = rows[0];
   if (!row || !isShareActive(row)) return null;
   const origin = await appOrigin();
   return {
     token: row.share_token!,
-    url: `${origin}/r/${row.share_token}`,
+    url: shareUrl(origin, shareSlug(row.period_label, num(row.seq)), row.share_token!),
     expiresAt: row.share_expires_at ?? "",
   };
 }
@@ -824,36 +831,30 @@ export async function createReportShareLink(
   try {
     await requireUser();
     const rows = (await sql`
-      select status, report_no, public_id, period_label from monthly_reports where id=${reportId}
+      select status, period_label, seq from monthly_reports where id=${reportId}
     `) as {
       status: string;
-      report_no: string | null;
-      public_id: string | null;
       period_label: string;
+      seq: number;
     }[];
     if (!rows[0]) return { ok: false, error: "ไม่พบรายงาน" };
     if (rows[0].status !== "issued")
       return { ok: false, error: "ต้องออกรายงานก่อนจึงจะสร้างลิงก์ได้" };
 
-    // Human-readable prefix (the report number) + a long random secret, so the
-    // link is recognizable in LINE while staying unguessable.
-    const readable = (
-      rows[0].report_no?.trim() ||
-      `TW-${(rows[0].period_label ?? "").replace(/[^0-9]/g, "")}${rows[0].public_id ?? ""}`
-    )
-      .replace(/\s+/g, "-")
-      .slice(0, 40);
-    const token = `${readable}-${generatePublicId(20)}`;
+    // The token is a long random secret and the only lookup key; the slug in
+    // the URL is decorative.
+    const token = generatePublicId(20);
     const expires = new Date(Date.now() + Math.max(1, days) * 86400000);
     await sql`update monthly_reports
       set share_token=${token}, share_expires_at=${expires.toISOString()}, share_revoked_at=null
       where id=${reportId}`;
     const origin = await appOrigin();
+    const slug = shareSlug(rows[0].period_label, num(rows[0].seq));
     return {
       ok: true,
       share: {
         token,
-        url: `${origin}/r/${token}`,
+        url: shareUrl(origin, slug, token),
         expiresAt: expires.toISOString(),
       },
     };
@@ -875,12 +876,16 @@ export async function revokeReportShareLink(reportId: string): Promise<ActionRes
 }
 
 /** Public: resolve a share token to a report id, respecting expiry/revoke. */
-export async function resolveShareToken(token: string): Promise<string | null> {
-  if (!token) return null;
-  const rows = (await sql`
+/** Public: resolve a share token (optionally slug-prefixed) to a report. */
+export async function resolveShareToken(
+  token: string
+): Promise<{ reportId: string; expiresAt: string | null } | null> {
+  const key = shareTokenFromSegment(token);
+  if (!key) return null;
+  const rows = await sql`
     select id, share_token, share_expires_at, share_revoked_at
-    from monthly_reports where share_token=${token}
-  `) as {
+    from monthly_reports where share_token=${key}
+  ` as {
     id: string;
     share_token: string | null;
     share_expires_at: string | null;
@@ -888,7 +893,10 @@ export async function resolveShareToken(token: string): Promise<string | null> {
   }[];
   const row = rows[0];
   if (!row || !isShareActive(row)) return null;
-  return String(row.id);
+  return {
+    reportId: String(row.id),
+    expiresAt: row.share_expires_at ?? null,
+  };
 }
 
 /** Public: newest stored PDF copy for a report (for the share download). */

@@ -24,11 +24,11 @@ export async function GET(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  const reportId = await resolveShareToken(token);
-  if (!reportId) {
+  const resolved = await resolveShareToken(token);
+  if (!resolved) {
     return NextResponse.json({ error: "expired or invalid link" }, { status: 404 });
   }
-  const file = await latestReportFile(reportId);
+  const file = await latestReportFile(resolved.reportId);
   if (!file) {
     return NextResponse.json({ error: "no report file" }, { status: 404 });
   }
