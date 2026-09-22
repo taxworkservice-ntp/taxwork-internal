@@ -724,7 +724,7 @@ export default function ReportsPage() {
       const created = await addFilingAction(clientId, period, reportId, {
         form_code: newFormCode.trim(),
         description: newDescription.trim() || null,
-        amount: Number(newAmount) || 0,
+        amount: Number(parseAmountInput(newAmount) || "0"),
         due_date: null,
         payment_method: newPaymentMethod.trim() || null,
       });
