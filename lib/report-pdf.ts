@@ -111,7 +111,6 @@ const COLOR_WHITE = rgb(1, 1, 1);
 const COLOR_INK = rgb(0.14, 0.14, 0.16);
 const COLOR_PANEL = rgb(0.97, 0.97, 0.97);
 const COLOR_PANEL_ALT = rgb(0.955, 0.955, 0.96);
-const COLOR_ZEBRA = rgb(0.95, 0.95, 0.95);
 
 export type CoverStyle = "modern" | "classic";
 
@@ -498,6 +497,24 @@ class ReportRenderer {
     // (bottom-right). Only the cover is marked.
     await this.drawTextCanvas(label, M, M - 6, { size: 9, color: COLOR_MUTED }, pages[0]);
   }
+
+  /**
+   * Stamp a small context footer (client · period · หน้า X/Y) on each
+   * continuation page of the summary — i.e. pages 2..coverPageCount. The
+   * first page keeps the "เอกสารนี้มีทั้งหมด N หน้า" note instead, and the
+   * attached evidence/document pages stay clean.
+   */
+  async drawContinuationFooters(
+    coverPageCount: number,
+    totalPages: number,
+    context: string
+  ): Promise<void> {
+    const pages = this.doc.getPages();
+    for (let i = 1; i < coverPageCount && i < pages.length; i++) {
+      const label = `${context} · หน้า ${i + 1}/${totalPages}`;
+      await this.drawTextCanvas(label, M, M - 6, { size: 8.5, color: COLOR_MUTED }, pages[i]);
+    }
+  }
 }
 
 function refCaption(att: ReportAttachment): string {
@@ -799,7 +816,7 @@ async function drawCoverClassic(
 async function drawCoverModern(
   r: ReportRenderer,
   opts: BuildOptions,
-  methodOf: (f: SectionFiling) => string
+  pageByIndex: number[] | null
 ) {
   const periodTh = periodToThai(opts.periodLabel);
   const firmName = opts.firmName?.trim() || "Taxwork";
@@ -987,158 +1004,196 @@ async function drawCoverModern(
 
   // ---- Summary heading ----
   await r.text("สรุปรายการ", { size: 11, bold: true });
-  r.y -= 3;
-
-  const rowPadY = 6;
-  const headerH = 22;
-  const fontSize = 9.5;
-  const lh = fontSize * 1.6;
-
-  // 5 cols: ลำดับ | รายการ | รายละเอียด | จำนวนเงิน (ขวา) | วิธีชำระ
-  const idxX = M;
-  const idxW = 28;
-  const itemX = idxX + idxW;
-  const itemW = 80;
-  const amtW = 90;
-  const methW = 160;
-  const detW = CONTENT_W - idxW - itemW - amtW - methW;
-  const detX = itemX + itemW;
-  const amtX = detX + detW;
-  const methX = amtX + amtW;
-  const tableRight = M + CONTENT_W;
-
-  const drawTableHeader = async () => {
-    r.ensureSpace(headerH + 24);
-    if (!r.sim)
-      r.page.drawRectangle({
-        x: M,
-        y: r.y - headerH,
-        width: CONTENT_W,
-        height: headerH,
-        color: COLOR_INK,
-      });
-    const baseline = r.y - 14;
-    await r.drawTextCanvas("ลำดับ", idxX + 6, baseline, {
-      size: 9.5,
-      bold: true,
-      color: COLOR_WHITE,
-    });
-    await r.drawTextCanvas("รายการ", itemX + 6, baseline, {
-      size: 9.5,
-      bold: true,
-      color: COLOR_WHITE,
-    });
-    await r.drawTextCanvas("รายละเอียด", detX + 6, baseline, {
-      size: 9.5,
-      bold: true,
-      color: COLOR_WHITE,
-    });
-    const amtLabel = "จำนวนเงิน";
-    const aW = r.measureText(amtLabel, 9.5, true);
-    await r.drawTextCanvas(amtLabel, amtX + amtW - 6 - aW, baseline, {
-      size: 9.5,
-      bold: true,
-      color: COLOR_WHITE,
-    });
-    await r.drawTextCanvas("วิธีชำระ", methX + 6, baseline, {
-      size: 9.5,
-      bold: true,
-      color: COLOR_WHITE,
-    });
-    r.y -= headerH;
-  };
-
-  await drawTableHeader();
+  r.y -= 4;
 
   const filings = opts.filings as SectionFiling[];
+  const orderedEvidence = collectEvidenceItems(filings);
+  const indexOf = new Map(
+    orderedEvidence.map((a, i) => [a, i] as const)
+  );
+
+  const cPadX = 14;
+  const cPadY = 7;
+  const fontSize = 9.5;
+  const lh = fontSize * 1.5;
+  const metaLh = 8 * 1.5;
+  const qrSize = 44;
+
+  const embedLogo = async (bytes?: ArrayBuffer | null) => {
+    if (!bytes) return null;
+    const img = await r.embedBankLogo(bytes);
+    if (!img || !img.width || !img.height) return null;
+    const h = 10;
+    const w = Math.min((img.width / img.height) * h, 30);
+    return { img, w, h: w / (img.width / img.height) };
+  };
 
   for (let i = 0; i < filings.length; i++) {
     const f = filings[i];
-    const itemText = f.form_code?.trim() || "-";
-    const detText = f.description?.trim() || "-";
+    const formText = f.form_code?.trim() || "-";
+    const descText = f.description?.trim() || "";
+    const amountText = fmtMoney(Number(f.amount ?? 0));
+    const pay = resolvePayment(f, pageByIndex, indexOf);
 
-    // Bank logos: "บน" renders on the first method line (bank name) and
-    // "ล่าง" on the second (account number).
-    const embedLogo = async (bytes?: ArrayBuffer | null) => {
-      if (!bytes) return null;
-      const img = await r.embedBankLogo(bytes);
-      if (!img || !img.width || !img.height) return null;
-      const h = 11;
-      const w = Math.min((img.width / img.height) * h, 32);
-      return { img, w, h: w / (img.width / img.height) };
+    const topLogo = await embedLogo(pay.topLogo);
+    const bottomLogo = await embedLogo(pay.bottomLogo);
+    const qrImg = pay.qr ? await r.embedBankLogo(pay.qr) : null;
+
+    const innerW = CONTENT_W - cPadX * 2;
+    const qrReserve = qrImg ? qrSize + 16 : 0;
+    const rightW = innerW - qrReserve;
+
+    // Payment lines: structured, each rendered on its own line. Lines with a
+    // bank logo reserve room for it on the right so text never overlaps.
+    const payLines: {
+      text: string;
+      logo?: { img: PDFImage; w: number; h: number } | null;
+    }[] = [];
+    const pushPay = (
+      text: string,
+      logo?: { img: PDFImage; w: number; h: number } | null
+    ) => {
+      const wrapW = rightW - (logo ? logo.w + 6 : 0);
+      const lines = wrapText(
+        text,
+        (s) => r.measureText(s, fontSize, false),
+        Math.max(wrapW, 40)
+      );
+      lines.forEach((line, idx) =>
+        payLines.push({ text: line, logo: idx === 0 ? logo : undefined })
+      );
     };
-    const topLogo = await embedLogo(f.bank_account?.logo_bytes);
-    const bottomLogo = await embedLogo(f.bank_account?.logo_bottom_bytes);
-    const maxLogoW = Math.max(topLogo?.w ?? 0, bottomLogo?.w ?? 0);
-    const methWrapW = methW - 12 - (maxLogoW ? maxLogoW + 4 : 0);
+    if (pay.bankName) pushPay(pay.bankName, topLogo);
+    if (pay.accountNo) pushPay(`เลขที่ ${pay.accountNo}`, bottomLogo);
+    if (pay.accountName) pushPay(`ชื่อบัญชี ${pay.accountName}`);
+    if (pay.promptpay) pushPay(`พร้อมเพย์ ${pay.promptpay}`);
+    if (pay.customText) pushPay(pay.customText);
 
-    const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 12);
-    const linesDet = wrapText(detText, (s) => r.measureText(s, fontSize, false), detW - 12);
-    const methLines = wrapText(methodOf(f), (s) => r.measureText(s, fontSize, false), methWrapW);
-    const maxLines = Math.max(linesItem.length, linesDet.length, methLines.length);
-    const rowH = Math.max(maxLines * lh + rowPadY * 2, 22);
+    const descLines = descText
+      ? wrapText(descText, (s) => r.measureText(s, fontSize, false), innerW)
+      : [];
+    const payLineH = fontSize * 1.5;
+    const payH = payLines.length ? payLines.length * payLineH + 2 : 0;
+    const qrBlockH = qrImg ? qrSize : 0;
+    const bodyH = Math.max(payH, qrBlockH);
+    const hasBody = payLines.length > 0 || Boolean(qrImg);
 
-    if (r.y - rowH < M + 50) {
-      await r.hr();
-      await drawTableHeader();
-    }
+    const cardInnerH =
+      cPadY * 2 +
+      metaLh + // index + form + amount row
+      1 +
+      descLines.length * lh +
+      (descLines.length && hasBody ? 4 : 0) +
+      (hasBody ? 1 + 4 + bodyH : 0);
+    const cardH = Math.max(cardInnerH, 40);
+
+    // Cards must never split across pages.
+    r.ensureSpace(cardH + 10);
 
     const top = r.y;
-    if (!r.sim && i % 2 === 1)
+    if (!r.sim) {
       r.page.drawRectangle({
         x: M,
-        y: top - rowH,
+        y: top - cardH,
         width: CONTENT_W,
-        height: rowH,
-        color: COLOR_ZEBRA,
+        height: cardH,
+        color: COLOR_WHITE,
+        borderColor: COLOR_BORDER,
+        borderWidth: 0.8,
       });
-    await r.drawTextCanvas(String(i + 1), idxX + 6, top - 13, {
+      // Left accent rule for a formal, sectioned look.
+      r.page.drawRectangle({
+        x: M,
+        y: top - cardH,
+        width: 2.5,
+        height: cardH,
+        color: COLOR_INK,
+      });
+    }
+
+    let cy = top - cPadY - 8;
+    // Index + form code (left) and amount (right, bold) — the eye anchor.
+    const idxBaseline = cy;
+    const formX = M + cPadX + r.measureText(`${i + 1}.  `, fontSize, true);
+    await r.drawTextCanvas(String(i + 1) + ".", M + cPadX, idxBaseline, {
       size: fontSize,
+      bold: true,
+      color: COLOR_MUTED,
     });
-    for (let li = 0; li < linesItem.length; li++) {
-      await r.drawTextCanvas(linesItem[li], itemX + 6, top - 13 - li * lh, {
-        size: fontSize,
-      });
-    }
-    for (let li = 0; li < linesDet.length; li++) {
-      await r.drawTextCanvas(linesDet[li], detX + 6, top - 13 - li * lh, {
-        size: fontSize,
-      });
-    }
-    const amtText = fmtMoney(Number(f.amount ?? 0));
-    const amtTw = r.measureText(amtText, fontSize, false);
-    await r.drawTextCanvas(amtText, amtX + amtW - 6 - amtTw, top - 13, {
+    await r.drawTextCanvas(formText, formX, idxBaseline, {
       size: fontSize,
+      bold: true,
     });
-    for (let li = 0; li < methLines.length; li++) {
-      await r.drawTextCanvas(methLines[li], methX + 6, top - 13 - li * lh, {
+    const amtW = r.measureText(amountText, fontSize, true);
+    await r.drawTextCanvas(
+      amountText,
+      M + CONTENT_W - cPadX - amtW,
+      idxBaseline,
+      { size: fontSize, bold: true }
+    );
+    cy -= metaLh + 1;
+
+    for (const line of descLines) {
+      await r.drawTextCanvas(line, M + cPadX, cy, {
         size: fontSize,
+        color: COLOR_MUTED,
       });
+      cy -= lh;
     }
-    const drawMethodLogo = (
-      logo: { img: PDFImage; w: number; h: number } | null,
-      lineIdx: number
-    ) => {
-      if (!logo || r.sim) return;
-      const idx = Math.min(lineIdx, methLines.length - 1);
-      const baseline = top - 13 - idx * lh;
-      r.page.drawImage(logo.img, {
-        x: methX + methW - 6 - logo.w,
-        y: baseline - logo.h / 2 + 3,
-        width: logo.w,
-        height: logo.h,
-      });
-    };
-    drawMethodLogo(topLogo, 0);
-    drawMethodLogo(bottomLogo, 1);
-    if (!r.sim)
-      r.page.drawLine({
-        start: { x: M, y: top - rowH },
-        end: { x: tableRight, y: top - rowH },
-        thickness: 0.5,
-        color: COLOR_BORDER,
-      });
-    r.y -= rowH;
+
+    if (hasBody) {
+      if (descLines.length) cy -= 4;
+      if (!r.sim)
+        r.page.drawLine({
+          start: { x: M + cPadX, y: cy + 3 },
+          end: { x: M + CONTENT_W - cPadX, y: cy + 3 },
+          thickness: 0.5,
+          color: COLOR_BORDER,
+        });
+      cy -= 4;
+
+      // Payment lines on the left, QR on the right — both anchored to the
+      // top of the payment block so they stay aligned.
+      const bodyTop = cy;
+      let py = bodyTop;
+      for (const line of payLines) {
+        await r.drawTextCanvas(line.text, M + cPadX, py, {
+          size: fontSize,
+        });
+        if (line.logo && !r.sim) {
+          r.page.drawImage(line.logo.img, {
+            x: M + cPadX + r.measureText(line.text, fontSize, false) + 6,
+            y: py - line.logo.h / 2 + 2.5,
+            width: line.logo.w,
+            height: line.logo.h,
+          });
+        }
+        py -= payLineH;
+      }
+
+      if (qrImg && !r.sim) {
+        const qx = M + CONTENT_W - cPadX - qrSize;
+        const qyTop = bodyTop + fontSize;
+        // White quiet zone so the code stays scannable when printed.
+        r.page.drawRectangle({
+          x: qx - 4,
+          y: qyTop - qrSize - 4,
+          width: qrSize + 8,
+          height: qrSize + 8,
+          color: COLOR_WHITE,
+          borderColor: COLOR_BORDER,
+          borderWidth: 0.6,
+        });
+        r.page.drawImage(qrImg, {
+          x: qx,
+          y: qyTop - qrSize,
+          width: qrSize,
+          height: qrSize,
+        });
+      }
+    }
+
+    r.y = top - cardH - 8;
   }
 }
 
@@ -1344,6 +1399,105 @@ function makeMethodOf(
   };
 }
 
+type ResolvedPayment = {
+  /** Bank display name, when the filing is payable by transfer. */
+  bankName: string;
+  /** Account number (no label prefix). */
+  accountNo: string;
+  /** Account holder name, when known. */
+  accountName: string;
+  /** PromptPay id, when known. */
+  promptpay: string;
+  /** Payment instruction text: free-text, or a Slip page reference. */
+  customText: string;
+  /** QR bytes to render with the card, when available. */
+  qr: ArrayBuffer | null;
+  /** Bank logo for the first method line ("บน"). */
+  topLogo: ArrayBuffer | null;
+  /** Bank logo for the second method line ("ล่าง"). */
+  bottomLogo: ArrayBuffer | null;
+};
+
+/**
+ * Structured payment details for the modern per-item card. Ports the
+ * precedence of `makeMethodOf` (used by the classic cover) into fields the
+ * card can lay out individually instead of a single joined string.
+ */
+function resolvePayment(
+  f: SectionFiling,
+  pageByIndex: number[] | null,
+  indexOf: Map<ReportAttachment, number>
+): ResolvedPayment {
+  const custom = f.payment_method?.trim() ?? "";
+  const ba = f.bank_account;
+  const bankName = ba?.bank_name?.trim() || ba?.label?.trim() || "";
+  const accountNo = ba?.account_no?.trim() || "";
+  const transferLike = custom
+    ? /โอน|transfer|ธนาคาร|บัญชี/i.test(custom)
+    : Boolean(ba);
+
+  const slips = f.attachments.filter(
+    (a) => a.kind === "slip" && (a.covered_filings ?? []).includes(f.id)
+  );
+  let slipText = "";
+  if (slips.length) {
+    if (
+      pageByIndex &&
+      slips.every((s) => indexOf.has(s)) &&
+      slips.every((s) => (pageByIndex[indexOf.get(s)!] ?? -1) >= 0)
+    ) {
+      const pages = Array.from(
+        new Set(slips.map((s) => pageByIndex[indexOf.get(s)!] + 1))
+      );
+      slipText = `สลิป หน้า ${pages.join(", ")}`;
+    } else {
+      slipText = "สลิป";
+    }
+  }
+
+  const hasQr =
+    f.attachments.some((a) => a.kind === "qr") || Boolean(ba?.qr_bytes);
+  const qr = hasQr && ba?.qr_bytes ? ba.qr_bytes : null;
+
+  // Bank transfer: show the account block, optionally with QR.
+  if (ba && transferLike) {
+    return {
+      bankName,
+      accountNo,
+      accountName: ba.account_name?.trim() || "",
+      promptpay: ba.promptpay_id?.trim() || "",
+      customText: custom || slipText,
+      qr,
+      topLogo: ba.logo_bytes ?? null,
+      bottomLogo: ba.logo_bottom_bytes ?? null,
+    };
+  }
+  // Custom instruction, or a slip/QR reference, without bank details.
+  if (custom || slipText || hasQr) {
+    return {
+      bankName: "",
+      accountNo: "",
+      accountName: "",
+      promptpay: "",
+      customText: custom || slipText || (hasQr ? "QR Code" : ""),
+      qr,
+      topLogo: ba?.logo_bytes ?? null,
+      bottomLogo: ba?.logo_bottom_bytes ?? null,
+    };
+  }
+  // Fallback: bank details without a recognised transfer keyword.
+  return {
+    bankName,
+    accountNo,
+    accountName: ba?.account_name?.trim() || "",
+    promptpay: ba?.promptpay_id?.trim() || "",
+    customText: "",
+    qr,
+    topLogo: ba?.logo_bytes ?? null,
+    bottomLogo: ba?.logo_bottom_bytes ?? null,
+  };
+}
+
 function applyDocMeta(r: ReportRenderer, opts: BuildOptions): void {
   r.doc.setTitle(
     `รายงานงานภาษีประจำเดือน ${periodToThai(opts.periodLabel)} - ${opts.client.name}`
@@ -1360,11 +1514,12 @@ export async function buildMonthlyReportPdf(
   const filings = opts.filings as SectionFiling[];
   const orderedEvidence = collectEvidenceItems(filings);
   const style = resolveCoverStyle(opts);
-  const drawCoverFn = style === "classic" ? drawCoverClassic : drawCoverModern;
   const preview = opts.preview === true;
 
   let prevSig = "";
   let pageByIndex: number[] = [];
+  // Summary pages the cards occupy on the cover (resolved in the sim pass).
+  let coverPageCount = 1;
 
   // Simulated passes: resolve which report page each slip lands on.
   // Skipped for cover-only previews, which never reference slip pages.
@@ -1374,8 +1529,16 @@ export async function buildMonthlyReportPdf(
       r.slipPageByAtt = new WeakMap();
       await r.init();
       applyDocMeta(r, opts);
-      const method = makeMethodOf(orderedEvidence, iter === 0 ? null : pageByIndex);
-      await drawCoverFn(r, opts, method);
+      if (style === "classic") {
+        await drawCoverClassic(
+          r,
+          opts,
+          makeMethodOf(orderedEvidence, iter === 0 ? null : pageByIndex)
+        );
+      } else {
+        await drawCoverModern(r, opts, iter === 0 ? null : pageByIndex);
+        coverPageCount = r.doc.getPageCount();
+      }
       await drawEvidencePages(r, filings);
       await drawDocumentPages(r, opts.documents ?? []);
       pageByIndex = orderedEvidence.map(
@@ -1391,14 +1554,32 @@ export async function buildMonthlyReportPdf(
   r.sim = false;
   await r.init();
   applyDocMeta(r, opts);
-  const method = makeMethodOf(orderedEvidence, preview ? null : pageByIndex);
-  await drawCoverFn(r, opts, method);
+  if (style === "classic") {
+    await drawCoverClassic(
+      r,
+      opts,
+      makeMethodOf(orderedEvidence, preview ? null : pageByIndex)
+    );
+  } else {
+    await drawCoverModern(r, opts, preview ? null : pageByIndex);
+    coverPageCount = r.doc.getPageCount();
+  }
   if (style === "classic") await drawWatermark(r, opts);
   if (!preview) {
     await drawEvidencePages(r, filings);
     await drawDocumentPages(r, opts.documents ?? []);
     // Page count goes on the cover only — attached documents stay clean.
     await r.drawCoverPageCount();
+    // Context footer on continuation pages (summary overflow), so a multi-page
+    // cover keeps the client/period reference on every page it spans.
+    if (style === "modern" && coverPageCount > 1) {
+      const totalPages = r.doc.getPageCount();
+      await r.drawContinuationFooters(
+        coverPageCount,
+        totalPages,
+        `${opts.client.name} · รายงานงานภาษีประจำเดือน ${periodToThai(opts.periodLabel)}`
+      );
+    }
   }
 
   return r.doc.save();

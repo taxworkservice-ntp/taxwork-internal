@@ -869,7 +869,7 @@ export default function ReportsPage() {
           cache.set(bankId, null);
         }
       }
-      if (preview) continue;
+      // QR renders on the modern cover cards, so previews need it too.
       if (bank?.qr_path) {
         try {
           bankQrCache.set(bankId, await fetchAttachmentBytes(bank.qr_path));
