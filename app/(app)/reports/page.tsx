@@ -653,6 +653,42 @@ export default function ReportsPage() {
     }
   }
 
+  // Copy the latest round of the current month into a new round here.
+  async function copyLastRound() {
+    if (!clientId) return;
+    const latest = reports[reports.length - 1];
+    if (!latest) {
+      alert(`ไม่พบรอบรายงานของ ${periodToThai(period)} สำหรับลูกค้านี้`);
+      return;
+    }
+    if (
+      filings.length &&
+      !confirm(
+        `มีรายการอยู่แล้ว ${filings.length} รายการ — คัดลอกจาก ${latest.label ?? `ครั้งที่ ${latest.seq}`} เป็นรอบใหม่หรือไม่? (รายการเดิมจะไม่ถูกลบ)`
+      )
+    )
+      return;
+    setCopyingFrom(true);
+    try {
+      const inserted = await copyReportToNewIssue(latest.id, clientId, period);
+      if (!inserted.length) {
+        alert(`ไม่พบรายการของ ${latest.label ?? `ครั้งที่ ${latest.seq}`}`);
+        return;
+      }
+      const rows = await listMonthlyReports(clientId, period);
+      setReports(rows);
+      if (rows.length) setActiveReportId(rows[rows.length - 1].id);
+      inserted.forEach((f) => {
+        rememberFormCode(f.form_code);
+        if (f.payment_method) rememberPaymentMethod(f.payment_method);
+      });
+    } catch (err) {
+      alert(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setCopyingFrom(false);
+    }
+  }
+
   async function addFiling() {
     if (!clientId || !newFormCode.trim()) {
       alert("กรอกรหัสแบบฟอร์มก่อน เช่น ภ.พ.30");
@@ -1397,6 +1433,15 @@ export default function ReportsPage() {
             disabled={!clientId || copyingFrom}
           >
             {copyingFrom ? <SpinnerIcon /> : <CopyIcon />}
+          </button>
+          <button
+            className="btn px-2.5"
+            title={`คัดลอกจากรอบล่าสุด (${reports[reports.length - 1]?.label ?? "ครั้งที่ 1"}) เป็นรอบใหม่`}
+            aria-label="คัดลอกจากรอบล่าสุดเป็นรอบใหม่"
+            onClick={copyLastRound}
+            disabled={!clientId || copyingFrom || !reports.length}
+          >
+            {copyingFrom ? <SpinnerIcon /> : <CopyLastIcon />}
           </button>
           <button
             className="btn px-2.5"
@@ -2735,6 +2780,25 @@ function CopyIcon() {
     >
       <rect x="9" y="9" width="13" height="13" rx="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function CopyLastIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3v6" />
+      <path d="M9 6l3 3 3-3" />
+      <path d="M4 15a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2z" />
     </svg>
   );
 }
