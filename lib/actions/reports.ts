@@ -14,6 +14,8 @@ export type ClientRow = {
   address: string | null;
   phone: string | null;
   email: string | null;
+  avatar_text: string | null;
+  avatar_color: string | null;
 };
 
 export type BankAccount = {
@@ -190,7 +192,7 @@ export async function deleteCustomPaymentMethod(code: string): Promise<void> {
 
 export async function listActiveClients(): Promise<ClientRow[]> {
   await requireUser();
-  return (await sql`select id, name, tax_id, address, phone, email from clients where status='active'`) as ClientRow[];
+  return (await sql`select id, name, tax_id, address, phone, email, avatar_text, avatar_color from clients where status='active'`) as ClientRow[];
 }
 
 export async function listBankAccounts(): Promise<BankAccount[]> {

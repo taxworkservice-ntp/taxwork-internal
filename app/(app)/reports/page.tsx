@@ -57,6 +57,8 @@ import {
   type ReportFiling,
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
+import ClientAvatar from "@/components/client-avatar";
+import { contrastText, normalizeHex } from "@/lib/client-avatar";
 
 const FORM_PRESETS = [
   "ภ.พ.30",
@@ -649,6 +651,7 @@ export default function ReportsPage() {
     return s;
   })();
   const reportLocked = activeReport?.status === "issued";
+  const accentHex = normalizeHex(selectedClient?.avatar_color);
 
   const [copyOffset, setCopyOffset] = useState(1);
 
@@ -1558,14 +1561,34 @@ export default function ReportsPage() {
         </div>
 
         {selectedClient && (
-          <div className="text-sm text-neutral-500">
-            {[
-              selectedClient.tax_id && `เลขผู้เสียภาษี: ${selectedClient.tax_id}`,
-              selectedClient.phone,
-              selectedClient.email,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
+          <div className="flex items-center gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <ClientAvatar
+              name={selectedClient.name}
+              text={selectedClient.avatar_text}
+              color={selectedClient.avatar_color}
+              size="lg"
+            />
+            <div className="min-w-0">
+              <div className="truncate font-medium text-neutral-900">{selectedClient.name}</div>
+              <div className="mt-0.5 truncate text-xs text-neutral-500">
+                {[
+                  selectedClient.tax_id && `เลขผู้เสียภาษี: ${selectedClient.tax_id}`,
+                  selectedClient.phone,
+                  selectedClient.email,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "ยังไม่มีข้อมูลติดต่อ"}
+              </div>
+            </div>
+            {activeReport && (
+              <span className="ml-auto shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-medium whitespace-nowrap text-neutral-600 ring-1 ring-neutral-200 ring-inset">
+                {activeReport.label ?? `ครั้งที่ ${activeReport.seq}`}
+                <span className="text-neutral-400">
+                  {" · "}
+                  {activeReport.status === "issued" ? "ออกแล้ว" : "ฉบับร่าง"}
+                </span>
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -1578,27 +1601,8 @@ export default function ReportsPage() {
         <>
           <section className="max-w-4xl">
             <div className="card space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">รอบรายงาน:</span>
-                {reportsLoading ? (
-                  <span className="text-xs text-neutral-500">กำลังโหลด...</span>
-                ) : (
-                  reports.map((r) => (
-                    <button
-                      key={r.id}
-                      onClick={() => setActiveReportId(r.id)}
-                      className={`rounded-full border px-3 py-1 text-xs ${
-                        r.id === activeReportId
-                          ? "border-neutral-900 bg-neutral-900 text-white"
-                          : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
-                      }`}
-                      title={r.report_no ?? undefined}
-                    >
-                      {r.label ?? `ครั้งที่ ${r.seq}`}
-                      {r.status === "issued" ? " · ออกแล้ว" : ""}
-                    </button>
-                  ))
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium">รอบรายงาน</span>
                 <span className="inline-flex items-center gap-1">
                   <input
                     type="number"
@@ -1623,6 +1627,83 @@ export default function ReportsPage() {
                   </button>
                 </span>
               </div>
+              {reportsLoading ? (
+                <span className="text-xs text-neutral-500">กำลังโหลด...</span>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {reports.map((r) => {
+                    const active = r.id === activeReportId;
+                    const issued = r.status === "issued";
+                    const isTemplate = r.seq <= 2;
+                    const cardClass = active
+                      ? accentHex
+                        ? "border text-neutral-900"
+                        : "border border-neutral-900 bg-neutral-50 text-neutral-900 ring-1 ring-neutral-900 ring-inset"
+                      : "border border-neutral-200 bg-white text-neutral-700 hover:border-neutral-400";
+                    const cardStyle =
+                      active && accentHex
+                        ? {
+                            borderColor: accentHex,
+                            backgroundColor: `${accentHex}14`,
+                            boxShadow: `0 0 0 1px ${accentHex}`,
+                          }
+                        : undefined;
+                    const numberClass =
+                      active && accentHex
+                        ? ""
+                        : active
+                          ? "bg-neutral-900 text-white"
+                          : "bg-neutral-100 text-neutral-600";
+                    const numberStyle =
+                      active && accentHex
+                        ? { backgroundColor: accentHex, color: contrastText(accentHex) }
+                        : undefined;
+                    return (
+                      <button
+                        key={r.id}
+                        onClick={() => setActiveReportId(r.id)}
+                        className={`min-w-[10rem] rounded-lg px-3 py-2 text-left transition-colors ${cardClass}`}
+                        style={cardStyle}
+                        title={r.report_no ?? undefined}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${numberClass}`}
+                            style={numberStyle}
+                          >
+                            {r.seq}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-medium">
+                                {r.label ?? `ครั้งที่ ${r.seq}`}
+                              </span>
+                              <span
+                                className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                  isTemplate
+                                    ? "bg-blue-50 text-blue-700"
+                                    : "bg-neutral-100 text-neutral-500"
+                                }`}
+                              >
+                                {isTemplate ? "เทมเพลต" : "เพิ่มเติม"}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-500">
+                              <span
+                                className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+                                  issued ? "bg-emerald-500" : "bg-neutral-400"
+                                }`}
+                              />
+                              {issued ? "ออกแล้ว" : "ฉบับร่าง"}
+                              {r.report_no ? <span className="truncate">· {r.report_no}</span> : null}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-neutral-600">
                 <span>
                   เลขที่รายงาน:{" "}
