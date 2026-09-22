@@ -151,7 +151,7 @@ function renderCard(f: ReportModelFiling, index: number): string {
 function uniqueBanks(model: ReportModel) {
   const seen = new Map<string, { key: string; label: string; qr: string | null; logo: string | null; lines: string[]; items: ReportModelFiling[] }>();
   for (const f of model.filings) {
-    if (!f.bank && !f.qrDataUri && !f.payment_method) continue;
+    if (!f.bank && !f.qrDataUri && !f.payment_method && !f.slips.length) continue;
     const key = f.bank?.id ?? `qr-${f.id}`;
     if (!seen.has(key)) {
       const b = f.bank;
@@ -179,9 +179,14 @@ function uniqueBanks(model: ReportModel) {
   return [...seen.values()];
 }
 
-function renderPaymentPage(model: ReportModel): string {
+function renderPaymentPage(
+  model: ReportModel,
+  slipPages?: Map<string, number>
+): string {
   const groups = uniqueBanks(model);
   if (!groups.length) return "";
+  const pageOf = (slipId: string, fallback: number | null) =>
+    slipPages?.get(slipId) ?? fallback ?? null;
   const blocks = groups
     .map((g) => {
       const logo = g.logo ? `<img class="banklogo" src="${g.logo}" alt="" />` : "";
@@ -192,14 +197,42 @@ function renderPaymentPage(model: ReportModel): string {
             `<li><span>${escapeHtml(f.form_code || "-")}</span><span class="muted">${escapeHtml(fmtMoney(f.amount))} บาท</span></li>`
         )
         .join("");
+      const slipRefs = g.items.flatMap((f) =>
+        f.slips.map((s) => ({
+          form: f.form_code,
+          page: pageOf(s.id, s.pdfPage),
+        }))
+      );
+      const slipHtml = slipRefs.length
+        ? `<div class="paycard-slips">${slipRefs
+            .map(
+              (r) =>
+                `<div>สลิปการชำระ${r.page ? ` หน้า ${r.page}` : ""}${
+                  r.form ? ` · ${escapeHtml(r.form)}` : ""
+                }</div>`
+            )
+            .join("")}</div>`
+        : "";
       const qr = g.qr
         ? `<div class="qrbig"><img src="${g.qr}" alt="QR" /></div>`
-        : `<div class="qrbig qr-empty">ไม่พบ QR</div>`;
+        : slipRefs.length
+          ? ""
+          : `<div class="qrbig qr-empty">ไม่พบ QR</div>`;
+      const payMethod = g.items
+        .map((f) => f.payment_method?.trim())
+        .filter((v): v is string => Boolean(v));
+      const methodHtml = payMethod.length
+        ? `<div class="paycard-line">วิธีชำระ: ${escapeHtml(
+            Array.from(new Set(payMethod)).join(" · ")
+          )}</div>`
+        : "";
       return `
         <div class="paycard">
           <div class="paycard-info">
             <div class="paycard-title">${logo}${escapeHtml(g.lines[0] ?? g.label)}</div>
             ${g.lines.slice(1).map((l) => `<div class="paycard-line">${escapeHtml(l)}</div>`).join("")}
+            ${methodHtml}
+            ${slipHtml}
             <ul class="paycard-items">${filenames}</ul>
             <div class="paycard-subtotal"><span>รวมบัญชีนี้</span><span>${escapeHtml(fmtMoney(subtotal))} บาท</span></div>
           </div>
@@ -224,50 +257,7 @@ function renderPaymentPage(model: ReportModel): string {
 
 export type RenderHtmlOptions = { preview?: boolean };
 
-export function renderReportHtml(model: ReportModel, opts: RenderHtmlOptions = {}): string {
-  const periodTh = periodToThai(model.periodLabel);
-  const title = `รายงานสรุปการนำส่งภาษีประจำเดือน ${periodTh}${
-    model.reportLabel ? ` (${model.reportLabel})` : ""
-  }`;
-  const reportNo = model.reportNo?.trim() || `TW-${model.periodLabel.replace(/[^0-9]/g, "")}`;
-  const logo = model.logoDataUri
-    ? `<div class="logo"><img src="${model.logoDataUri}" alt="" /></div>`
-    : "";
-  const contact = [model.client.phone, model.client.email].filter(Boolean).join("  ·  ");
-  const cards = model.filings.map((f, i) => renderCard(f, i)).join("");
-
-  const cover = `
-    <section class="page cover">
-      ${logo}
-      <div class="rule"></div>
-      <h1 class="title">${escapeHtml(title)}</h1>
-      <div class="title-bar"></div>
-
-      <div class="client-card">
-        <div class="client-name">${escapeHtml(model.client.name)}</div>
-        ${model.client.tax_id ? `<div class="muted">เลขประจำตัวผู้เสียภาษีอากร: ${escapeHtml(model.client.tax_id)}</div>` : ""}
-        ${model.client.address ? `<div>${escapeHtml(model.client.address)}</div>` : ""}
-        ${contact ? `<div class="muted">${escapeHtml(contact)}</div>` : ""}
-      </div>
-
-      <div class="meta-grid">
-        <div><div class="mlabel">เลขที่รายงาน</div><div class="mvalue">${escapeHtml(reportNo)}</div></div>
-        <div><div class="mlabel">${model.reportLabel ? "ครั้งที่" : "รอบระยะเวลาภาษี"}</div><div class="mvalue">${escapeHtml(model.reportLabel || periodTh)}</div></div>
-        <div><div class="mlabel">วันที่ออกรายงาน</div><div class="mvalue">${escapeHtml(model.issueDate)}</div></div>
-        <div><div class="mlabel">จัดทำโดย</div><div class="mvalue">${escapeHtml(model.preparedBy)}</div></div>
-      </div>
-
-      <h2 class="section-title">รายละเอียดรายการภาษี</h2>
-      ${cards || `<p class="muted">ไม่มีรายการ</p>`}
-    </section>`;
-
-  const payment = opts.preview ? "" : renderPaymentPage(model);
-
-  return `<!doctype html>
-<html lang="th">
-<head>
-<meta charset="utf-8" />
-<style>
+const DOC_CSS = (): string => `
 ${fontCss()}
 @page { size: A4; margin: 0; }
 * { box-sizing: border-box; }
@@ -313,19 +303,87 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .paycard-items { list-style: none; padding: 0; margin: 8pt 0 0; border-top: 0.5pt solid #d1d1da; }
 .paycard-items li { display: flex; justify-content: space-between; padding: 3pt 0; }
 .paycard-subtotal { display: flex; justify-content: space-between; padding-top: 4pt; border-top: 0.5pt solid #d1d1da; font-weight: 700; }
+.paycard-slips { margin-top: 6pt; color: #1d4ed8; font-weight: 700; font-size: 9.5pt; }
 .grand-total { display: flex; justify-content: space-between; font-size: 11pt; font-weight: 700; border-top: 1pt solid #242428; padding-top: 6pt; margin-top: 6pt; }
 .qrbig { width: 150pt; height: 150pt; border: 0.5pt solid #d1d1da; padding: 6pt; background: #fff; display: flex; align-items: center; justify-content: center; }
 .qrbig img { width: 100%; height: 100%; object-fit: contain; }
 .qr-empty { color: #a1a1aa; font-size: 9pt; }
 .ref { margin-top: 8pt; color: #73737d; font-size: 9pt; }
 .ref a { color: #1d4ed8; text-decoration: underline; }
+`;
+
+function wrapHtml(body: string): string {
+  return `<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<style>
+${DOC_CSS()}
 </style>
 </head>
 <body>
-${cover}
-${payment}
+${body}
 </body>
 </html>`;
+}
+
+function renderCoverSection(model: ReportModel): string {
+  const periodTh = periodToThai(model.periodLabel);
+  const title = `รายงานสรุปการนำส่งภาษีประจำเดือน ${periodTh}${
+    model.reportLabel ? ` (${model.reportLabel})` : ""
+  }`;
+  const reportNo = model.reportNo?.trim() || `TW-${model.periodLabel.replace(/[^0-9]/g, "")}`;
+  const logo = model.logoDataUri
+    ? `<div class="logo"><img src="${model.logoDataUri}" alt="" /></div>`
+    : "";
+  const contact = [model.client.phone, model.client.email].filter(Boolean).join("  ·  ");
+  const cards = model.filings.map((f, i) => renderCard(f, i)).join("");
+  return `
+    <section class="page cover">
+      ${logo}
+      <div class="rule"></div>
+      <h1 class="title">${escapeHtml(title)}</h1>
+      <div class="title-bar"></div>
+
+      <div class="client-card">
+        <div class="client-name">${escapeHtml(model.client.name)}</div>
+        ${model.client.tax_id ? `<div class="muted">เลขประจำตัวผู้เสียภาษีอากร: ${escapeHtml(model.client.tax_id)}</div>` : ""}
+        ${model.client.address ? `<div>${escapeHtml(model.client.address)}</div>` : ""}
+        ${contact ? `<div class="muted">${escapeHtml(contact)}</div>` : ""}
+      </div>
+
+      <div class="meta-grid">
+        <div><div class="mlabel">เลขที่รายงาน</div><div class="mvalue">${escapeHtml(reportNo)}</div></div>
+        <div><div class="mlabel">${model.reportLabel ? "ครั้งที่" : "รอบระยะเวลาภาษี"}</div><div class="mvalue">${escapeHtml(model.reportLabel || periodTh)}</div></div>
+        <div><div class="mlabel">วันที่ออกรายงาน</div><div class="mvalue">${escapeHtml(model.issueDate)}</div></div>
+        <div><div class="mlabel">จัดทำโดย</div><div class="mvalue">${escapeHtml(model.preparedBy)}</div></div>
+      </div>
+
+      <h2 class="section-title">รายละเอียดรายการภาษี</h2>
+      ${cards || `<p class="muted">ไม่มีรายการ</p>`}
+    </section>`;
+}
+
+/** Cover page only (used by the compose pipeline to measure cover length). */
+export function renderCoverHtml(model: ReportModel): string {
+  return wrapHtml(renderCoverSection(model));
+}
+
+/** Payment page only, with slip page references. Null when there is nothing to pay. */
+export function renderPaymentHtml(
+  model: ReportModel,
+  slipPages?: Map<string, number>
+): string | null {
+  const payment = renderPaymentPage(model, slipPages);
+  if (!payment) return null;
+  return wrapHtml(payment);
+}
+
+/** Cover + payment in one document (preview / legacy callers / tests). */
+export function renderReportHtml(model: ReportModel, opts: RenderHtmlOptions = {}): string {
+  const cover = renderCoverSection(model);
+  const payment = opts.preview ? "" : renderPaymentPage(model);
+  return wrapHtml(`${cover}${payment}`);
 }
 
 export const __testing = { fmtMoney, periodToThai, dateToThai, escapeHtml };

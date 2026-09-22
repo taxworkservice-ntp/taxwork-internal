@@ -38,6 +38,7 @@ export type Attachment = {
   file_name: string;
   size_bytes: number | null;
   mime_type: string | null;
+  pdf_page: number | null;
   created_at: string;
   covers?: string[];
 };
@@ -87,6 +88,7 @@ function toAttachment(r: Record<string, unknown>): Attachment {
   return {
     ...a,
     size_bytes: a.size_bytes == null ? null : num(a.size_bytes),
+    pdf_page: a.pdf_page == null ? null : num(a.pdf_page),
     created_at: str(a.created_at),
   };
 }
@@ -567,6 +569,40 @@ export async function deleteAttachment(id: string): Promise<void> {
   }[];
   if (rows[0]) await assertFilingEditable(rows[0].filing_id);
   await sql`delete from filing_attachments where id=${id}`;
+}
+
+/** Persist where each slip landed in the generated PDF (for the share link). */
+export async function setAttachmentPages(
+  updates: { id: string; page: number }[]
+): Promise<void> {
+  await requireUser();
+  for (const u of updates) {
+    await sql`update filing_attachments set pdf_page=${u.page} where id=${u.id}`;
+  }
+}
+
+/**
+ * Public: resolve a slip attachment for the share page. Only returns slips that
+ * belong to the given report (the caller must have validated the share token).
+ */
+export async function resolveSlip(
+  reportId: string,
+  attachmentId: string
+): Promise<{ storage_path: string; file_name: string; mime_type: string | null } | null> {
+  const rows = (await sql`
+    select a.storage_path, a.file_name, a.mime_type
+    from filing_attachments a
+    join monthly_filings f on f.id = a.filing_id
+    where a.id=${attachmentId} and a.kind='slip' and f.report_id=${reportId}
+  `) as { storage_path: string; file_name: string; mime_type: string | null }[];
+  const row = rows[0];
+  return row
+    ? {
+        storage_path: String(row.storage_path),
+        file_name: String(row.file_name),
+        mime_type: row.mime_type == null ? null : String(row.mime_type),
+      }
+    : null;
 }
 
 export async function addBankAccount(input: {

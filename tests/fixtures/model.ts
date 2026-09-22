@@ -42,6 +42,7 @@ export function sampleModel(overrides: Partial<ReportModel> = {}): ReportModel {
           logoBottomDataUri: null,
         },
         qrDataUri: SAMPLE_QR,
+        slips: [],
       },
     ],
     documents: [],

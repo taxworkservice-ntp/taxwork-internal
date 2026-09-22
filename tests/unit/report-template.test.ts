@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   renderReportHtml,
+  renderPaymentHtml,
   __testing,
 } from "@/lib/report-pdf/server/template";
 import { SAMPLE_QR, sampleModel as baseModel } from "@/tests/fixtures/model";
@@ -49,6 +50,41 @@ describe("report template (server renderer)", () => {
     expect(html).toContain(`href="${url}"`);
     const none = renderReportHtml(baseModel({ shareUrl: null }));
     expect(none).not.toContain("/r/ABCDEFGHIJKLMNOPQRST");
+  });
+
+  it("shows the slip page reference on the payment page", () => {
+    const model = baseModel({
+      reportLabel: null,
+      filings: [
+        {
+          id: "f1",
+          form_code: "ภ.พ.30",
+          description: null,
+          amount: 61329.55,
+          due_date: null,
+          remark: null,
+          payment_method: null,
+          bank: null,
+          qrDataUri: null,
+          slips: [
+            {
+              id: "s1",
+              file_name: "slip.pdf",
+              mime_type: "application/pdf",
+              isImage: false,
+              storagePath: "reports/slip.pdf",
+              dataUri: null,
+              pdfPage: 2,
+            },
+          ],
+        },
+      ],
+    });
+    const pay = renderPaymentHtml(model, new Map([["s1", 2]]));
+    expect(pay).toContain("สลิปการชำระ หน้า 2");
+    expect(pay).toContain("ภ.พ.30");
+    // falls back to the stored pdf_page when no map is provided
+    expect(renderPaymentHtml(model)).toContain("สลิปการชำระ หน้า 2");
   });
 
   it("falls back to รอบระยะเวลาภาษี when there is no round label", () => {

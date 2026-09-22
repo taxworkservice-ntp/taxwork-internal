@@ -167,6 +167,7 @@ export default function ReportsPage() {
   const [qrBusyId, setQrBusyId] = useState<string | null>(null);
   const [logoBusyId, setLogoBusyId] = useState<string | null>(null);
   const [qrFilingId, setQrFilingId] = useState<string | null>(null);
+  const [slipFilingId, setSlipFilingId] = useState<string | null>(null);
   const [firmName, setFirmName] = useState("");
   const [preparedBy, setPreparedBy] = useState("");
   const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
@@ -770,6 +771,48 @@ export default function ReportsPage() {
       await loadFilings();
     } catch (err) {
       alert(`ลบ QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  async function uploadFilingSlip(filing: Filing, file: File) {
+    if (reportLocked) return;
+    setSlipFilingId(filing.id);
+    try {
+      const path = await uploadObject(file.name, file);
+      // One slip per filing: drop any existing slip (R2 + DB) before adding.
+      for (const att of filing.filing_attachments) {
+        if (att.kind !== "slip") continue;
+        await deleteR2Object(att.storage_path);
+        await deleteAttachment(att.id);
+      }
+      await addAttachment(
+        filing.id,
+        "slip",
+        {
+          storage_path: path,
+          file_name: file.name,
+          size_bytes: file.size,
+          mime_type: file.type || null,
+        },
+        [filing.id]
+      );
+      await loadFilings();
+    } catch (err) {
+      alert(`อัปโหลดสลิปไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setSlipFilingId(null);
+    }
+  }
+
+  async function removeFilingSlip(att: Attachment) {
+    if (reportLocked) return;
+    if (!confirm("ลบสลิปของรายการนี้?")) return;
+    try {
+      await deleteAttachment(att.id);
+      await deleteR2Object(att.storage_path);
+      await loadFilings();
+    } catch (err) {
+      alert(`ลบสลิปไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -1591,10 +1634,13 @@ export default function ReportsPage() {
                   bankAccounts={bankAccounts}
                   locked={reportLocked}
                   qrBusy={qrFilingId === f.id}
+                  slipBusy={slipFilingId === f.id}
                   onPatch={patchFiling}
                   onDelete={() => deleteFiling(f)}
                   onUploadQr={(file) => uploadFilingQr(f, file)}
                   onRemoveQr={removeFilingQr}
+                  onUploadSlip={(file) => uploadFilingSlip(f, file)}
+                  onRemoveSlip={removeFilingSlip}
                 />
               ))
             )}
@@ -2246,22 +2292,29 @@ function FilingCard({
   bankAccounts,
   locked,
   qrBusy,
+  slipBusy,
   onPatch,
   onDelete,
   onUploadQr,
   onRemoveQr,
+  onUploadSlip,
+  onRemoveSlip,
 }: {
   filing: Filing;
   bankAccounts: BankAccount[];
   locked?: boolean;
   qrBusy?: boolean;
+  slipBusy?: boolean;
   onPatch: (id: string, patch: Partial<Filing>) => void;
   onDelete: () => void;
   onUploadQr: (file: File) => void;
   onRemoveQr: (att: Attachment) => void;
+  onUploadSlip: (file: File) => void;
+  onRemoveSlip: (att: Attachment) => void;
 }) {
   const editingRef = useRef<string | null>(null);
   const qrAtt = filing.filing_attachments.find((a) => a.kind === "qr") ?? null;
+  const slipAtt = filing.filing_attachments.find((a) => a.kind === "slip") ?? null;
   const [draft, setDraft] = useState({
     form_code: filing.form_code,
     description: filing.description ?? "",
@@ -2389,6 +2442,54 @@ function FilingCard({
       </div>
 
       <div className="flex items-center gap-2 border-t border-neutral-100 pt-2">
+        <span className="text-xs text-neutral-500">สลิป / ใบนำฝาก</span>
+        {slipAtt ? (
+          <>
+            <FileThumb
+              storagePath={slipAtt.storage_path}
+              isImage={isImageAttachment(slipAtt)}
+            />
+            <span className="min-w-0 flex-1 truncate text-xs text-neutral-600" title={slipAtt.file_name}>
+              {slipAtt.file_name}
+            </span>
+            {slipAtt.pdf_page ? (
+              <span className="text-[11px] text-neutral-400">
+                หน้า {slipAtt.pdf_page}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className="text-xs text-red-600 hover:underline disabled:opacity-50"
+              onClick={() => onRemoveSlip(slipAtt)}
+              disabled={locked}
+            >
+              ลบสลิป
+            </button>
+          </>
+        ) : (
+          <label
+            className={`btn text-xs ${locked || slipBusy ? "pointer-events-none opacity-50" : "cursor-pointer"}`}
+          >
+            {slipBusy ? "กำลังอัปโหลด..." : "+ แนบสลิป"}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,application/pdf"
+              className="hidden"
+              disabled={locked || slipBusy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onUploadSlip(file);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
+        <span className="text-[11px] text-neutral-400">
+          ใบนำฝากจะถูกวางหลังหน้าปก
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 border-t border-neutral-100 pt-2">
         <span className="text-xs text-neutral-500">QR ชำระเงิน</span>
         {qrAtt ? (
           <>
@@ -2466,6 +2567,67 @@ function QrThumb({ storagePath }: { storagePath: string }) {
     <img
       src={url}
       alt="QR"
+      className="h-9 w-9 shrink-0 rounded border border-neutral-200 object-contain"
+    />
+  );
+}
+
+function isImageAttachment(att: { mime_type: string | null; file_name: string }): boolean {
+  return (
+    (att.mime_type?.startsWith("image/") ?? false) ||
+    /\.(png|jpe?g)$/i.test(att.file_name)
+  );
+}
+
+function FileThumb({
+  storagePath,
+  isImage,
+}: {
+  storagePath: string;
+  isImage: boolean;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isImage) return;
+    let revoked: string | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const bytes = await fetchAttachmentBytes(storagePath);
+        const u = URL.createObjectURL(
+          new Blob([bytes], { type: sniffImageMime(bytes) })
+        );
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        revoked = u;
+        setUrl(u);
+      } catch {
+        setUrl(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [storagePath, isImage]);
+
+  if (!isImage)
+    return (
+      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-neutral-200 bg-neutral-50 text-[10px] font-semibold text-neutral-500">
+        PDF
+      </span>
+    );
+  if (!url)
+    return (
+      <span className="inline-block h-9 w-9 shrink-0 animate-pulse rounded border border-neutral-200 bg-neutral-100" />
+    );
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt=""
       className="h-9 w-9 shrink-0 rounded border border-neutral-200 object-contain"
     />
   );

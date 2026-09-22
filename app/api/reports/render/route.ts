@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireUserApi } from "@/lib/session";
 import { buildServerReportPdf } from "@/lib/report-pdf/server";
+import { setAttachmentPages } from "@/lib/actions/reports";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -26,11 +27,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "reportId required" }, { status: 400 });
   }
 
+  const preview = body.preview === true;
   try {
-    const pdf = await buildServerReportPdf(reportId, {
-      preview: body.preview === true,
-    });
-    return new NextResponse(new Uint8Array(pdf), {
+    const { bytes, slipPages } = await buildServerReportPdf(reportId, { preview });
+    if (!preview && slipPages.length) {
+      try {
+        await setAttachmentPages(slipPages);
+      } catch (error) {
+        // Non-fatal: the PDF is generated even if we can't record page numbers.
+        console.error("persisting slip page numbers failed:", error);
+      }
+    }
+    return new NextResponse(new Uint8Array(bytes), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",

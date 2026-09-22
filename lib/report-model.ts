@@ -11,6 +11,20 @@ import { r2, R2_BUCKET } from "@/lib/r2";
  * network or auth.
  */
 
+export type ReportModelSlip = {
+  id: string;
+  file_name: string;
+  mime_type: string | null;
+  /** True for PNG/JPG (embed/inline); false for PDF. */
+  isImage: boolean;
+  /** R2 key — the renderer reads bytes from here. */
+  storagePath: string;
+  /** Inline data URI for images (share page); null for PDFs. */
+  dataUri: string | null;
+  /** Page this slip landed on in the generated PDF (null until generated). */
+  pdfPage: number | null;
+};
+
 export type ReportModelFiling = {
   id: string;
   form_code: string;
@@ -22,6 +36,8 @@ export type ReportModelFiling = {
   bank: ReportModelBank | null;
   /** Per-filing QR (preferred) else the bank's QR, as a data URI. */
   qrDataUri: string | null;
+  /** Pay-in slips attached to this filing, in upload order. */
+  slips: ReportModelSlip[];
 };
 
 export type ReportModelBank = {
@@ -88,6 +104,21 @@ async function toDataUri(storagePath: string | null): Promise<string | null> {
   return `data:${got.contentType};base64,${Buffer.from(got.bytes).toString("base64")}`;
 }
 
+function isImageMime(mime: string | null, storagePath: string): boolean {
+  const m = (mime ?? "").toLowerCase();
+  if (m.startsWith("image/")) return true;
+  const lower = storagePath.toLowerCase();
+  return /\.(png|jpe?g)$/.test(lower);
+}
+
+/** Read raw object bytes from R2 (used for PDF slip pages). */
+export async function readObjectBytes(
+  storagePath: string
+): Promise<Uint8Array | null> {
+  const got = await getBytes(storagePath);
+  return got?.bytes ?? null;
+}
+
 function thaiToday(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -120,17 +151,39 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
   const bankById = new Map(banks.map((b) => [String(b.id), b]));
 
   const qrPathsByFiling = new Map<string, string>();
+  const slipsByFiling = new Map<
+    string,
+    { id: string; storage_path: string; file_name: string; mime_type: string | null; pdf_page: number | null }[]
+  >();
   if (filingIds.length) {
-    const atts = (await sql.query(
+    const placeholders = filingIds.map((_, i) => `$${i + 1}`).join(",");
+    const qrs = (await sql.query(
       `select filing_id, storage_path from filing_attachments
-       where kind='qr' and filing_id in (${filingIds.map((_, i) => `$${i + 1}`).join(",")})
+       where kind='qr' and filing_id in (${placeholders})
        order by created_at`,
       filingIds
     )) as { filing_id: string; storage_path: string }[];
-    for (const a of atts) {
+    for (const a of qrs) {
       // first QR wins (matches "one QR per filing, replace on upload")
       if (!qrPathsByFiling.has(a.filing_id))
         qrPathsByFiling.set(a.filing_id, a.storage_path);
+    }
+    const slips = (await sql.query(
+      `select id, filing_id, storage_path, file_name, mime_type, pdf_page from filing_attachments
+       where kind='slip' and filing_id in (${placeholders})
+       order by created_at`,
+      filingIds
+    )) as {
+      id: string;
+      filing_id: string;
+      storage_path: string;
+      file_name: string;
+      mime_type: string | null;
+      pdf_page: number | null;
+    }[];
+    for (const a of slips) {
+      if (!slipsByFiling.has(a.filing_id)) slipsByFiling.set(a.filing_id, []);
+      slipsByFiling.get(a.filing_id)!.push(a);
     }
   }
 
@@ -172,6 +225,21 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     );
     const qrPath = qrPathsByFiling.get(id) ?? null;
     const qrDataUri = qrPath ? await toDataUri(qrPath) : bank?.qrDataUri ?? null;
+
+    const slips: ReportModelSlip[] = [];
+    for (const s of slipsByFiling.get(id) ?? []) {
+      const isImage = isImageMime(s.mime_type, s.storage_path);
+      slips.push({
+        id: String(s.id),
+        file_name: String(s.file_name),
+        mime_type: s.mime_type == null ? null : String(s.mime_type),
+        isImage,
+        storagePath: String(s.storage_path),
+        dataUri: isImage ? await toDataUri(String(s.storage_path)) : null,
+        pdfPage: s.pdf_page == null ? null : Number(s.pdf_page),
+      });
+    }
+
     filings.push({
       id,
       form_code: String(f.form_code ?? ""),
@@ -182,6 +250,7 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
       payment_method: f.payment_method == null ? null : String(f.payment_method),
       bank,
       qrDataUri,
+      slips,
     });
   }
 

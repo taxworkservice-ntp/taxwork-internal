@@ -37,16 +37,26 @@ function dataUriToBlob(uri: string): Blob | null {
   }
 }
 
+type SectionSlip = {
+  id: string;
+  file_name: string;
+  isImage: boolean;
+  dataUri: string | null;
+  pdfPage: number | null;
+};
+
 type Section = {
   id: string;
   title: string;
   description: string | null;
   amount: number;
+  paymentMethod: string | null;
   bankName: string | null;
   accountName: string | null;
   accountNo: string | null;
   promptpay: string | null;
   qr: string | null;
+  slips: SectionSlip[];
 };
 
 function buildSections(model: ReportModel): Section[] {
@@ -55,11 +65,19 @@ function buildSections(model: ReportModel): Section[] {
     title: f.form_code?.trim() || "รายการ",
     description: f.description?.trim() || null,
     amount: Number(f.amount ?? 0),
+    paymentMethod: f.payment_method?.trim() || null,
     bankName: f.bank?.bank_name || f.bank?.label || null,
     accountName: f.bank?.account_name || null,
     accountNo: f.bank?.account_no || null,
     promptpay: f.bank?.promptpay_id || null,
     qr: f.qrDataUri ?? f.bank?.qrDataUri ?? null,
+    slips: f.slips.map((s) => ({
+      id: s.id,
+      file_name: s.file_name,
+      isImage: s.isImage,
+      dataUri: s.dataUri,
+      pdfPage: s.pdfPage,
+    })),
   }));
 }
 
@@ -69,28 +87,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
       <span className="h-4 w-1 rounded-full bg-neutral-900" />
       {children}
     </h2>
-  );
-}
-
-function AmountCopy({ amount }: { amount: number }) {
-  const [copied, setCopied] = useState(false);
-  const text = amount.toFixed(2);
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          // clipboard unavailable
-        }
-      }}
-      className="text-[11px] font-medium text-blue-600 underline-offset-2 hover:underline"
-    >
-      {copied ? "คัดลอกแล้ว" : "คัดลอกจำนวนเงิน"}
-    </button>
   );
 }
 
@@ -127,7 +123,37 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function QrBlock({ dataUri, fileName }: { dataUri: string; fileName: string }) {
+function AmountCopy({ amount }: { amount: number }) {
+  const [copied, setCopied] = useState(false);
+  const text = amount.toFixed(2);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // clipboard unavailable
+        }
+      }}
+      className="text-[11px] font-medium text-blue-600 underline-offset-2 hover:underline"
+    >
+      {copied ? "คัดลอกแล้ว" : "คัดลอกจำนวนเงิน"}
+    </button>
+  );
+}
+
+function ImageBlock({
+  dataUri,
+  fileName,
+  hint,
+}: {
+  dataUri: string;
+  fileName: string;
+  hint: string;
+}) {
   const [state, setState] = useState<"idle" | "copied" | "error">("idle");
 
   async function handleCopy() {
@@ -146,7 +172,7 @@ function QrBlock({ dataUri, fileName }: { dataUri: string; fileName: string }) {
         return;
       }
     } catch {
-      // fall through to the error hint (user can use "บันทึก QR")
+      // fall through
     }
     setState("error");
     setTimeout(() => setState("idle"), 3000);
@@ -157,11 +183,11 @@ function QrBlock({ dataUri, fileName }: { dataUri: string; fileName: string }) {
       <button
         type="button"
         onClick={handleCopy}
-        aria-label="แตะเพื่อคัดลอกรูป QR"
+        aria-label="แตะเพื่อคัดลอกรูป"
         className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm transition-transform active:scale-[0.98]"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={dataUri} alt="QR" className="h-56 w-56 object-contain" />
+        <img src={dataUri} alt={fileName} className="h-56 w-56 object-contain" />
       </button>
       <div className="flex items-center gap-2 text-xs">
         <a
@@ -169,14 +195,14 @@ function QrBlock({ dataUri, fileName }: { dataUri: string; fileName: string }) {
           download={fileName}
           className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 font-medium text-neutral-700"
         >
-          บันทึก QR
+          บันทึกไฟล์
         </a>
         <span className="text-neutral-500">
           {state === "copied"
-            ? "คัดลอกรูป QR แล้ว"
+            ? "คัดลอกรูปแล้ว"
             : state === "error"
-              ? "คัดลอกอัตโนมัติไม่ได้ — ใช้ “บันทึก QR”"
-              : "แตะที่ QR เพื่อคัดลอกรูป"}
+              ? "คัดลอกอัตโนมัติไม่ได้ — ใช้ “บันทึกไฟล์”"
+              : hint}
         </span>
       </div>
     </div>
@@ -236,7 +262,7 @@ export default function ShareView({
             <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
               <div className="mb-1 font-medium text-neutral-700">วิธีชำระเงิน</div>
               <ol className="list-inside list-decimal space-y-0.5">
-                <li>แตะที่รูป QR เพื่อคัดลอกรูป หรือกด “บันทึก QR”</li>
+                <li>แตะที่รูป QR / สลิป เพื่อคัดลอกรูป หรือกด “บันทึกไฟล์”</li>
                 <li>เปิดแอปธนาคาร แล้วเลือกสแกน / อัปโหลด QR จากอัลบั้ม</li>
                 <li>หรือโอนเข้าบัญชี / พร้อมเพย์ ตามหมายเลขที่แสดง</li>
               </ol>
@@ -244,9 +270,12 @@ export default function ShareView({
 
             <div className="space-y-4">
               {sections.map((s, i) => {
-                const hasPay = Boolean(
+                const hasBank = Boolean(
                   s.bankName || s.accountNo || s.promptpay || s.qr
                 );
+                const hasSlip = s.slips.length > 0;
+                const slipPage =
+                  s.slips.find((x) => x.pdfPage)?.pdfPage ?? null;
                 return (
                   <div
                     key={s.id}
@@ -277,43 +306,77 @@ export default function ShareView({
                       </div>
                     </div>
 
-                    {/* payment details */}
-                    {hasPay ? (
-                      <>
-                        <div className="px-4 py-3">
-                          {s.bankName && (
-                            <div className="text-sm font-medium text-neutral-800">
-                              {s.bankName}
-                            </div>
-                          )}
-                          {s.accountName && (
-                            <div className="text-xs text-neutral-500">
-                              ชื่อบัญชี {s.accountName}
-                            </div>
-                          )}
-                          {(s.accountNo || s.promptpay) && (
-                            <div className="mt-1 divide-y divide-neutral-100">
-                              {s.accountNo && (
-                                <CopyRow label="เลขที่บัญชี" value={s.accountNo} />
-                              )}
-                              {s.promptpay && (
-                                <CopyRow label="พร้อมเพย์" value={s.promptpay} />
-                              )}
-                            </div>
-                          )}
+                    {/* slips first */}
+                    {hasSlip && (
+                      <div className="space-y-3 border-b border-neutral-100 px-4 py-4">
+                        <div className="text-xs font-semibold text-neutral-700">
+                          สลิป / ใบนำฝาก
+                          {slipPage ? ` · หน้า ${slipPage} ในไฟล์ PDF` : ""}
                         </div>
+                        {s.slips.map((slip) =>
+                          slip.isImage && slip.dataUri ? (
+                            <ImageBlock
+                              key={slip.id}
+                              dataUri={slip.dataUri}
+                              fileName={slip.file_name}
+                              hint="แตะที่สลิปเพื่อคัดลอกรูป"
+                            />
+                          ) : (
+                            <a
+                              key={slip.id}
+                              href={`/r/${token}/slip/${slip.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-center text-sm font-medium text-neutral-800"
+                            >
+                              เปิดสลิป (PDF) · {slip.file_name}
+                            </a>
+                          )
+                        )}
+                      </div>
+                    )}
+
+                    {/* bank / QR */}
+                    {hasBank && (
+                      <div className="px-4 py-3">
+                        {s.bankName && (
+                          <div className="text-sm font-medium text-neutral-800">
+                            {s.bankName}
+                          </div>
+                        )}
+                        {s.accountName && (
+                          <div className="text-xs text-neutral-500">
+                            ชื่อบัญชี {s.accountName}
+                          </div>
+                        )}
+                        {(s.accountNo || s.promptpay) && (
+                          <div className="mt-1 divide-y divide-neutral-100">
+                            {s.accountNo && (
+                              <CopyRow label="เลขที่บัญชี" value={s.accountNo} />
+                            )}
+                            {s.promptpay && (
+                              <CopyRow label="พร้อมเพย์" value={s.promptpay} />
+                            )}
+                          </div>
+                        )}
                         {s.qr && (
-                          <div className="border-t border-neutral-100 px-4 py-4">
-                            <QrBlock
+                          <div className="mt-3">
+                            <ImageBlock
                               dataUri={s.qr}
                               fileName={`qr-${s.title.replace(/\s+/g, "-")}.png`}
+                              hint="แตะที่ QR เพื่อคัดลอกรูป"
                             />
                           </div>
                         )}
-                      </>
-                    ) : (
+                      </div>
+                    )}
+
+                    {/* method text / fallback */}
+                    {!hasBank && !hasSlip && (
                       <div className="px-4 py-3 text-xs text-neutral-500">
-                        ชำระตามช่องทางที่เจ้าหน้าที่แจ้ง
+                        {s.paymentMethod
+                          ? `วิธีชำระ: ${s.paymentMethod}`
+                          : "ชำระตามช่องทางที่เจ้าหน้าที่แจ้ง"}
                       </div>
                     )}
                   </div>
