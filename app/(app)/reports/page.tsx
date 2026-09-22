@@ -9,12 +9,15 @@ import {
   clearFilings,
   copyReportToNewIssue,
   createMonthlyReport,
+  createReportShareLink,
   deleteMonthlyReport,
   deleteAttachment,
   deleteReportDocument,
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
   getAppSettings,
+  getReportShare,
+  revokeReportShareLink,
   deleteCustomPaymentMethod as deleteCustomPaymentMethodAction,
   issueMonthlyReport,
   listActiveClients,
@@ -40,6 +43,7 @@ import {
   type Filing,
   type MonthlyReport,
   type ReportFile,
+  type ReportShare,
 } from "@/lib/actions/reports";
 import {
   buildMonthlyReportPdf,
@@ -146,6 +150,8 @@ export default function ReportsPage() {
   const [customPayMethods, setCustomPayMethods] = useState<string[]>([]);
   const [newPayMethodPreset, setNewPayMethodPreset] = useState("");
   const [reportFiles, setReportFiles] = useState<ReportFile[]>([]);
+  const [share, setShare] = useState<ReportShare | null>(null);
+  const [shareBusy, setShareBusy] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const loadSeq = useRef(0);
 
@@ -380,6 +386,25 @@ export default function ReportsPage() {
           setStatus(
             `โหลดประวัติไฟล์รายงานไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
           );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeReportId]);
+
+  // Active share link for the round.
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeReportId) {
+      setShare(null);
+      return;
+    }
+    getReportShare(activeReportId)
+      .then((s) => {
+        if (!cancelled) setShare(s);
+      })
+      .catch(() => {
+        if (!cancelled) setShare(null);
       });
     return () => {
       cancelled = true;
@@ -1117,6 +1142,43 @@ export default function ReportsPage() {
     }
   }
 
+  async function createShareLink() {
+    if (!activeReportId) return;
+    setShareBusy(true);
+    setStatus("");
+    try {
+      const res = await createReportShareLink(activeReportId, 30);
+      if (!res.ok) {
+        alert(res.error);
+        return;
+      }
+      setShare(res.share);
+      if (res.share) {
+        await navigator.clipboard.writeText(res.share.url).catch(() => undefined);
+        setStatus("สร้างลิงก์แชร์แล้ว (คัดลอกไปวางใน LINE ได้เลย)");
+      }
+    } catch (error) {
+      alert(`สร้างลิงก์ไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function revokeShareLink() {
+    if (!activeReportId || !confirm("ยกเลิกลิงก์แชร์นี้?")) return;
+    setShareBusy(true);
+    try {
+      const res = await revokeReportShareLink(activeReportId);
+      if (!res.ok) {
+        alert(res.error);
+        return;
+      }
+      setShare(null);
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
   async function generatePdf() {
     if (!selectedClient || !activeReportId || !filings.length) return;
     if (
@@ -1637,6 +1699,61 @@ export default function ReportsPage() {
                     {generating ? "กำลังสร้าง..." : "ดาวน์โหลด PDF"}
                   </button>
                 </div>
+              </div>
+
+              <div className="card mt-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">ลิงก์แชร์ให้ลูกค้า</span>
+                  {!reportLocked && (
+                    <span className="text-xs text-neutral-500">
+                      (ต้องออกรายงานก่อน)
+                    </span>
+                  )}
+                  {share && (
+                    <button
+                      className="btn text-xs"
+                      onClick={revokeShareLink}
+                      disabled={shareBusy}
+                    >
+                      ยกเลิก
+                    </button>
+                  )}
+                  <button
+                    className="btn-primary ml-auto text-xs"
+                    onClick={
+                      share
+                        ? async () => {
+                            await navigator.clipboard.writeText(share.url).catch(() => undefined);
+                            setStatus("คัดลอกลิงก์แล้ว");
+                          }
+                        : createShareLink
+                    }
+                    disabled={shareBusy || (!share && !reportLocked)}
+                  >
+                    {shareBusy
+                      ? "กำลังดำเนินการ..."
+                      : share
+                        ? "คัดลอกลิงก์"
+                        : "สร้างลิงก์แชร์ (30 วัน)"}
+                  </button>
+                </div>
+                {share ? (
+                  <div className="space-y-1 text-xs">
+                    <div className="break-all font-mono text-neutral-700">
+                      {share.url}
+                    </div>
+                    <div className="text-neutral-500">
+                      หมดอายุ{" "}
+                      {share.expiresAt
+                        ? new Date(share.expiresAt).toLocaleDateString("th-TH")
+                        : "-"}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-neutral-500">
+                    ส่งลิงก์นี้ให้ลูกค้าทาง LINE เพื่อดูรายการ ชำระเงิน และดาวน์โหลด PDF
+                  </p>
+                )}
               </div>
             </section>
           )}

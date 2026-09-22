@@ -11,6 +11,8 @@ function hasSessionCookie(request: NextRequest): boolean {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (pathname.startsWith("/api/")) return NextResponse.next();
+  // Public, tokenized report share pages (client-facing, no session).
+  if (pathname.startsWith("/r/")) return NextResponse.next();
 
   const hasSession = hasSessionCookie(request);
   if (!hasSession && pathname !== "/login") {

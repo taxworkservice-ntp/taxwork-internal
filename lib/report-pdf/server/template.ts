@@ -218,6 +218,7 @@ function renderPaymentPage(model: ReportModel): string {
       ${blocks}
       <div class="grand-total"><span>ยอดรวมทั้งสิ้น</span><span>${escapeHtml(fmtMoney(grandTotal))} บาท</span></div>
       <div class="ref">อ้างอิงการชำระเงิน: ${escapeHtml(paymentRef(model))}</div>
+      ${model.shareUrl ? `<div class="ref">ดูรายละเอียดและชำระเงินออนไลน์: <a href="${escapeHtml(model.shareUrl)}">${escapeHtml(model.shareUrl)}</a></div>` : ""}
     </section>`;
 }
 
@@ -317,6 +318,7 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .qrbig img { width: 100%; height: 100%; object-fit: contain; }
 .qr-empty { color: #a1a1aa; font-size: 9pt; }
 .ref { margin-top: 8pt; color: #73737d; font-size: 9pt; }
+.ref a { color: #1d4ed8; text-decoration: underline; }
 </style>
 </head>
 <body>

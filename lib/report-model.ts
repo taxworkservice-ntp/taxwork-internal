@@ -61,7 +61,17 @@ export type ReportModel = {
   filings: ReportModelFiling[];
   documents: ReportModelDocument[];
   total: number;
+  /** Public share URL when an active link exists (rendered on the payment page). */
+  shareUrl: string | null;
 };
+
+function shareBaseUrl(): string {
+  const base =
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.BETTER_AUTH_URL?.trim() ||
+    "https://internal.taxworkaccount.com";
+  return base.replace(/\/+$/, "");
+}
 
 async function getBytes(
   storagePath: string | null
@@ -200,6 +210,17 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
 
   const total = filings.reduce((sum, f) => sum + Number(f.amount ?? 0), 0);
 
+  const shareToken = report.share_token == null ? null : String(report.share_token);
+  const shareExpires =
+    report.share_expires_at == null ? null : String(report.share_expires_at);
+  const shareRevoked =
+    report.share_revoked_at == null ? null : String(report.share_revoked_at);
+  const shareActive =
+    Boolean(shareToken) &&
+    !shareRevoked &&
+    (!shareExpires || new Date(shareExpires).getTime() > Date.now());
+  const shareUrl = shareActive ? `${shareBaseUrl()}/r/${shareToken}` : null;
+
   return {
     reportId,
     firmName: settings?.firm_name?.trim() || "Taxwork",
@@ -219,5 +240,6 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     filings,
     documents,
     total,
+    shareUrl,
   };
 }

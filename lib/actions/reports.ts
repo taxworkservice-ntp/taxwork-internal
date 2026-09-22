@@ -716,3 +716,127 @@ export async function clearReportDocuments(reportId: string): Promise<void> {
   await assertReportEditable(reportId);
   await sql`delete from report_documents where report_id=${reportId}`;
 }
+
+// ---------------------------------------------------------------------------
+// Temporary share links
+// ---------------------------------------------------------------------------
+
+export type ReportShare = {
+  token: string;
+  url: string;
+  expiresAt: string;
+};
+
+export type ReportShareResult =
+  | { ok: true; share: ReportShare | null }
+  | { ok: false; error: string };
+
+function shareBaseUrl(): string {
+  const base =
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.BETTER_AUTH_URL?.trim() ||
+    "https://internal.taxworkaccount.com";
+  return base.replace(/\/+$/, "");
+}
+
+function isShareActive(row: {
+  share_token: string | null;
+  share_expires_at: string | null;
+  share_revoked_at: string | null;
+}): boolean {
+  if (!row.share_token || row.share_revoked_at) return false;
+  if (row.share_expires_at && new Date(row.share_expires_at).getTime() < Date.now())
+    return false;
+  return true;
+}
+
+/** Current active share link for a report round (for the settings UI). */
+export async function getReportShare(reportId: string): Promise<ReportShare | null> {
+  await requireUser();
+  const rows = (await sql`
+    select share_token, share_expires_at, share_revoked_at
+    from monthly_reports where id=${reportId}
+  `) as { share_token: string | null; share_expires_at: string | null; share_revoked_at: string | null }[];
+  const row = rows[0];
+  if (!row || !isShareActive(row)) return null;
+  return {
+    token: row.share_token!,
+    url: `${shareBaseUrl()}/r/${row.share_token}`,
+    expiresAt: row.share_expires_at ?? "",
+  };
+}
+
+/** Mint (or refresh) a share link. Only issued rounds may be shared. */
+export async function createReportShareLink(
+  reportId: string,
+  days = 30
+): Promise<ReportShareResult> {
+  try {
+    await requireUser();
+    const rows = (await sql`select status from monthly_reports where id=${reportId}`) as {
+      status: string;
+    }[];
+    if (!rows[0]) return { ok: false, error: "ไม่พบรายงาน" };
+    if (rows[0].status !== "issued")
+      return { ok: false, error: "ต้องออกรายงานก่อนจึงจะสร้างลิงก์ได้" };
+
+    const token = generatePublicId(20);
+    const expires = new Date(Date.now() + Math.max(1, days) * 86400000);
+    await sql`update monthly_reports
+      set share_token=${token}, share_expires_at=${expires.toISOString()}, share_revoked_at=null
+      where id=${reportId}`;
+    return {
+      ok: true,
+      share: {
+        token,
+        url: `${shareBaseUrl()}/r/${token}`,
+        expiresAt: expires.toISOString(),
+      },
+    };
+  } catch (error) {
+    console.error("createReportShareLink failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
+}
+
+export async function revokeReportShareLink(reportId: string): Promise<ActionResult> {
+  try {
+    await requireUser();
+    await sql`update monthly_reports set share_token=null, share_revoked_at=${new Date().toISOString()} where id=${reportId}`;
+    return { ok: true };
+  } catch (error) {
+    console.error("revokeReportShareLink failed:", error);
+    return fail(error);
+  }
+}
+
+/** Public: resolve a share token to a report id, respecting expiry/revoke. */
+export async function resolveShareToken(token: string): Promise<string | null> {
+  if (!token) return null;
+  const rows = (await sql`
+    select id, share_token, share_expires_at, share_revoked_at
+    from monthly_reports where share_token=${token}
+  `) as {
+    id: string;
+    share_token: string | null;
+    share_expires_at: string | null;
+    share_revoked_at: string | null;
+  }[];
+  const row = rows[0];
+  if (!row || !isShareActive(row)) return null;
+  return String(row.id);
+}
+
+/** Public: newest stored PDF copy for a report (for the share download). */
+export async function latestReportFile(
+  reportId: string
+): Promise<{ storage_path: string; file_name: string } | null> {
+  const rows = (await sql`
+    select storage_path, file_name from files
+    where report_id=${reportId} and category='monthly-report'
+    order by uploaded_at desc limit 1
+  `) as { storage_path: string; file_name: string }[];
+  return rows[0]
+    ? { storage_path: String(rows[0].storage_path), file_name: String(rows[0].file_name) }
+    : null;
+}

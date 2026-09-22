@@ -43,6 +43,14 @@ describe("report template (server renderer)", () => {
     expect(html.match(/5,000\.00/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
   });
 
+  it("renders the share link on the payment page when present", () => {
+    const url = "https://internal.taxworkaccount.com/r/ABCDEFGHIJKLMNOPQRST";
+    const html = renderReportHtml(baseModel({ shareUrl: url }));
+    expect(html).toContain(`href="${url}"`);
+    const none = renderReportHtml(baseModel({ shareUrl: null }));
+    expect(none).not.toContain("/r/ABCDEFGHIJKLMNOPQRST");
+  });
+
   it("falls back to รอบระยะเวลาภาษี when there is no round label", () => {
     const html = renderReportHtml(baseModel({ reportLabel: null }));
     expect(html).toContain("รอบระยะเวลาภาษี");

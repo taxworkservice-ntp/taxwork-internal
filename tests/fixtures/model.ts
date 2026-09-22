@@ -46,6 +46,7 @@ export function sampleModel(overrides: Partial<ReportModel> = {}): ReportModel {
     ],
     documents: [],
     total: 5000,
+    shareUrl: null,
     ...overrides,
   };
 }
