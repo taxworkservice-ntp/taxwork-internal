@@ -767,14 +767,27 @@ export async function createReportShareLink(
 ): Promise<ReportShareResult> {
   try {
     await requireUser();
-    const rows = (await sql`select status from monthly_reports where id=${reportId}`) as {
+    const rows = (await sql`
+      select status, report_no, public_id, period_label from monthly_reports where id=${reportId}
+    `) as {
       status: string;
+      report_no: string | null;
+      public_id: string | null;
+      period_label: string;
     }[];
     if (!rows[0]) return { ok: false, error: "ไม่พบรายงาน" };
     if (rows[0].status !== "issued")
       return { ok: false, error: "ต้องออกรายงานก่อนจึงจะสร้างลิงก์ได้" };
 
-    const token = generatePublicId(20);
+    // Human-readable prefix (the report number) + a long random secret, so the
+    // link is recognizable in LINE while staying unguessable.
+    const readable = (
+      rows[0].report_no?.trim() ||
+      `TW-${(rows[0].period_label ?? "").replace(/[^0-9]/g, "")}${rows[0].public_id ?? ""}`
+    )
+      .replace(/\s+/g, "-")
+      .slice(0, 40);
+    const token = `${readable}-${generatePublicId(20)}`;
     const expires = new Date(Date.now() + Math.max(1, days) * 86400000);
     await sql`update monthly_reports
       set share_token=${token}, share_expires_at=${expires.toISOString()}, share_revoked_at=null
