@@ -41,7 +41,8 @@ function toRow(r: Record<string, unknown>): FileRow {
 export async function listFiles(): Promise<FileRow[]> {
   await requireUser();
   const rows = await sql`select f.*, c.name as client_name from files f
-    left join clients c on c.id = f.client_id order by f.uploaded_at desc`;
+    left join clients c on c.id = f.client_id
+    where f.client_id is null order by f.uploaded_at desc`;
   return rows.map(toRow);
 }
 
