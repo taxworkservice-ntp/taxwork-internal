@@ -293,7 +293,9 @@ export default function ShareView({
             ดาวน์โหลดรายงานฉบับเต็ม (PDF)
           </a>
           <p className="mt-1 text-center text-xs text-neutral-500">
-            แนะนำให้ดาวน์โหลดรายงานฉบับเต็มเพื่อเก็บไว้ตรวจสอบและเป็นหลักฐานการชำระเงิน
+            แนะนำให้ดาวน์โหลดรายงานฉบับเต็ม
+            <br />
+            เพื่อเก็บไว้ตรวจสอบและเป็นหลักฐานการชำระเงิน
           </p>
           {expiryLabel && (
             <p className="mt-1 text-center text-xs text-neutral-400">
