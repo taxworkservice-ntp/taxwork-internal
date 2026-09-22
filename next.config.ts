@@ -6,7 +6,13 @@ const nextConfig: NextConfig = {
   // (they're read from disk and embedded as data URIs).
   serverExternalPackages: ["@sparticuz/chromium", "puppeteer-core"],
   outputFileTracingIncludes: {
-    "/api/reports/render": ["./public/fonts/**"],
+    "/api/reports/render": [
+      "./public/fonts/**",
+      // The Chromium binary payload is read from disk at runtime, so file
+      // tracing can't discover it. Include it explicitly or the serverless
+      // bundle ships without node_modules/@sparticuz/chromium/bin.
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
   },
 };
 
