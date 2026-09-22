@@ -56,7 +56,7 @@ export async function generateMetadata({
   if (!(await isShareVerified(token))) {
     const title = "รายงานภาษี";
     const description =
-      "ลิงก์รายงานภาษี — กรุณายืนยันตัวตนด้วยเลขประจำตัวผู้เสียภาษีเพื่อเปิดรายงาน";
+      "ลิงก์รายงานภาษี — กรุณายืนยันตัวตนด้วยเลขท้าย 4 หลักของเลขประจำตัวผู้เสียภาษีเพื่อเปิดรายงาน";
     return {
       title,
       description,

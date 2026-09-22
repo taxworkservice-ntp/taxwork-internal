@@ -8,7 +8,9 @@ import { appOrigin } from "@/lib/app-url";
 import { shareSlug, shareTokenFromSegment, shareUrl } from "@/lib/share-link";
 import {
   isValidTaxId,
+  matchesTaxIdSuffix,
   normalizeTaxId,
+  SHARE_TAX_ID_SUFFIX_LENGTH,
   shareAccessCookieName,
   shareAccessCookieOptions,
   signShareAccess,
@@ -1054,8 +1056,11 @@ export async function verifyShareTaxId(
   }
 
   const input = normalizeTaxId(taxId);
-  if (input.length !== 13) {
-    return { ok: false, error: "กรุณากรอกเลขประจำตัวผู้เสียภาษี 13 หลัก" };
+  if (input.length !== SHARE_TAX_ID_SUFFIX_LENGTH) {
+    return {
+      ok: false,
+      error: `กรุณากรอกเลขท้าย ${SHARE_TAX_ID_SUFFIX_LENGTH} หลักของเลขประจำตัวผู้เสียภาษี`,
+    };
   }
 
   const rows = (await sql`
@@ -1076,8 +1081,8 @@ export async function verifyShareTaxId(
   }
 
   const expected = normalizeTaxId(row.tax_id);
-  if (expected.length !== 13 || input !== expected) {
-    return { ok: false, error: "เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง" };
+  if (!isValidTaxId(expected) || !matchesTaxIdSuffix(input, expected)) {
+    return { ok: false, error: "เลขท้ายไม่ถูกต้อง" };
   }
 
   const store = await cookies();

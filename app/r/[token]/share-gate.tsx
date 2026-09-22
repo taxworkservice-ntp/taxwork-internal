@@ -36,6 +36,7 @@ export default function ShareGate({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const expiry = formatExpiry(expiresAt);
+  const digits = 4;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,20 +73,20 @@ export default function ShareGate({
           <form onSubmit={submit} className="space-y-3">
             <div>
               <label htmlFor="share-tax-id" className="label">
-                เลขประจำตัวผู้เสียภาษี (13 หลัก)
+                เลขท้าย {digits} หลักของเลขประจำตัวผู้เสียภาษี
               </label>
               <input
                 id="share-tax-id"
-                className="input font-mono tracking-wider"
+                className="input font-mono tracking-[0.4em]"
                 inputMode="numeric"
                 autoComplete="off"
                 autoFocus
-                maxLength={13}
-                placeholder="0-0000-00000-00-0"
+                maxLength={digits}
+                placeholder="0000"
                 value={taxId}
                 disabled={busy}
                 onChange={(e) =>
-                  setTaxId(e.target.value.replace(/\D+/g, "").slice(0, 13))
+                  setTaxId(e.target.value.replace(/\D+/g, "").slice(0, digits))
                 }
               />
             </div>
@@ -101,14 +102,14 @@ export default function ShareGate({
 
             <button
               type="submit"
-              disabled={busy || taxId.length !== 13}
+              disabled={busy || taxId.length !== digits}
               className="btn-primary w-full"
             >
               {busy ? "กำลังตรวจสอบ..." : "เปิดรายงาน"}
             </button>
 
             <p className="text-xs leading-relaxed text-neutral-500">
-              ไม่ทราบเลขประจำตัวผู้เสียภาษี? ดูได้จากใบกำกับภาษี หนังสือรับรองบริษัท
+              ไม่ทราบเลขท้าย {digits} หลัก? ดูได้จากใบกำกับภาษี หนังสือรับรองบริษัท
               หรือแบบ ภ.พ.30
             </p>
           </form>

@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   isValidTaxId,
+  matchesTaxIdSuffix,
   normalizeTaxId,
   shareAccessCookieName,
   shareAccessCookieOptions,
@@ -37,6 +38,34 @@ describe("isValidTaxId", () => {
     expect(isValidTaxId("123")).toBe(false);
     expect(isValidTaxId("01055540001234")).toBe(false);
     expect(isValidTaxId(null)).toBe(false);
+  });
+});
+
+describe("matchesTaxIdSuffix", () => {
+  const STORED = "0-1055-54000-12-3"; // -> 0105554000123
+
+  it("matches the last 4 digits", () => {
+    expect(matchesTaxIdSuffix("0123", STORED)).toBe(true);
+    expect(matchesTaxIdSuffix(" 0123 ", STORED)).toBe(true);
+  });
+
+  it("rejects a wrong suffix", () => {
+    expect(matchesTaxIdSuffix("0124", STORED)).toBe(false);
+  });
+
+  it("rejects the wrong number of digits", () => {
+    expect(matchesTaxIdSuffix("123", STORED)).toBe(false);
+    expect(matchesTaxIdSuffix("00123", STORED)).toBe(false);
+  });
+
+  it("rejects when the stored tax ID is shorter than the suffix", () => {
+    expect(matchesTaxIdSuffix("0123", "123")).toBe(false);
+    expect(matchesTaxIdSuffix("0123", null)).toBe(false);
+    expect(matchesTaxIdSuffix("0123", "")).toBe(false);
+  });
+
+  it("honours a custom digit length", () => {
+    expect(matchesTaxIdSuffix("54000123", STORED, 8)).toBe(true);
   });
 });
 

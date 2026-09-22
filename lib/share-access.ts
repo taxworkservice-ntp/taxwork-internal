@@ -35,6 +35,25 @@ export function isValidTaxId(value: string | null | undefined): boolean {
   return normalizeTaxId(value).length === 13;
 }
 
+/** Number of trailing tax-ID digits the client is asked to confirm. */
+export const SHARE_TAX_ID_SUFFIX_LENGTH = 4;
+
+/**
+ * Whether `input` matches the trailing digits of the stored tax ID. Used by the
+ * gate (last 4 digits) — weaker than the full number, but paired with rate
+ * limiting it blunts casual exposure.
+ */
+export function matchesTaxIdSuffix(
+  input: string | null | undefined,
+  stored: string | null | undefined,
+  digits: number = SHARE_TAX_ID_SUFFIX_LENGTH
+): boolean {
+  const candidate = normalizeTaxId(input);
+  const expected = normalizeTaxId(stored);
+  if (candidate.length !== digits || expected.length < digits) return false;
+  return candidate === expected.slice(-digits);
+}
+
 /** Per-link cookie name so multiple reports can be unlocked independently. */
 export function shareAccessCookieName(tokenKey: string): string {
   return `${SHARE_ACCESS_COOKIE_PREFIX}${tokenKey}`;
