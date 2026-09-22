@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import InlineConfirm from "@/components/inline-confirm";
+import PasswordValue from "@/components/password-value";
 
 type Credential = {
   id: string;
@@ -12,21 +13,19 @@ type Credential = {
 
 export default function CredentialRow({
   credential,
-  onDelete,
+  confirming,
   onEdit,
+  onRequestDelete,
+  onConfirmDelete,
+  onCancelDelete,
 }: {
   credential: Credential;
-  onDelete: () => void;
+  confirming: boolean;
   onEdit: () => void;
+  onRequestDelete: () => void;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    await navigator.clipboard.writeText(credential.password ?? "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
   return (
     <tr>
       <td>
@@ -38,26 +37,32 @@ export default function CredentialRow({
             rel="noreferrer"
             className="ml-2 text-xs text-blue-600 underline"
           >
-            open
+            เปิดเว็บ
           </a>
         )}
       </td>
       <td>{credential.username || "—"}</td>
       <td className="whitespace-nowrap">
-        <span className="mr-2 font-mono text-xs">{credential.password || "—"}</span>
-        {credential.password && (
-          <button className="btn px-1.5 py-0.5 text-xs" onClick={copy}>
-            {copied ? "คัดลอกแล้ว" : "คัดลอก"}
-          </button>
-        )}
+        <PasswordValue value={credential.password} />
       </td>
       <td className="whitespace-nowrap text-right">
-        <button className="btn mr-1 px-1.5 py-0.5 text-xs" onClick={onEdit}>
-          แก้ไข
-        </button>
-        <button className="btn-danger px-1.5 py-0.5 text-xs" onClick={onDelete}>
-          ลบ
-        </button>
+        {confirming ? (
+          <InlineConfirm
+            message="ลบข้อมูลนี้?"
+            confirmLabel="ลบ"
+            onConfirm={onConfirmDelete}
+            onCancel={onCancelDelete}
+          />
+        ) : (
+          <span className="inline-flex items-center gap-1.5">
+            <button className="btn px-1.5 py-0.5 text-xs" onClick={onEdit}>
+              แก้ไข
+            </button>
+            <button className="btn-danger px-1.5 py-0.5 text-xs" onClick={onRequestDelete}>
+              ลบ
+            </button>
+          </span>
+        )}
       </td>
     </tr>
   );

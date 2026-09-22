@@ -2,33 +2,43 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  addAttachment as addAttachmentAction,
   addBankAccount as addBankAccountAction,
   addFiling as addFilingAction,
   clearFilings,
-  copyMonthFilings,
-  deleteAttachment as deleteAttachmentAction,
+  copyReportToNewIssue,
+  createMonthlyReport,
+  deleteMonthlyReport,
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
   getAppSettings,
+  deleteCustomPaymentMethod as deleteCustomPaymentMethodAction,
+  issueMonthlyReport,
   listActiveClients,
   listBankAccounts,
   listCustomFormCodes,
+  listCustomPaymentMethods,
+  listMonthlyReports,
+  listReportFiles,
   loadFilings as loadFilingsAction,
   patchFiling as patchFilingAction,
   recordReportFile,
   rememberFormCode as rememberFormCodeAction,
+  rememberPaymentMethod as rememberPaymentMethodAction,
+  reopenMonthlyReport,
   saveAppSettings,
+  saveReportBranding,
+  setBankLogo,
   setBankQr,
-  type Attachment,
   type BankAccount,
   type ClientRow,
   type Filing,
+  type MonthlyReport,
+  type ReportFile,
 } from "@/lib/actions/reports";
 import {
-  ATTACHMENT_KIND_LABELS,
   buildMonthlyReportPdf,
   fetchAttachmentBytes,
+  type ReportDocument,
   type ReportFiling,
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
@@ -59,9 +69,13 @@ const THAI_MONTHS_FULL = [
   "ธันวาคม",
 ];
 
-function currentPeriod(): string {
+// Reports are issued for the previous month (e.g. in September you file August).
+function defaultPeriod(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const total = d.getFullYear() * 12 + d.getMonth() - 1;
+  const y = Math.floor(total / 12);
+  const m = (total % 12) + 1;
+  return `${y}-${String(m).padStart(2, "0")}`;
 }
 
 function shiftPeriod(period: string, delta: number): string {
@@ -92,25 +106,40 @@ function fmtMoney(n: number): string {
   });
 }
 
+function fmtSize(bytes: number): string {
+  if (bytes > 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+  if (bytes > 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
 export default function ReportsPage() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [clientId, setClientId] = useState("");
-  const [period, setPeriod] = useState(currentPeriod());
+  const [period, setPeriod] = useState(defaultPeriod());
   const [filings, setFilings] = useState<Filing[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [reports, setReports] = useState<MonthlyReport[]>([]);
+  const [activeReportId, setActiveReportId] = useState("");
+  const [newRoundSeq, setNewRoundSeq] = useState("");
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [status, setStatus] = useState("");
   const [showBankManager, setShowBankManager] = useState(false);
   const [newFormCode, setNewFormCode] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newAmount, setNewAmount] = useState("");
-  const [newDueDate, setNewDueDate] = useState("");
+  const [newPaymentMethod, setNewPaymentMethod] = useState("");
   const [adding, setAdding] = useState(false);
   const [copyingFrom, setCopyingFrom] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
   const [customFormCodes, setCustomFormCodes] = useState<string[]>([]);
+  const [customPayMethods, setCustomPayMethods] = useState<string[]>([]);
+  const [newPayMethodPreset, setNewPayMethodPreset] = useState("");
+  const [reportFiles, setReportFiles] = useState<ReportFile[]>([]);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const loadSeq = useRef(0);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -120,6 +149,14 @@ export default function ReportsPage() {
   const [logoBusy, setLogoBusy] = useState(false);
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
   const [qrBusyId, setQrBusyId] = useState<string | null>(null);
+  const [logoBusyId, setLogoBusyId] = useState<string | null>(null);
+  const [firmName, setFirmName] = useState("");
+  const [preparedBy, setPreparedBy] = useState("");
+  const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
+  const [brandingBusy, setBrandingBusy] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
 
   const [bankLabel, setBankLabel] = useState("");
   const [bankName, setBankName] = useState("");
@@ -127,29 +164,50 @@ export default function ReportsPage() {
   const [bankAcctName, setBankAcctName] = useState("");
   const [bankPromptpay, setBankPromptpay] = useState("");
 
-  const [slipPanelFor, setSlipPanelFor] = useState<string | null>(null);
-  const [slipCovers, setSlipCovers] = useState<Set<string>>(new Set());
+  // Part 2: ordered documents (upload order = PDF order, session-local)
+  const [docs, setDocs] = useState<{ id: string; file: File }[]>([]);
+  const [docsDragActive, setDocsDragActive] = useState(false);
+  const docsInputRef = useRef<HTMLInputElement>(null);
 
-  function openSlipPanel(filingId: string) {
-    setSlipPanelFor(filingId);
-    setSlipCovers(new Set([filingId]));
+  function addDocs(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (!list.length) return;
+    setDocs((prev) => [
+      ...prev,
+      ...list.map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`,
+        file,
+      })),
+    ]);
   }
 
-  function toggleSlipCover(filingId: string) {
-    setSlipCovers((prev) => {
-      const next = new Set(prev);
-      if (next.has(filingId)) {
-        if (next.size > 1) next.delete(filingId);
-      } else {
-        next.add(filingId);
-      }
+  function moveDoc(id: string, delta: -1 | 1) {
+    setDocs((prev) => {
+      const i = prev.findIndex((d) => d.id === id);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[i], next[j]];
       return next;
     });
   }
 
+  function removeDoc(id: string) {
+    setDocs((prev) => prev.filter((d) => d.id !== id));
+  }
+
   useEffect(() => {
     (async () => {
-      setCustomFormCodes(await listCustomFormCodes());
+      try {
+        const [codes, methods] = await Promise.all([
+          listCustomFormCodes(),
+          listCustomPaymentMethods(),
+        ]);
+        setCustomFormCodes(codes);
+        setCustomPayMethods(methods);
+      } catch (error) {
+        console.error("load presets failed:", error);
+      }
     })();
   }, []);
 
@@ -179,35 +237,103 @@ export default function ReportsPage() {
     });
   }
 
+  const payMethodPresetList = useMemo(
+    () => [...customPayMethods].sort((a, b) => a.localeCompare(b, "th")),
+    [customPayMethods]
+  );
+
+  function rememberPaymentMethod(raw: string) {
+    const code = raw.trim();
+    if (!code) return;
+    setCustomPayMethods((prev) =>
+      prev.includes(code) ? prev : [...prev, code]
+    );
+    rememberPaymentMethodAction(code).catch((err) => {
+      console.error("save payment method failed:", err);
+    });
+  }
+
+  async function addPayMethodPreset() {
+    const code = newPayMethodPreset.trim();
+    if (!code) return;
+    setNewPayMethodPreset("");
+    rememberPaymentMethod(code);
+  }
+
+  async function removePayMethodPreset(code: string) {
+    if (!confirm(`ลบวิธีชำระ "${code}" ออกจากตัวเลือก?`)) return;
+    setCustomPayMethods((prev) => prev.filter((p) => p !== code));
+    try {
+      await deleteCustomPaymentMethodAction(code);
+    } catch (err) {
+      alert(`ลบไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      setCustomPayMethods(await listCustomPaymentMethods());
+    }
+  }
+
   const selectedClient = clients.find((c) => c.id === clientId) ?? null;
 
   useEffect(() => {
     (async () => {
-      const [clientRows, bankRows] = await Promise.all([
-        listActiveClients(),
-        listBankAccounts(),
-      ]);
-      const sorted = [...clientRows].sort((a, b) =>
-        a.name.localeCompare(b.name, "th")
-      );
-      setClients(sorted);
-      setBankAccounts(bankRows);
+      try {
+        const [clientRows, bankRows] = await Promise.all([
+          listActiveClients(),
+          listBankAccounts(),
+        ]);
+        const sorted = [...clientRows].sort((a, b) =>
+          a.name.localeCompare(b.name, "th")
+        );
+        setClients(sorted);
+        setBankAccounts(bankRows);
+      } catch (error) {
+        console.error("load clients/banks failed:", error);
+        setStatus(
+          `โหลดข้อมูลลูกค้า/บัญชีไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
+        );
+      }
     })();
   }, []);
 
-  const loadFilings = useCallback(async () => {
+  const loadReports = useCallback(async () => {
     if (!clientId) {
+      setReports([]);
+      setActiveReportId("");
+      return;
+    }
+    setReportsLoading(true);
+    try {
+      const rows = await listMonthlyReports(clientId, period);
+      setReports(rows);
+      setActiveReportId((prev) =>
+        rows.some((r) => r.id === prev) ? prev : rows.length ? rows[rows.length - 1].id : ""
+      );
+    } catch (error) {
+      console.error("loadReports failed:", error);
+      setStatus(`โหลดรอบรายงานไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      setReports([]);
+      setActiveReportId("");
+    } finally {
+      setReportsLoading(false);
+    }
+  }, [clientId, period]);
+
+  useEffect(() => {
+    loadReports();
+  }, [loadReports]);
+
+  const loadFilings = useCallback(async () => {
+    if (!clientId || !activeReportId) {
       setFilings([]);
       setLoadedKey(null);
       return;
     }
-    const key = `${clientId}|${period}`;
+    const key = `${clientId}|${period}|${activeReportId}`;
     setLoadedKey((k) => (k === key ? k : null));
     setLoading(true);
     loadSeq.current += 1;
     const seq = loadSeq.current;
     try {
-      const ordered = await loadFilingsAction(clientId, period);
+      const ordered = await loadFilingsAction(clientId, period, activeReportId);
       if (seq !== loadSeq.current) return;
       setFilings(ordered);
     } catch (error) {
@@ -217,12 +343,39 @@ export default function ReportsPage() {
     }
     setLoadedKey(key);
     setLoading(false);
-     
-  }, [clientId, period]);
+  }, [clientId, period, activeReportId]);
 
   useEffect(() => {
     loadFilings();
   }, [loadFilings]);
+
+  // Docs belong to one report round — reset when switching client/month/round
+  useEffect(() => {
+    setDocs([]);
+  }, [clientId, period, activeReportId]);
+
+  // Saved report copies (history) for the active round.
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeReportId) {
+      setReportFiles([]);
+      return;
+    }
+    setReportFiles([]);
+    listReportFiles(activeReportId)
+      .then((rows) => {
+        if (!cancelled) setReportFiles(rows);
+      })
+      .catch((error) => {
+        if (!cancelled)
+          setStatus(
+            `โหลดประวัติไฟล์รายงานไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeReportId]);
 
   const reloadBanks = useCallback(async () => {
     setBankAccounts(await listBankAccounts());
@@ -231,16 +384,56 @@ export default function ReportsPage() {
 
   useEffect(() => {
     (async () => {
-      const data = await getAppSettings();
-      setLogoPath(data?.company_logo_path ?? null);
-      setLogoFileName(data?.company_logo_file_name ?? null);
-      setSettingsLoading(false);
+      try {
+        const res = await getAppSettings();
+        if (!res.ok) {
+          console.error("load settings failed:", res.error);
+          setStatus(`โหลดการตั้งค่ารายงานไม่สำเร็จ: ${res.error}`);
+          return;
+        }
+        const data = res.settings;
+        setLogoPath(data?.company_logo_path ?? null);
+        setLogoFileName(data?.company_logo_file_name ?? null);
+        setFirmName(data?.firm_name ?? "");
+        setPreparedBy(data?.prepared_by ?? "");
+        setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
+      } catch (error) {
+        console.error("load settings failed:", error);
+        setStatus(
+          `โหลดการตั้งค่ารายงานไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
+        );
+      } finally {
+        // Never leave the settings panel stuck on "กำลังโหลด...".
+        setSettingsLoading(false);
+      }
     })();
   }, []);
 
+  async function saveBranding() {
+    setBrandingBusy(true);
+    try {
+      const res = await saveReportBranding({
+        firmName: firmName.trim() || null,
+        brandColor: null,
+        coverStyle,
+        preparedBy: preparedBy.trim() || null,
+      });
+      if (!res.ok) {
+        alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
+      }
+    } catch (error) {
+      alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBrandingBusy(false);
+    }
+  }
+
   async function saveSettingsLogo(path: string | null, fileName: string | null) {
     try {
-      await saveAppSettings(path, fileName);
+      const res = await saveAppSettings(path, fileName);
+      if (!res.ok) {
+        alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
+      }
     } catch (error) {
       alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     }
@@ -299,26 +492,48 @@ export default function ReportsPage() {
   }, [showSettings, logoPath]);
 
   const total = filings.reduce((sum, f) => sum + Number(f.amount ?? 0), 0);
+  const activeReport = reports.find((r) => r.id === activeReportId) ?? null;
+  const nextRoundSeq = (() => {
+    const used = new Set(reports.map((r) => r.seq));
+    let s = 1;
+    while (used.has(s)) s += 1;
+    return s;
+  })();
+  const reportLocked = activeReport?.status === "issued";
 
-  async function copyFromLastMonth() {
+  const [copyOffset, setCopyOffset] = useState(1);
+
+  // Copy the previously selected round from an earlier month into a new round here.
+  async function copyFromPastMonth() {
     if (!clientId) return;
-    const prevPeriod = shiftPeriod(period, -1);
+    const prevPeriod = shiftPeriod(period, -copyOffset);
     if (
       filings.length &&
       !confirm(
-        `มีรายการอยู่แล้ว ${filings.length} รายการ — คัดลอกจาก ${periodToThai(prevPeriod)} เพิ่มเข้าไปหรือไม่? (รายการเดิมจะไม่ถูกลบ)`
+        `มีรายการอยู่แล้ว ${filings.length} รายการ — คัดลอกจาก ${periodToThai(prevPeriod)} เป็นรอบใหม่หรือไม่? (รายการเดิมจะไม่ถูกลบ)`
       )
     )
       return;
     setCopyingFrom(true);
     try {
-      const inserted = await copyMonthFilings(clientId, prevPeriod, period);
+      const prevReports = await listMonthlyReports(clientId, prevPeriod);
+      if (!prevReports.length) {
+        alert(`ไม่พบรายงานของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
+        return;
+      }
+      const source = prevReports[prevReports.length - 1];
+      const inserted = await copyReportToNewIssue(source.id, clientId, period);
       if (!inserted.length) {
         alert(`ไม่พบรายการของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
         return;
       }
-      inserted.forEach((f) => rememberFormCode(f.form_code));
-      setFilings((prev) => [...prev, ...inserted]);
+      const rows = await listMonthlyReports(clientId, period);
+      setReports(rows);
+      if (rows.length) setActiveReportId(rows[rows.length - 1].id);
+      inserted.forEach((f) => {
+        rememberFormCode(f.form_code);
+        if (f.payment_method) rememberPaymentMethod(f.payment_method);
+      });
     } catch (err) {
       alert(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -331,20 +546,31 @@ export default function ReportsPage() {
       alert("กรอกรหัสแบบฟอร์มก่อน เช่น ภ.พ.30");
       return;
     }
+    if (reportLocked) return;
     setAdding(true);
     try {
-      const created = await addFilingAction(clientId, period, {
+      let reportId = activeReportId;
+      if (!reportId) {
+        const res = await createMonthlyReport(clientId, period);
+        if (!res.ok) throw new Error(res.error);
+        setReports([res.report]);
+        setActiveReportId(res.report.id);
+        reportId = res.report.id;
+      }
+      const created = await addFilingAction(clientId, period, reportId, {
         form_code: newFormCode.trim(),
         description: newDescription.trim() || null,
         amount: Number(newAmount) || 0,
-        due_date: newDueDate || null,
+        due_date: null,
+        payment_method: newPaymentMethod.trim() || null,
       });
       rememberFormCode(newFormCode.trim());
+      if (newPaymentMethod.trim()) rememberPaymentMethod(newPaymentMethod);
       setFilings((prev) => [...prev, created]);
       setNewFormCode("");
       setNewDescription("");
       setNewAmount("");
-      setNewDueDate("");
+      setNewPaymentMethod("");
     } catch (error) {
       alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     } finally {
@@ -364,9 +590,12 @@ export default function ReportsPage() {
       return;
     }
     if (typeof patch.form_code === "string") rememberFormCode(patch.form_code);
+    if (typeof patch.payment_method === "string" && patch.payment_method.trim())
+      rememberPaymentMethod(patch.payment_method);
   }
 
   async function deleteR2Object(storagePath: string) {
+    if (storagePath.startsWith("/")) return; // bundled local asset, not in R2
     await fetch("/api/files/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -393,28 +622,21 @@ export default function ReportsPage() {
 
   async function deleteFiling(filing: Filing) {
     if (!confirm(`ลบรายการ "${filing.form_code}" ?`)) return;
-    for (const att of filing.filing_attachments) {
-      await deleteR2Object(att.storage_path);
-    }
     await deleteFilingAction(filing.id);
     loadFilings();
   }
 
   async function clearAllFilings() {
-    if (!clientId || !filings.length) return;
+    if (!clientId || !activeReportId || !filings.length || reportLocked) return;
     if (
       !confirm(
-        `ลบรายการทั้งหมด ${filings.length} รายการ ของ ${periodToThai(period)} ?\nไฟล์แนบที่เกี่ยวข้องจะถูกลบด้วย — ไม่สามารถกู้คืนได้`
+        `ลบรายการทั้งหมด ${filings.length} รายการ ของ ${activeReport?.label ?? periodToThai(period)} ?\nไม่สามารถกู้คืนได้`
       )
     )
       return;
     setClearingAll(true);
     try {
-      const atts = filings.flatMap((f) => f.filing_attachments);
-      for (const att of atts) {
-        await deleteR2Object(att.storage_path);
-      }
-      await clearFilings(clientId, period);
+      await clearFilings(activeReportId);
       loadFilings();
     } catch (err) {
       alert(`ลบรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
@@ -423,42 +645,61 @@ export default function ReportsPage() {
     }
   }
 
-  async function uploadAttachment(
-    filingId: string,
-    kind: Attachment["kind"],
-    file: File,
-    covers?: string[]
-  ) {
-    let path: string;
+  async function addReportRound(seqInput?: number) {
+    if (!clientId) return;
+    setReportBusy(true);
     try {
-      path = await uploadObject(file.name, file);
-    } catch (err) {
-      alert(`อัปโหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
-      return;
-    }
-    try {
-      await addAttachmentAction(
-        filingId,
-        kind,
-        {
-          storage_path: path,
-          file_name: file.name,
-          size_bytes: file.size,
-          mime_type: file.type || null,
-        },
-        covers ?? []
+      const res = await createMonthlyReport(clientId, period, seqInput ?? null);
+      if (!res.ok) {
+        alert(`เพิ่มรอบรายงานไม่สำเร็จ: ${res.error}`);
+        return;
+      }
+      setReports((prev) =>
+        [...prev, res.report].sort((a, b) => a.seq - b.seq)
       );
-    } catch (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      setActiveReportId(res.report.id);
+    } catch (err) {
+      alert(`เพิ่มรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setReportBusy(false);
     }
-    loadFilings();
   }
 
-  async function deleteAttachment(att: Attachment) {
-    if (!confirm(`ลบไฟล์ ${att.file_name}?`)) return;
-    await deleteR2Object(att.storage_path);
-    await deleteAttachmentAction(att.id);
-    loadFilings();
+  async function removeReportRound(report: MonthlyReport) {
+    if (!clientId) return;
+    if (reports.length <= 1) {
+      alert("ต้องมีอย่างน้อย 1 รอบรายงาน");
+      return;
+    }
+    if (!confirm(`ลบ ${report.label ?? `ครั้งที่ ${report.seq}`} และรายการทั้งหมดในรอบนี้?`)) return;
+    setReportBusy(true);
+    try {
+      await deleteMonthlyReport(report.id);
+      await loadReports();
+    } catch (err) {
+      alert(`ลบรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function toggleReportIssued(report: MonthlyReport) {
+    if (!clientId) return;
+    setReportBusy(true);
+    try {
+      if (report.status === "issued") {
+        if (!confirm(`เปิดแก้ไข ${report.label ?? `ครั้งที่ ${report.seq}`} อีกครั้ง?`)) return;
+        await reopenMonthlyReport(report.id);
+      } else {
+        if (!confirm(`ออกรายงาน ${report.report_no ?? report.label ?? ""} และล็อกไม่ให้แก้ไข?`)) return;
+        await issueMonthlyReport(report.id);
+      }
+      await loadReports();
+    } catch (err) {
+      alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setReportBusy(false);
+    }
   }
 
   async function addBankAccount() {
@@ -490,6 +731,7 @@ export default function ReportsPage() {
     if (!confirm("ลบบัญชีนี้? รายการที่ผูกไว้จะตัดการเชื่อมโยง")) return;
     const bank = bankAccounts.find((b) => b.id === id);
     if (bank?.qr_path) deleteR2Object(bank.qr_path);
+    if (bank?.logo_path) deleteR2Object(bank.logo_path);
     await deleteBankAccountAction(id);
     reloadBanks();
     loadFilings();
@@ -503,7 +745,9 @@ export default function ReportsPage() {
       setBankAccounts((prev) =>
         prev.map((b) => (b.id === bankId ? { ...b, qr_path: path } : b))
       );
-      await setBankQr(bankId, path);
+      await setBankQr(bankId, path).then((res) => {
+        if (!res.ok) throw new Error(res.error);
+      });
       if (bank?.qr_path && bank.qr_path !== path) deleteR2Object(bank.qr_path);
     } catch (err) {
       alert(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
@@ -521,126 +765,263 @@ export default function ReportsPage() {
       setBankAccounts((prev) =>
         prev.map((b) => (b.id === bankId ? { ...b, qr_path: null } : b))
       );
-      await setBankQr(bankId, null);
+      const res = await setBankQr(bankId, null);
+      if (!res.ok) throw new Error(res.error);
       deleteR2Object(bank.qr_path);
+    } catch (err) {
+      alert(`ลบ QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      reloadBanks();
     } finally {
       setQrBusyId(null);
     }
   }
 
+  type LogoSlot = "top" | "bottom";
+
+  async function handleBankLogoUpload(
+    bankId: string,
+    slot: LogoSlot,
+    file: File
+  ) {
+    setLogoBusyId(`${bankId}:${slot}`);
+    try {
+      const path = await uploadObject(file.name, file);
+      const bank = bankAccounts.find((b) => b.id === bankId);
+      const oldPath = slot === "bottom" ? bank?.logo_bottom_path : bank?.logo_path;
+      setBankAccounts((prev) =>
+        prev.map((b) =>
+          b.id === bankId
+            ? slot === "bottom"
+              ? {
+                  ...b,
+                  logo_bottom_path: path,
+                  logo_bottom_mime_type: file.type || null,
+                }
+              : { ...b, logo_path: path, logo_mime_type: file.type || null }
+            : b
+        )
+      );
+      await setBankLogo(bankId, slot, path, file.type || null).then((res) => {
+        if (!res.ok) throw new Error(res.error);
+      });
+      if (oldPath && oldPath !== path) deleteR2Object(oldPath);
+    } catch (err) {
+      alert(`อัปโหลดโลโก้ธนาคารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      reloadBanks();
+    } finally {
+      setLogoBusyId(null);
+    }
+  }
+
+  async function handleBankLogoRemove(bankId: string, slot: LogoSlot) {
+    const bank = bankAccounts.find((b) => b.id === bankId);
+    const oldPath = slot === "bottom" ? bank?.logo_bottom_path : bank?.logo_path;
+    if (
+      !oldPath ||
+      !confirm(`ลบโลโก้${slot === "bottom" ? "ล่าง" : "บน"}ของบัญชีนี้?`)
+    )
+      return;
+    setLogoBusyId(`${bankId}:${slot}`);
+    try {
+      setBankAccounts((prev) =>
+        prev.map((b) =>
+          b.id === bankId
+            ? slot === "bottom"
+              ? { ...b, logo_bottom_path: null, logo_bottom_mime_type: null }
+              : { ...b, logo_path: null, logo_mime_type: null }
+            : b
+        )
+      );
+      const res = await setBankLogo(bankId, slot, null, null);
+      if (!res.ok) throw new Error(res.error);
+      deleteR2Object(oldPath);
+    } catch (err) {
+      alert(`ลบโลโก้ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      reloadBanks();
+    } finally {
+      setLogoBusyId(null);
+    }
+  }
+
+  async function collectReportOptions(preview: boolean) {
+    if (!selectedClient) throw new Error("ยังไม่ได้เลือกลูกค้า");
+
+    // Part 1: cover rows (no per-filing files anymore)
+    const usedBanks = new Set(
+      filings
+        .map((f) => f.bank_account_id)
+        .filter((id): id is string => Boolean(id))
+    );
+    const bankQrCache = new Map<string, ArrayBuffer | null>();
+    const bankLogoCache = new Map<string, ArrayBuffer | null>();
+    const bankLogoBottomCache = new Map<string, ArrayBuffer | null>();
+    for (const bankId of usedBanks) {
+      const bank = bankAccounts.find((b) => b.id === bankId);
+      // Logos are small — include them in previews too.
+      for (const [path, cache] of [
+        [bank?.logo_path, bankLogoCache],
+        [bank?.logo_bottom_path, bankLogoBottomCache],
+      ] as const) {
+        if (!path) continue;
+        try {
+          cache.set(bankId, await fetchAttachmentBytes(path));
+        } catch {
+          cache.set(bankId, null);
+        }
+      }
+      if (preview) continue;
+      if (bank?.qr_path) {
+        try {
+          bankQrCache.set(bankId, await fetchAttachmentBytes(bank.qr_path));
+        } catch {
+          bankQrCache.set(bankId, null);
+        }
+      } else {
+        bankQrCache.set(bankId, null);
+      }
+    }
+
+    const enriched: ReportFiling[] = filings.map((f) => {
+      const ba = bankAccounts.find((b) => b.id === f.bank_account_id);
+      return {
+        id: f.id,
+        form_code: f.form_code,
+        description: f.description,
+        amount: Number(f.amount ?? 0),
+        due_date: f.due_date,
+        remark: f.remark ?? null,
+        payment_method: f.payment_method ?? null,
+        bank_account: ba
+          ? {
+              id: ba.id,
+              label: ba.label,
+              bank_name: ba.bank_name,
+              account_no: ba.account_no,
+              account_name: ba.account_name,
+              promptpay_id: ba.promptpay_id,
+              qr_bytes: bankQrCache.get(ba.id) ?? null,
+              logo_bytes: bankLogoCache.get(ba.id) ?? null,
+              logo_bottom_bytes: bankLogoBottomCache.get(ba.id) ?? null,
+            }
+          : null,
+        attachments: [],
+      };
+    });
+
+    // Part 2: ordered documents, upload order = PDF order
+    const documents: ReportDocument[] = [];
+    if (!preview) {
+      for (const d of docs) {
+        documents.push({
+          file_name: d.file.name,
+          mime_type: d.file.type || null,
+          bytes: await d.file.arrayBuffer(),
+        });
+      }
+    }
+
+    let logoBytes: ArrayBuffer | null = null;
+    if (logoPath) {
+      try {
+        logoBytes = await fetchAttachmentBytes(logoPath);
+      } catch {
+        logoBytes = null;
+      }
+    }
+
+    return {
+      client: {
+        name: selectedClient.name,
+        tax_id: selectedClient.tax_id,
+        address: selectedClient.address,
+        phone: selectedClient.phone,
+        email: selectedClient.email,
+      },
+      periodLabel: period,
+      filings: enriched,
+      logo: logoBytes ? { bytes: logoBytes } : null,
+      documents,
+      firmName: firmName.trim() || undefined,
+      preparedBy: preparedBy.trim() || undefined,
+      coverStyle,
+      preview,
+      reportNo: activeReport?.report_no ?? undefined,
+      reportLabel: activeReport?.label ?? undefined,
+    };
+  }
+
+  async function previewCover() {
+    if (!selectedClient || !activeReportId || !filings.length) return;
+    setPreviewBusy(true);
+    setStatus("");
+    try {
+      const pdfBytes = await buildMonthlyReportPdf(await collectReportOptions(true));
+      const blob = new Blob([new Uint8Array(pdfBytes)], {
+        type: "application/pdf",
+      });
+      const url = URL.createObjectURL(blob);
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+      setPreviewOpen(true);
+    } catch (err) {
+      alert(`ดูตัวอย่างไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  function closePreview() {
+    setPreviewOpen(false);
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }
+
+  async function downloadReportFile(file: ReportFile) {
+    setDownloadingId(file.id);
+    try {
+      const res = await fetch("/api/files/sign-download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storagePath: file.storage_path }),
+      });
+      if (!res.ok) throw new Error("ขอลิงก์ดาวน์โหลดไม่สำเร็จ");
+      const { url } = await res.json();
+      window.open(url, "_blank");
+    } catch (err) {
+      alert(`ดาวน์โหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
   async function generatePdf() {
-    if (!selectedClient || !filings.length) return;
+    if (!selectedClient || !activeReportId || !filings.length) return;
     if (
       !confirm(
-        `สร้างรายงาน ${periodToThai(period)} ของ "${selectedClient.name}" (${filings.length} รายการ)?`
+        `สร้างรายงาน ${periodToThai(period)} ${activeReport?.label ?? ""} ของ "${selectedClient.name}" (${filings.length} รายการ + ${docs.length} เอกสาร)?`
       )
     )
       return;
     setGenerating(true);
     setStatus("");
     try {
-      const filingById = new Map(filings.map((f) => [f.id, f]));
-      const enriched: ReportFiling[] = [];
-
-      const bankQrCache = new Map<string, ArrayBuffer | null>();
-      const usedBanks = new Set(
-        filings
-          .map((f) => f.bank_account_id)
-          .filter((id): id is string => Boolean(id))
+      const pdfBytes = await buildMonthlyReportPdf(
+        await collectReportOptions(false)
       );
-      for (const bankId of usedBanks) {
-        const bank = bankAccounts.find((b) => b.id === bankId);
-        if (bank?.qr_path) {
-          try {
-            bankQrCache.set(bankId, await fetchAttachmentBytes(bank.qr_path));
-          } catch {
-            bankQrCache.set(bankId, null);
-          }
-        } else {
-          bankQrCache.set(bankId, null);
-        }
-      }
 
-      for (const f of filings) {
-        const attachments = [];
-        for (const att of f.filing_attachments) {
-          const bytes = await fetchAttachmentBytes(att.storage_path);
-          const coveredFilings = (att.covers?.length
-            ? att.covers
-            : [f.id]
-          )
-            .map((cid) => filingById.get(cid))
-            .filter((cf): cf is Filing => Boolean(cf));
-          attachments.push({
-            kind: att.kind as string,
-            file_name: att.file_name,
-            mime_type: att.mime_type,
-            bytes,
-            covered_forms: [
-              ...new Set(coveredFilings.map((cf) => cf.form_code)),
-            ],
-            covered_amount: coveredFilings.reduce(
-              (sum, cf) => sum + Number(cf.amount ?? 0),
-              0
-            ),
-            covered_filings: [
-              ...new Set(
-                (att.covers?.length ? att.covers : [f.id]).filter(
-                  (cid) => filingById.has(cid)
-                )
-              ),
-            ],
-          });
-        }
-        const ba = bankAccounts.find((b) => b.id === f.bank_account_id);
-        enriched.push({
-          id: f.id,
-          form_code: f.form_code,
-          description: f.description,
-          amount: Number(f.amount ?? 0),
-          due_date: f.due_date,
-          remark: f.remark ?? null,
-          bank_account: ba
-            ? {
-                label: ba.label,
-                bank_name: ba.bank_name,
-                account_no: ba.account_no,
-                account_name: ba.account_name,
-                promptpay_id: ba.promptpay_id,
-                qr_bytes: bankQrCache.get(ba.id) ?? null,
-              }
-            : null,
-          attachments,
-        });
-      }
-
-      let logoBytes: ArrayBuffer | null = null;
-      if (logoPath) {
-        try {
-          logoBytes = await fetchAttachmentBytes(logoPath);
-        } catch {
-          logoBytes = null;
-        }
-      }
-
-      const pdfBytes = await buildMonthlyReportPdf({
-        client: {
-          name: selectedClient.name,
-          tax_id: selectedClient.tax_id,
-          address: selectedClient.address,
-          phone: selectedClient.phone,
-          email: selectedClient.email,
-        },
-        periodLabel: period,
-        filings: enriched,
-        logo: logoBytes ? { bytes: logoBytes } : null,
-      });
+      const seq = activeReport?.seq ?? 1;
+      const publicId = activeReport?.public_id ?? String(Date.now());
+      const roundTag = `-ครั้งที่${seq}`;
 
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
       const dlUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = dlUrl;
-      a.download = `รายงานภาษี-${selectedClient.name}-${period}.pdf`;
+      a.download = `รายงานภาษี-${selectedClient.name}-${period}${roundTag}.pdf`;
       a.click();
       URL.revokeObjectURL(dlUrl);
 
@@ -649,7 +1030,7 @@ export default function ReportsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientId,
-          fileName: `monthly-report-${period}.pdf`,
+          fileName: `monthly-report-${period}-${seq}-${publicId}.pdf`,
         }),
       });
       if (!signRes.ok) throw new Error("ขอลิงก์อัปโหลดสำเนาไม่สำเร็จ");
@@ -663,12 +1044,17 @@ export default function ReportsPage() {
 
       await recordReportFile(
         clientId,
+        activeReportId,
         path,
-        `รายงานภาษี ${periodToThai(period)}.pdf`,
+        `รายงานภาษี ${periodToThai(period)} ${activeReport?.label ?? ""}.pdf`.trim(),
         blob.size
       );
 
-      setStatus("สร้างรายงานสำเร็จ — ดาวน์โหลดแล้ว และบันทึกสำเนาในไฟล์ของลูกค้าแล้ว");
+      listReportFiles(activeReportId)
+        .then(setReportFiles)
+        .catch(() => undefined);
+
+      setStatus("สร้างรายงานสำเร็จ — ดาวน์โหลดแล้ว และบันทึกสำเนาในประวัติไฟล์รายงานแล้ว");
     } catch (err) {
       alert(`สร้างรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -693,11 +1079,25 @@ export default function ReportsPage() {
           <button className="btn px-2.5" onClick={() => setPeriod((p) => shiftPeriod(p, 1))}>
             →
           </button>
+          <select
+            className="input w-auto !py-1 text-xs"
+            value={copyOffset}
+            onChange={(e) => setCopyOffset(Number(e.target.value))}
+            title="เลือกเดือนต้นทางที่จะคัดลอก"
+            aria-label="เลือกเดือนต้นทางที่จะคัดลอก"
+            disabled={!clientId || copyingFrom}
+          >
+            {[1, 2, 3].map((n) => (
+              <option key={n} value={n}>
+                {periodToThai(shiftPeriod(period, -n))}
+              </option>
+            ))}
+          </select>
           <button
             className="btn px-2.5"
-            title="คัดลอกรายการจากเดือนก่อน"
-            aria-label="คัดลอกรายการจากเดือนก่อน"
-            onClick={copyFromLastMonth}
+            title="คัดลอกรายการจากเดือนที่เลือก"
+            aria-label="คัดลอกรายการจากเดือนที่เลือก"
+            onClick={copyFromPastMonth}
             disabled={!clientId || copyingFrom}
           >
             {copyingFrom ? <SpinnerIcon /> : <CopyIcon />}
@@ -749,12 +1149,97 @@ export default function ReportsPage() {
         </p>
       ) : (
         <>
+          <section className="max-w-4xl">
+            <div className="card space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">รอบรายงาน:</span>
+                {reportsLoading ? (
+                  <span className="text-xs text-neutral-500">กำลังโหลด...</span>
+                ) : (
+                  reports.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => setActiveReportId(r.id)}
+                      className={`rounded-full border px-3 py-1 text-xs ${
+                        r.id === activeReportId
+                          ? "border-neutral-900 bg-neutral-900 text-white"
+                          : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+                      }`}
+                      title={r.report_no ?? undefined}
+                    >
+                      {r.label ?? `ครั้งที่ ${r.seq}`}
+                      {r.status === "issued" ? " · ออกแล้ว" : ""}
+                    </button>
+                  ))
+                )}
+                <span className="inline-flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="1"
+                    className="input w-16 px-2 py-1 text-xs"
+                    placeholder={String(nextRoundSeq)}
+                    value={newRoundSeq}
+                    onChange={(e) => setNewRoundSeq(e.target.value)}
+                    title="ครั้งที่ (เว้นว่าง = อัตโนมัติ)"
+                    aria-label="เลือกครั้งที่"
+                  />
+                  <button
+                    className="btn text-xs"
+                    onClick={() => {
+                      const trimmed = newRoundSeq.trim();
+                      addReportRound(trimmed ? Number(trimmed) : undefined);
+                      setNewRoundSeq("");
+                    }}
+                    disabled={reportBusy || reportsLoading}
+                  >
+                    + เพิ่มรอบ
+                  </button>
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-neutral-600">
+                <span>
+                  เลขที่รายงาน:{" "}
+                  <span className="font-medium">{activeReport?.report_no ?? "-"}</span>
+                </span>
+                <span>
+                  สถานะ: {reportLocked ? "ออกแล้ว (ล็อก แก้ไขไม่ได้)" : "ฉบับร่าง"}
+                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    className="btn text-xs"
+                    onClick={() => activeReport && toggleReportIssued(activeReport)}
+                    disabled={reportBusy || !activeReport}
+                  >
+                    {reportLocked ? "เปิดแก้ไข" : "ออกรายงาน"}
+                  </button>
+                  {reports.length > 1 && (
+                    <button
+                      className="btn-danger text-xs"
+                      onClick={() => activeReport && removeReportRound(activeReport)}
+                      disabled={reportBusy}
+                    >
+                      ลบรอบนี้
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section className="max-w-4xl space-y-3">
             <h2 className="font-medium">
-              รายการงานภาษี ประจำเดือน {periodToThai(period)}
+              ส่วนที่ 1 — ปก: รายการงานภาษี ประจำเดือน {periodToThai(period)}
+              {activeReport?.label ? ` (${activeReport.label})` : ""}
             </h2>
 
-            <div className="card grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[150px_minmax(0,1.7fr)_135px_170px_auto] lg:items-end lg:gap-x-3">
+            {reportLocked && (
+              <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                รอบนี้ {activeReport?.report_no} ออกแล้ว — เปิดแก้ไขก่อนเพื่อเพิ่ม/แก้รายการ
+                หรือสร้างรอบใหม่
+              </p>
+            )}
+
+            <div className="card grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[150px_135px_minmax(0,1.7fr)_170px_auto] lg:items-end lg:gap-x-3">
               <div className="order-1 lg:order-none">
                 <label className="label">แบบฟอร์ม</label>
                 <input
@@ -763,6 +1248,7 @@ export default function ReportsPage() {
                   placeholder="ภ.พ.30"
                   value={newFormCode}
                   onChange={(e) => setNewFormCode(e.target.value)}
+                  disabled={reportLocked}
                 />
                 <datalist id="form-presets">
                   {formPresetList.map((p) => (
@@ -779,6 +1265,7 @@ export default function ReportsPage() {
                   step="0.01"
                   value={newAmount}
                   onChange={(e) => setNewAmount(e.target.value)}
+                  disabled={reportLocked}
                 />
               </div>
               <div className="order-3 col-span-2 lg:order-none lg:col-span-1">
@@ -788,27 +1275,74 @@ export default function ReportsPage() {
                   placeholder="เช่น ภาษีมูลค่าเพิ่ม เดือน 7/69"
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
+                  disabled={reportLocked}
                 />
               </div>
               <div className="order-4 lg:order-none">
-                <label className="label">กำหนดชำระ</label>
+                <label className="label">วิธีชำระ</label>
                 <input
                   className="input"
-                  type="date"
-                  value={newDueDate}
-                  onChange={(e) => setNewDueDate(e.target.value)}
+                  list="payment-method-presets"
+                  placeholder="เช่น สลิป หน้า 2"
+                  value={newPaymentMethod}
+                  onChange={(e) => setNewPaymentMethod(e.target.value)}
+                  disabled={reportLocked}
                 />
+                <datalist id="payment-method-presets">
+                  {payMethodPresetList.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
               </div>
               <button
                 className="btn-primary order-5 col-span-2 lg:order-none lg:col-span-1"
                 onClick={addFiling}
-                disabled={adding}
+                disabled={adding || reportLocked}
               >
                 เพิ่มรายการ
               </button>
             </div>
 
-            {loading && loadedKey !== `${clientId}|${period}` ? (
+            <details className="card !py-2 text-sm">
+              <summary className="cursor-pointer text-neutral-600">
+                จัดการตัวเลือกวิธีชำระ ({payMethodPresetList.length})
+              </summary>
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="input"
+                  placeholder="เพิ่มวิธีชำระใหม่ เช่น สลิป หน้า 3"
+                  value={newPayMethodPreset}
+                  onChange={(e) => setNewPayMethodPreset(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addPayMethodPreset();
+                  }}
+                />
+                <button className="btn shrink-0" onClick={addPayMethodPreset}>
+                  เพิ่ม
+                </button>
+              </div>
+              {payMethodPresetList.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {payMethodPresetList.map((p) => (
+                    <li
+                      key={p}
+                      className="flex items-center gap-2 rounded bg-neutral-50 px-2 py-1"
+                    >
+                      <span className="min-w-0 flex-1 truncate">{p}</span>
+                      <button
+                        className="text-neutral-400 hover:text-red-600"
+                        onClick={() => removePayMethodPreset(p)}
+                        aria-label={`ลบวิธีชำระ ${p}`}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </details>
+
+            {loading && loadedKey !== `${clientId}|${period}|${activeReportId}` ? (
               <p className="text-sm text-neutral-500">กำลังโหลด...</p>
             ) : !filings.length ? (
               <p className="text-sm text-neutral-500">
@@ -819,24 +1353,10 @@ export default function ReportsPage() {
                 <FilingCard
                   key={f.id}
                   filing={f}
-                  allFilings={filings}
                   bankAccounts={bankAccounts}
+                  locked={reportLocked}
                   onPatch={patchFiling}
                   onDelete={() => deleteFiling(f)}
-                  onUpload={(kind, file) =>
-                    uploadAttachment(f.id, kind, file)
-                  }
-                  onDeleteAttachment={deleteAttachment}
-                  slipOpen={slipPanelFor === f.id}
-                  slipCovers={slipCovers}
-                  onOpenSlipPanel={() => openSlipPanel(f.id)}
-                  onCloseSlipPanel={() => setSlipPanelFor(null)}
-                  onToggleSlipCover={toggleSlipCover}
-                  onSlipFiles={(files) =>
-                    files.forEach((file) =>
-                      uploadAttachment(f.id, "slip", file, [...slipCovers])
-                    )
-                  }
                 />
               ))
             )}
@@ -850,28 +1370,201 @@ export default function ReportsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  <button
+                    className="btn-danger"
+                    onClick={clearAllFilings}
+                    disabled={!filings.length || clearingAll || generating || reportLocked}
+                    title="ลบรายการทั้งหมดของรอบที่เลือก"
+                  >
+                    {clearingAll ? "กำลังลบ..." : `ลบทั้งหมด (${filings.length})`}
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="max-w-4xl space-y-3">
+            <h2 className="font-medium">ส่วนที่ 2 — เอกสารแนบ (ตามลำดับอัปโหลด)</h2>
+            <p className="-mt-2 text-xs text-neutral-500">
+              ลากไฟล์มาวาง จัดลำดับ แล้วรวมต่อท้ายปกเป็นไฟล์เดียว
+            </p>
+            <div className="card space-y-3">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDocsDragActive(true);
+                }}
+                onDragLeave={() => setDocsDragActive(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDocsDragActive(false);
+                  if (e.dataTransfer.files?.length) addDocs(e.dataTransfer.files);
+                }}
+                onClick={() => docsInputRef.current?.click()}
+                className={`flex min-h-36 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
+                  docsDragActive
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+                }`}
+              >
+                <input
+                  ref={docsInputRef}
+                  type="file"
+                  multiple
+                  accept="application/pdf,image/png,image/jpeg"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.length) addDocs(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                ลากไฟล์มาวาง หรือคลิกเพื่อเลือก (PDF / PNG / JPG — เลือกได้หลายไฟล์)
+              </div>
+              {!docs.length ? (
+                <p className="text-sm text-neutral-500">
+                  ยังไม่มีเอกสาร — ไฟล์จะต่อท้ายปกตามลำดับที่แสดง
+                </p>
+              ) : (
+                <>
+                  <ol className="space-y-1 text-sm text-neutral-600">
+                    {docs.map((d, i) => (
+                      <li
+                        key={d.id}
+                        className="flex items-center gap-1 rounded border border-neutral-100 px-2 py-1"
+                      >
+                        <span className="mr-1 text-xs text-neutral-400">{i + 1}.</span>
+                        <span className="min-w-0 flex-1 truncate" title={d.file.name}>
+                          {d.file.name}
+                          <span className="ml-1 text-xs text-neutral-400">
+                            {(d.file.size / 1024).toFixed(0)} KB
+                          </span>
+                        </span>
+                        <button
+                          className="btn !px-1.5 !py-0.5 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveDoc(d.id, -1);
+                          }}
+                          disabled={i === 0}
+                          aria-label="เลื่อนขึ้น"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          className="btn !px-1.5 !py-0.5 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveDoc(d.id, 1);
+                          }}
+                          disabled={i === docs.length - 1}
+                          aria-label="เลื่อนลง"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          className="text-neutral-400 hover:text-red-600"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeDoc(d.id);
+                          }}
+                          aria-label="ลบเอกสาร"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                  <div>
+                    <button className="btn-danger text-xs" onClick={() => setDocs([])}>
+                      ล้างเอกสาร ({docs.length})
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+
+          {Boolean(filings.length) && (
+            <section className="max-w-4xl">
+              <div className="card flex flex-wrap items-center justify-between gap-3">
+                <div className="text-sm">
+                  <span className="font-medium">
+                    ปก {filings.length} รายการ + เอกสาร {docs.length} ไฟล์
+                  </span>
+                  <div className="text-xs text-neutral-500">
+                    ยอดรวม {fmtMoney(total)} บาท
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
                   {status && (
                     <span className="text-xs text-green-700">{status}</span>
                   )}
                   <button
-                    className="btn-danger"
-                    onClick={clearAllFilings}
-                    disabled={!filings.length || clearingAll || generating}
-                    title="ลบรายการทั้งหมดของเดือนที่เลือก"
+                    className="btn"
+                    onClick={previewCover}
+                    disabled={previewBusy || generating}
                   >
-                    {clearingAll ? "กำลังลบ..." : `ลบทั้งหมด (${filings.length})`}
+                    {previewBusy ? "กำลังสร้างตัวอย่าง..." : "ดูตัวอย่างปก"}
                   </button>
                   <button
                     className="btn-primary"
                     onClick={generatePdf}
                     disabled={generating}
                   >
-                    {generating ? "กำลังสร้าง..." : "สร้างรายงาน PDF"}
+                    {generating ? "กำลังสร้าง..." : "ดาวน์โหลด PDF"}
                   </button>
                 </div>
               </div>
-            )}
-          </section>
+            </section>
+          )}
+
+          {activeReportId && (
+            <section className="max-w-4xl space-y-2">
+              <h2 className="font-medium">ประวัติไฟล์รายงาน</h2>
+              <div className="overflow-x-auto">
+                <table className="table-base w-full min-w-[620px]">
+                  <thead>
+                    <tr>
+                      <th>ชื่อไฟล์</th>
+                      <th>ขนาด</th>
+                      <th>วันที่บันทึก</th>
+                      <th>ผู้สร้าง</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportFiles.map((f) => (
+                      <tr key={f.id}>
+                        <td>{f.file_name}</td>
+                        <td className="whitespace-nowrap">{fmtSize(f.size_bytes)}</td>
+                        <td className="whitespace-nowrap">
+                          {new Date(f.uploaded_at).toLocaleString("th-TH")}
+                        </td>
+                        <td>{f.uploaded_by ?? "—"}</td>
+                        <td className="text-right">
+                          <button
+                            className="btn text-xs"
+                            onClick={() => downloadReportFile(f)}
+                            disabled={downloadingId === f.id}
+                          >
+                            {downloadingId === f.id ? "กำลังเปิด..." : "ดาวน์โหลด"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!reportFiles.length && (
+                      <tr>
+                        <td colSpan={5} className="text-neutral-500">
+                          ยังไม่มีไฟล์รายงานที่บันทึกไว้ — กด &quot;ดาวน์โหลด PDF&quot;
+                          เพื่อสร้างและเก็บสำเนา
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           <section className="max-w-4xl">
             <button
@@ -884,7 +1577,7 @@ export default function ReportsPage() {
             {showBankManager && (
               <div className="mt-3 space-y-3">
                 <div className="overflow-x-auto">
-                  <table className="table-base w-full min-w-[760px]">
+                  <table className="table-base w-full min-w-[880px]">
                     <thead>
                       <tr>
                         <th>ชื่อ</th>
@@ -893,6 +1586,7 @@ export default function ReportsPage() {
                         <th>ชื่อบัญชี</th>
                         <th>PromptPay</th>
                         <th>QR สำหรับสแกนจ่าย</th>
+                        <th>โลโก้ บน/ล่าง</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -935,6 +1629,55 @@ export default function ReportsPage() {
                               </label>
                             )}
                           </td>
+                          <td>
+                            <div className="flex flex-col items-start gap-1">
+                              {(["top", "bottom"] as const).map((slot) => {
+                                const path =
+                                  slot === "bottom"
+                                    ? b.logo_bottom_path
+                                    : b.logo_path;
+                                const busy = logoBusyId === `${b.id}:${slot}`;
+                                const label = slot === "bottom" ? "ล่าง" : "บน";
+                                return path ? (
+                                  <span
+                                    key={slot}
+                                    className="inline-flex items-center gap-1 rounded bg-neutral-100 px-1.5 py-0.5 text-xs"
+                                  >
+                                    {label}
+                                    <button
+                                      className="text-red-500 hover:text-red-700"
+                                      aria-label={`ลบโลโก้${label}`}
+                                      onClick={() =>
+                                        handleBankLogoRemove(b.id, slot)
+                                      }
+                                      disabled={busy}
+                                    >
+                                      ✕
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <label
+                                    key={slot}
+                                    className="btn inline-flex cursor-pointer text-xs"
+                                  >
+                                    {busy ? "..." : `+${label}`}
+                                    <input
+                                      type="file"
+                                      accept="image/png,image/jpeg"
+                                      className="hidden"
+                                      disabled={busy}
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (!file) return;
+                                        handleBankLogoUpload(b.id, slot, file);
+                                        e.target.value = "";
+                                      }}
+                                    />
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </td>
                           <td className="text-right">
                             <button
                               className="btn-danger px-1.5 py-0.5 text-xs"
@@ -947,7 +1690,7 @@ export default function ReportsPage() {
                       ))}
                       {!bankAccounts.length && (
                         <tr>
-                          <td colSpan={7} className="text-neutral-500">
+                          <td colSpan={8} className="text-neutral-500">
                             ยังไม่มีบัญชี
                           </td>
                         </tr>
@@ -1022,9 +1765,9 @@ export default function ReportsPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="label">โลโก้บริษัท (Watermark หน้าปก)</label>
+              <label className="label">โลโก้บริษัท (หัวกระดาษหน้าปก)</label>
               <p className="text-xs text-neutral-500">
-                แสดงมุมขวาล่างของหน้าปกรายงาน PDF (ความทึบ 65%) — รองรับ PNG/JPG
+                แสดงมุมซ้ายบนของหน้าปกรายงาน PDF — รองรับ PNG/JPG
               </p>
               {settingsLoading ? (
                 <p className="text-xs text-neutral-500">กำลังโหลด...</p>
@@ -1066,12 +1809,99 @@ export default function ReportsPage() {
               )}
             </div>
 
+            <div className="space-y-3 border-t border-neutral-200 pt-3">
+              <div className="space-y-1">
+                <label className="label">ชื่อบริษัท / สำนักงาน</label>
+                <input
+                  className="input"
+                  placeholder="Taxwork"
+                  value={firmName}
+                  onChange={(e) => setFirmName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="label">ผู้จัดทำ (แสดงบนปก)</label>
+                <input
+                  className="input"
+                  placeholder="เว้นว่างเพื่อใช้ชื่อบริษัท / สำนักงาน"
+                  value={preparedBy}
+                  onChange={(e) => setPreparedBy(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="label">รูปแบบปก</label>
+                <select
+                  className="input"
+                  value={coverStyle}
+                  onChange={(e) =>
+                    setCoverStyle(
+                      e.target.value === "classic" ? "classic" : "modern"
+                    )
+                  }
+                >
+                  <option value="modern">ใหม่ (ขาวดำ หัวกระดาษ + โลโก้กลาง)</option>
+                  <option value="classic">เดิม (ขาวดำ)</option>
+                </select>
+              </div>
+              <p className="text-xs text-neutral-500">
+                เลือก &quot;เดิม&quot; เพื่อย้อนกลับไปใช้ปกแบบก่อนหน้า (ใช้ได้ทันที
+                โดยไม่ต้อง deploy ใหม่)
+              </p>
+            </div>
+
             <div className="flex justify-end">
               <button
                 className="btn-primary"
-                onClick={() => setShowSettings(false)}
+                onClick={async () => {
+                  await saveBranding();
+                  setShowSettings(false);
+                }}
+                disabled={brandingBusy || settingsLoading}
               >
-                เสร็จสิ้น
+                {brandingBusy ? "กำลังบันทึก..." : "เสร็จสิ้น"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewOpen && previewUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={closePreview}
+        >
+          <div
+            className="flex h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
+              <h2 className="text-sm font-bold">ตัวอย่างปก (Preview)</h2>
+              <button
+                className="text-neutral-400 hover:text-neutral-700"
+                onClick={closePreview}
+                aria-label="ปิด"
+              >
+                ✕
+              </button>
+            </div>
+            <iframe
+              src={`${previewUrl}#toolbar=0&navpanes=0`}
+              title="ตัวอย่างหน้าปกรายงาน"
+              className="h-full w-full flex-1"
+            />
+            <div className="flex items-center justify-end gap-3 border-t border-neutral-200 px-4 py-3">
+              <button className="btn" onClick={closePreview}>
+                ปิด
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  closePreview();
+                  void generatePdf();
+                }}
+                disabled={generating}
+              >
+                ดาวน์โหลด PDF
               </button>
             </div>
           </div>
@@ -1083,40 +1913,23 @@ export default function ReportsPage() {
 
 function FilingCard({
   filing,
-  allFilings,
   bankAccounts,
+  locked,
   onPatch,
   onDelete,
-  onUpload,
-  onDeleteAttachment,
-  slipOpen,
-  slipCovers,
-  onOpenSlipPanel,
-  onCloseSlipPanel,
-  onToggleSlipCover,
-  onSlipFiles,
 }: {
   filing: Filing;
-  allFilings: Filing[];
   bankAccounts: BankAccount[];
+  locked?: boolean;
   onPatch: (id: string, patch: Partial<Filing>) => void;
   onDelete: () => void;
-  onUpload: (kind: Attachment["kind"], file: File) => void;
-  onDeleteAttachment: (att: Attachment) => void;
-  slipOpen: boolean;
-  slipCovers: Set<string>;
-  onOpenSlipPanel: () => void;
-  onCloseSlipPanel: () => void;
-  onToggleSlipCover: (filingId: string) => void;
-  onSlipFiles: (files: File[]) => void;
 }) {
   const editingRef = useRef<string | null>(null);
   const [draft, setDraft] = useState({
     form_code: filing.form_code,
     description: filing.description ?? "",
     amount: String(Number(filing.amount)),
-    due_date: filing.due_date ?? "",
-    remark: filing.remark ?? "",
+    payment_method: filing.payment_method ?? "",
   });
 
   useEffect(() => {
@@ -1135,32 +1948,22 @@ function FilingCard({
         editingRef.current === "amount"
           ? prev.amount
           : String(Number(filing.amount)),
-      due_date:
-        prev.due_date !== (filing.due_date ?? "") &&
-        editingRef.current === "due_date"
-          ? prev.due_date
-          : filing.due_date ?? "",
-      remark:
-        prev.remark !== (filing.remark ?? "") &&
-        editingRef.current === "remark"
-          ? prev.remark
-          : filing.remark ?? "",
+      payment_method:
+        prev.payment_method !== (filing.payment_method ?? "") &&
+        editingRef.current === "payment_method"
+          ? prev.payment_method
+          : filing.payment_method ?? "",
     }));
   }, [filing]);
 
   function commitField(
-    key: "form_code" | "description" | "amount" | "due_date" | "remark"
+    key: "form_code" | "description" | "amount" | "payment_method"
   ) {
     const raw = draft[key];
     if (key === "amount") {
       const num = Number(raw) || 0;
       if (num !== Number(filing.amount)) onPatch(filing.id, { amount: num });
       else setDraft((p) => ({ ...p, amount: String(Number(filing.amount)) }));
-      return;
-    }
-    if (key === "due_date") {
-      const val = raw || null;
-      if (val !== filing.due_date) onPatch(filing.id, { due_date: val });
       return;
     }
     const val = raw.trim() || null;
@@ -1170,6 +1973,7 @@ function FilingCard({
   function fieldHandlers(key: Parameters<typeof commitField>[0]) {
     return {
       value: draft[key],
+      disabled: locked,
       onFocus: () => {
         editingRef.current = key;
       },
@@ -1184,7 +1988,7 @@ function FilingCard({
 
   return (
     <div className="card space-y-3">
-      <div className="grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,0.85fr)_minmax(0,1.05fr)_minmax(0,1.45fr)_minmax(0,0.95fr)_auto] lg:items-end lg:gap-x-3">
+      <div className="grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,0.85fr)_minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_auto] lg:items-end lg:gap-x-3">
         <div className="order-1 lg:order-none">
           <label className="label">แบบฟอร์ม</label>
           <input
@@ -1212,26 +2016,20 @@ function FilingCard({
           />
         </div>
         <div className="order-4 lg:order-none">
-          <label className="label">กำหนดชำระ</label>
+          <label className="label">วิธีชำระ</label>
           <input
             className="input"
-            type="date"
-            {...fieldHandlers("due_date")}
+            list="payment-method-presets"
+            placeholder="เช่น สลิป หน้า 2"
+            {...fieldHandlers("payment_method")}
           />
         </div>
-        <div className="order-5 lg:order-none">
-          <label className="label">หมายเหตุ</label>
-          <input
-            className="input"
-            placeholder="หมายเหตุ"
-            {...fieldHandlers("remark")}
-          />
-        </div>
-        <div className="order-6 col-span-2 lg:order-none lg:col-span-1">
+        <div className="order-5 col-span-2 lg:order-none lg:col-span-1">
           <label className="label">แนบบัญชีธนาคาร</label>
           <select
             className="input"
             value={filing.bank_account_id ?? ""}
+            disabled={locked}
             onChange={(e) =>
               onPatch(filing.id, { bank_account_id: e.target.value || null })
             }
@@ -1245,130 +2043,15 @@ function FilingCard({
           </select>
         </div>
         <button
-          className="btn-danger order-7 justify-self-end self-end lg:order-none"
+          className="btn-danger order-6 justify-self-end self-end lg:order-none"
           onClick={onDelete}
+          disabled={locked}
         >
           ลบ
         </button>
       </div>
-
-      <div className="flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">
-        {(["slip", "qr", "document"] as const).map((kind) => (
-          <label
-            key={kind}
-            className="btn cursor-pointer text-xs"
-            onClick={
-              kind === "slip"
-                ? (e) => {
-                    e.preventDefault();
-                    if (slipOpen) onCloseSlipPanel();
-                    else onOpenSlipPanel();
-                  }
-                : undefined
-            }
-          >
-            + {ATTACHMENT_KIND_LABELS[kind]}
-            {kind !== "slip" && (
-              <input
-                type="file"
-                multiple
-                accept="image/png,image/jpeg,image/webp,.pdf"
-                className="hidden"
-                onChange={(e) => {
-                  const list = e.target.files;
-                  if (!list?.length) return;
-                  Array.from(list).forEach((file) => onUpload(kind, file));
-                  e.target.value = "";
-                }}
-              />
-            )}
-          </label>
-        ))}
-        <span className="ml-auto flex flex-wrap gap-1">
-          {filing.filing_attachments.length ? (
-            filing.filing_attachments.map((att) => (
-              <span
-                key={att.id}
-                className="inline-flex items-center gap-1 rounded bg-neutral-100 px-1.5 py-0.5 text-xs"
-              >
-                [{ATTACHMENT_KIND_LABELS[att.kind] ?? att.kind}]{" "}
-                {truncateName(att.file_name)}
-                {att.covers && att.covers.length > 1 && (
-                  <span className="text-blue-600">
-                    ·{att.covers.length} ฟอร์ม
-                  </span>
-                )}
-                <button
-                  className="text-red-500 hover:text-red-700"
-                  onClick={() => onDeleteAttachment(att)}
-                  aria-label="ลบไฟล์แนบ"
-                >
-                  ✕
-                </button>
-              </span>
-            ))
-          ) : (
-            <span className="text-xs text-neutral-400">ยังไม่มีไฟล์แนบ</span>
-          )}
-        </span>
-      </div>
-
-      {slipOpen && (
-        <div className="rounded border border-neutral-200 bg-neutral-50 p-3 text-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs font-medium">
-              สลิปนี้ชำระสำหรับฟอร์มใด (เลือกได้หลายฟอร์ม):
-            </p>
-            <button
-              className="text-xs text-neutral-400 hover:text-neutral-700"
-              onClick={onCloseSlipPanel}
-            >
-              ยกเลิก ✕
-            </button>
-          </div>
-          <div className="mb-3 grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
-            {allFilings.map((pf) => (
-              <label
-                key={pf.id}
-                className="flex items-center gap-1.5 text-xs"
-              >
-                <input
-                  type="checkbox"
-                  checked={slipCovers.has(pf.id)}
-                  onChange={() => onToggleSlipCover(pf.id)}
-                />
-                <span className={pf.id === filing.id ? "font-medium" : ""}>
-                  {[pf.form_code, pf.description].filter(Boolean).join(" – ") ||
-                    "-"}
-                  {` (${fmtMoney(Number(pf.amount))})`}
-                </span>
-              </label>
-            ))}
-          </div>
-          <label className="btn inline-flex cursor-pointer text-xs">
-            เลือกไฟล์สลิป...
-            <input
-              type="file"
-              multiple
-              accept="image/png,image/jpeg,image/webp,.pdf"
-              className="hidden"
-              onChange={(e) => {
-                const list = e.target.files;
-                if (!list?.length) return;
-                onSlipFiles(Array.from(list));
-                e.target.value = "";
-                onCloseSlipPanel();
-              }}
-            />
-          </label>
-        </div>
-      )}
     </div>
   );
-}
-
-function truncateName(name: string, max = 28) {
-  return name.length > max ? `${name.slice(0, max)}…` : name;
 }
 
 function CopyIcon() {

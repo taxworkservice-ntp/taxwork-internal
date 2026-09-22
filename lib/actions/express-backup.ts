@@ -13,6 +13,7 @@ import {
   type ExpressBackupAgent,
   type ExpressBackupConfig,
   type ExpressBackupJob,
+  type ExpressBackupRestore,
   type ExpressBackupStatus,
 } from "@/lib/express-backup";
 
@@ -25,6 +26,27 @@ function optStr(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   if (v instanceof Date) return v.toISOString();
   return String(v);
+}
+
+/**
+ * True when Postgres reports a table this query needs does not exist —
+ * i.e. its migration has not been applied on this database yet.
+ * Callers degrade gracefully (empty list / zero count) so pages keep loading
+ * and only the not-yet-migrated feature stays empty. All other errors throw.
+ */
+function isMissingTable(e: unknown, table: string): boolean {
+  return (
+    e instanceof Error && e.message.includes("does not exist") && e.message.includes(table)
+  );
+}
+
+/** True when Postgres reports a column this query needs does not exist yet. */
+function isMissingColumn(e: unknown, column: string): boolean {
+  return (
+    e instanceof Error &&
+    e.message.includes("does not exist") &&
+    e.message.includes(column)
+  );
 }
 
 function toConfig(r: Record<string, unknown>): ExpressBackupConfig {
@@ -47,6 +69,8 @@ function toJob(r: Record<string, unknown>): ExpressBackupJob {
     id: String(r.id),
     client_id: String(r.client_id),
     agent_id: r.agent_id == null ? null : String(r.agent_id),
+    target_agent_id: r.target_agent_id == null ? null : String(r.target_agent_id),
+    source_path_used: r.source_path_used == null ? null : String(r.source_path_used),
     status: String(r.status),
     trigger_type: String(r.trigger_type ?? "manual"),
     started_at: optStr(r.started_at),
@@ -59,8 +83,11 @@ function toJob(r: Record<string, unknown>): ExpressBackupJob {
     checksum: r.checksum == null ? null : String(r.checksum),
     error_code: r.error_code == null ? null : String(r.error_code),
     error_message: r.error_message == null ? null : String(r.error_message),
+    created_by: r.created_by == null ? null : String(r.created_by),
     created_at: str(r.created_at),
     agent_name: r.agent_name == null ? null : String(r.agent_name),
+    target_agent_name:
+      r.target_agent_name == null ? null : String(r.target_agent_name),
   };
 }
 
@@ -99,7 +126,12 @@ export type OverviewRow = {
   latest_job_created_at: string | null;
   latest_success_at: string | null;
   latest_success_size: number | null;
+  latest_success_by: string | null;
+  latest_restore_at: string | null;
+  latest_restore_status: string | null;
+  latest_restore_by: string | null;
   status: ExpressBackupStatus;
+  machine_count: number;
 };
 
 /**
@@ -112,22 +144,88 @@ export async function getExpressBackupOverview(): Promise<{
   agentsTotal: number;
 }> {
   await requireUser();
-  const rows = (await sql`select c.id as client_id, c.name as client_name, c.tax_id,
-      cfg.enabled, cfg.source_path, cfg.schedule_time, cfg.retention_days,
-      lj.status as latest_job_status, lj.created_at as latest_job_created_at,
-      ls.completed_at as latest_success_at, ls.backup_size_bytes as latest_success_size
-    from clients c
-    left join express_backup_configs cfg on cfg.client_id = c.id
-    left join lateral (
-      select status, created_at from express_backup_jobs
-      where client_id = c.id order by created_at desc limit 1
-    ) lj on true
-    left join lateral (
-      select completed_at, backup_size_bytes from express_backup_jobs
-      where client_id = c.id and status = 'success' order by completed_at desc limit 1
-    ) ls on true
-    where c.status = 'active'
-    order by c.name`) as Record<string, unknown>[];
+  let rows: Record<string, unknown>[];
+  try {
+    rows = (await sql`select c.id as client_id, c.name as client_name, c.tax_id,
+        cfg.enabled, cfg.source_path, cfg.schedule_time, cfg.retention_days,
+        lj.status as latest_job_status, lj.created_at as latest_job_created_at,
+        ls.completed_at as latest_success_at, ls.backup_size_bytes as latest_success_size,
+        m.n as machine_count
+      from clients c
+      left join express_backup_configs cfg on cfg.client_id = c.id
+      left join lateral (
+        select status, created_at from express_backup_jobs
+        where client_id = c.id order by created_at desc limit 1
+      ) lj on true
+      left join lateral (
+        select completed_at, backup_size_bytes from express_backup_jobs
+        where client_id = c.id and status = 'success' order by completed_at desc limit 1
+      ) ls on true
+      left join lateral (
+        select count(*)::text as n from express_backup_agent_paths ap
+        join express_backup_agents a on a.id = ap.agent_id
+        where ap.client_id = c.id and a.status <> 'revoked' and a.revoked_at is null
+      ) m on true
+      where c.status = 'active'
+      order by c.name`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_agent_paths")) throw e;
+    rows = (await sql`select c.id as client_id, c.name as client_name, c.tax_id,
+        cfg.enabled, cfg.source_path, cfg.schedule_time, cfg.retention_days,
+        lj.status as latest_job_status, lj.created_at as latest_job_created_at,
+        ls.completed_at as latest_success_at, ls.backup_size_bytes as latest_success_size
+      from clients c
+      left join express_backup_configs cfg on cfg.client_id = c.id
+      left join lateral (
+        select status, created_at from express_backup_jobs
+        where client_id = c.id order by created_at desc limit 1
+      ) lj on true
+      left join lateral (
+        select completed_at, backup_size_bytes from express_backup_jobs
+        where client_id = c.id and status = 'success' order by completed_at desc limit 1
+      ) ls on true
+      where c.status = 'active'
+      order by c.name`) as Record<string, unknown>[];
+  }
+
+  // Latest import (restore) per client — isolated query with its own
+  // missing-table fallback, so the overview never breaks on old schemas.
+  let restoreRows: Record<string, unknown>[] = [];
+  try {
+    restoreRows = (await sql`select distinct on (client_id) client_id, status, updated_at, requested_by
+      from express_backup_restores
+      order by client_id, created_at desc`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_restores")) throw e;
+  }
+  const restoreByClient = new Map<string, { at: string | null; status: string; by: string | null }>();
+  for (const r of restoreRows) {
+    restoreByClient.set(String(r.client_id), {
+      at:
+        r.updated_at == null
+          ? null
+          : r.updated_at instanceof Date
+            ? r.updated_at.toISOString()
+            : String(r.updated_at),
+      status: String(r.status),
+      by: r.requested_by == null ? null : String(r.requested_by),
+    });
+  }
+
+  // Who triggered the latest successful manual backup (column added later).
+  let backupByRows: Record<string, unknown>[] = [];
+  try {
+    backupByRows = (await sql`select distinct on (client_id) client_id, created_by
+      from express_backup_jobs
+      where status = 'success'
+      order by client_id, completed_at desc`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingColumn(e, "created_by")) throw e;
+  }
+  const backupByClient = new Map<string, string>();
+  for (const r of backupByRows) {
+    if (r.created_by != null) backupByClient.set(String(r.client_id), String(r.created_by));
+  }
 
   const agents = (await sql`select status, last_seen_at, revoked_at
     from express_backup_agents`) as { status: string; last_seen_at: unknown; revoked_at: unknown }[];
@@ -146,6 +244,7 @@ export async function getExpressBackupOverview(): Promise<{
       const hasConfig = r.enabled !== null && r.enabled !== undefined;
       const enabled = Boolean(r.enabled);
       const latestJobStatus = r.latest_job_status == null ? null : String(r.latest_job_status);
+      const restore = restoreByClient.get(String(r.client_id)) ?? null;
       const latestSuccessAt =
         r.latest_success_at == null
           ? null
@@ -170,7 +269,12 @@ export async function getExpressBackupOverview(): Promise<{
               : String(r.latest_job_created_at),
         latest_success_at: latestSuccessAt,
         latest_success_size: r.latest_success_size == null ? null : num(r.latest_success_size),
+        latest_success_by: backupByClient.get(String(r.client_id)) ?? null,
+        latest_restore_at: restore?.at ?? null,
+        latest_restore_status: restore?.status ?? null,
+        latest_restore_by: restore?.by ?? null,
         status: computeStatus({ enabled, hasConfig, latestJobStatus, latestSuccessAt }),
+        machine_count: num(r.machine_count ?? 0),
       };
     }),
     agentsOnline,
@@ -185,6 +289,7 @@ export type BackupDetail = {
   latest_success: ExpressBackupJob | null;
   jobs: ExpressBackupJob[];
   agents: ExpressBackupAgent[];
+  agent_paths: AgentPath[];
 };
 
 export async function getExpressBackupDetail(clientId: string): Promise<BackupDetail> {
@@ -201,8 +306,10 @@ export async function getExpressBackupDetail(clientId: string): Promise<BackupDe
     where client_id=${clientId}`) as Record<string, unknown>[];
   const config = cfgRows[0] ? toConfig(cfgRows[0]) : null;
 
-  const jobRows = (await sql`select j.*, a.agent_name from express_backup_jobs j
+  const jobRows = (await sql`select j.*, a.agent_name, t.agent_name as target_agent_name
+    from express_backup_jobs j
     left join express_backup_agents a on a.id = j.agent_id
+    left join express_backup_agents t on t.id = j.target_agent_id
     where j.client_id=${clientId} order by j.created_at desc limit 50`) as Record<string, unknown>[];
   const jobs = jobRows.map(toJob);
   const latest = jobRows[0] ? toJob(jobRows[0]) : null;
@@ -214,6 +321,27 @@ export async function getExpressBackupDetail(clientId: string): Promise<BackupDe
   const agents = agentRows.map((r) =>
     toAgent(r, r.client_name == null ? null : String(r.client_name))
   );
+
+  let pathRows: Record<string, unknown>[];
+  try {
+    pathRows = (await sql`select ap.*, a.agent_name, a.machine_name
+      from express_backup_agent_paths ap
+      join express_backup_agents a on a.id = ap.agent_id
+      where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null
+      order by a.agent_name`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_agent_paths")) throw e;
+    pathRows = [];
+  }
+  const agent_paths: AgentPath[] = pathRows.map((r) => ({
+    id: String(r.id),
+    agent_id: String(r.agent_id),
+    agent_name: String(r.agent_name ?? ""),
+    machine_name: String(r.machine_name ?? ""),
+    client_id: String(r.client_id),
+    source_path: String(r.source_path ?? ""),
+    is_primary: Boolean(r.is_primary),
+  }));
 
   return {
     client: { id: String(client.id), name: client.name, tax_id: client.tax_id },
@@ -227,6 +355,7 @@ export async function getExpressBackupDetail(clientId: string): Promise<BackupDe
     latest_success: latestSuccess,
     jobs,
     agents,
+    agent_paths,
   };
 }
 
@@ -237,16 +366,111 @@ export type ConfigForm = {
   enabled: boolean;
 };
 
+function assertWindowsPath(sourcePath: string): void {
+  if (!sourcePath) throw new Error("กรุณาระบุแหล่งข้อมูล (source path)");
+  if (!/^[A-Za-z]:[\\/]/.test(sourcePath) && !sourcePath.startsWith("\\\\")) {
+    throw new Error("source path ต้องเป็นพาธ Windows เช่น D:\\ExpressData\\ABC");
+  }
+}
+
+export type AgentPath = {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  machine_name: string;
+  client_id: string;
+  source_path: string;
+  is_primary: boolean;
+};
+
+/** Per-machine folders for one client (empty = no machine holds it here yet). */
+export async function getAgentPaths(clientId: string): Promise<AgentPath[]> {
+  await requireUser();
+  let rows: Record<string, unknown>[];
+  try {
+    rows = (await sql`select ap.*, a.agent_name, a.machine_name
+      from express_backup_agent_paths ap
+      join express_backup_agents a on a.id = ap.agent_id
+      where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null
+      order by a.agent_name`) as Record<string, unknown>[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_agent_paths")) throw e;
+    return [];
+  }
+  return rows.map((r) => ({
+    id: String(r.id),
+    agent_id: String(r.agent_id),
+    agent_name: String(r.agent_name ?? ""),
+    machine_name: String(r.machine_name ?? ""),
+    client_id: String(r.client_id),
+    source_path: String(r.source_path ?? ""),
+    is_primary: Boolean(r.is_primary),
+  }));
+}
+
+/** Set (or replace) the folder one machine uses for one client. */
+export async function saveAgentPath(
+  agentId: string,
+  clientId: string,
+  sourcePath: string
+): Promise<AgentPath> {
+  await requireUser();
+  const path = sourcePath.trim();
+  assertWindowsPath(path);
+  const agents = (await sql`select id from express_backup_agents
+    where id=${agentId} and status <> 'revoked' and revoked_at is null`) as { id: string }[];
+  if (!agents[0]) throw new Error("ไม่พบเครื่อง");
+  const clients = (await sql`select id from clients where id=${clientId}`) as { id: string }[];
+  if (!clients[0]) throw new Error("ไม่พบลูกค้า");
+  const rows = (await sql`insert into express_backup_agent_paths
+      (agent_id, client_id, source_path, updated_at)
+    values (${agentId}, ${clientId}, ${path}, now())
+    on conflict (agent_id, client_id) do update set
+      source_path = excluded.source_path, updated_at = now()
+    returning *`) as Record<string, unknown>[];
+  const names = (await sql`select agent_name, machine_name from express_backup_agents
+    where id=${agentId}`) as { agent_name: string; machine_name: string }[];
+  return {
+    id: String(rows[0].id),
+    agent_id: agentId,
+    agent_name: names[0]?.agent_name ?? "",
+    machine_name: names[0]?.machine_name ?? "",
+    client_id: clientId,
+    source_path: path,
+    is_primary: Boolean(rows[0].is_primary),
+  };
+}
+
+/** Remove one machine's folder for a client (falls back to client default). */
+export async function deleteAgentPath(agentId: string, clientId: string): Promise<void> {
+  await requireUser();
+  await sql`delete from express_backup_agent_paths
+    where agent_id=${agentId} and client_id=${clientId}`;
+}
+
+/** Mark which machine holds the source of truth (display + restore guidance). */
+export async function setPrimaryAgentPath(
+  agentId: string | null,
+  clientId: string
+): Promise<void> {
+  await requireUser();
+  await sql`update express_backup_agent_paths set is_primary = false, updated_at = now()
+    where client_id=${clientId}`;
+  if (agentId) {
+    const rows = (await sql`update express_backup_agent_paths
+      set is_primary = true, updated_at = now()
+      where agent_id=${agentId} and client_id=${clientId} returning id`) as { id: string }[];
+    if (!rows[0]) throw new Error("กรุณาบันทึกพาธของเครื่องนี้ก่อนตั้งเป็นเครื่องหลัก");
+  }
+}
+
 export async function saveExpressBackupConfig(
   clientId: string,
   form: ConfigForm
 ): Promise<ExpressBackupConfig> {
   await requireUser();
   const sourcePath = form.source_path.trim();
-  if (!sourcePath) throw new Error("กรุณาระบุแหล่งข้อมูล (source path)");
-  if (!/^[A-Za-z]:[\\/]/.test(sourcePath) && !sourcePath.startsWith("\\\\")) {
-    throw new Error("source path ต้องเป็นพาธ Windows เช่น D:\\ExpressData\\ABC");
-  }
+  assertWindowsPath(sourcePath);
   if (!Number.isInteger(form.retention_days) || form.retention_days <= 0) {
     throw new Error("จำนวนวันเก็บข้อมูลต้องมากกว่า 0");
   }
@@ -284,17 +508,67 @@ async function assertCreatable(clientId: string): Promise<void> {
   if (busy[0]) throw new Error("มีงานสำรองข้อมูลที่รออยู่แล้ว");
 }
 
-export async function createManualBackupJob(clientId: string): Promise<{ id: string }> {
+/**
+ * Create one pending job per machine holding this client ("back up both").
+ * Machines with an override row each get a targeted job; when no machine
+ * has a row yet, a single untargeted job preserves legacy behavior.
+ */
+/**
+ * Insert a manual job, tolerating a database where the created_by column
+ * migration has not been applied yet (no 500 for the whole page).
+ */
+async function insertManualJob(
+  clientId: string,
+  targetAgentId: string | null,
+  by: string
+): Promise<{ id: string }[]> {
+  const withAgent = targetAgentId != null;
+  try {
+    return withAgent
+      ? ((await sql`insert into express_backup_jobs
+            (client_id, target_agent_id, status, trigger_type, created_by)
+          values (${clientId}, ${targetAgentId}, 'pending', 'manual', ${by}) returning id`) as {
+          id: string;
+        }[])
+      : ((await sql`insert into express_backup_jobs (client_id, status, trigger_type, created_by)
+          values (${clientId}, 'pending', 'manual', ${by}) returning id`) as { id: string }[]);
+  } catch (e) {
+    if (!isMissingColumn(e, "created_by")) throw e;
+    return withAgent
+      ? ((await sql`insert into express_backup_jobs
+            (client_id, target_agent_id, status, trigger_type)
+          values (${clientId}, ${targetAgentId}, 'pending', 'manual') returning id`) as {
+          id: string;
+        }[])
+      : ((await sql`insert into express_backup_jobs (client_id, status, trigger_type)
+          values (${clientId}, 'pending', 'manual') returning id`) as { id: string }[]);
+  }
+}
+
+export async function createManualBackupJob(clientId: string): Promise<{ ids: string[] }> {
   const user = await requireUser();
   await assertCreatable(clientId);
-  void user;
-  const rows = (await sql`insert into express_backup_jobs (client_id, status, trigger_type)
-    values (${clientId}, 'pending', 'manual') returning id`) as { id: string }[];
-  return { id: String(rows[0].id) };
+  const by = actorEmail(user);
+  const machines = (await sql`select ap.agent_id from express_backup_agent_paths ap
+    join express_backup_agents a on a.id = ap.agent_id
+    where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null`) as {
+    agent_id: string;
+  }[];
+  let rows: { id: string }[] = [];
+  if (machines.length === 0) {
+    rows = await insertManualJob(clientId, null, by);
+  } else {
+    for (const m of machines) {
+      const r = await insertManualJob(clientId, String(m.agent_id), by);
+      rows.push(r[0]);
+    }
+  }
+  return { ids: rows.map((r) => String(r.id)) };
 }
 
 export async function createBackupAllJobs(): Promise<{ created: number; skipped: number }> {
-  await requireUser();
+  const user = await requireUser();
+  const by = actorEmail(user);
   const cfgs = (await sql`select cfg.client_id from express_backup_configs cfg
     join clients c on c.id = cfg.client_id
     where cfg.enabled = true and c.status = 'active'`) as { client_id: string }[];
@@ -309,9 +583,20 @@ export async function createBackupAllJobs(): Promise<{ created: number; skipped:
       skipped++;
       continue;
     }
-    await sql`insert into express_backup_jobs (client_id, status, trigger_type)
-      values (${c.client_id}, 'pending', 'manual')`;
-    created++;
+    const machines = (await sql`select ap.agent_id from express_backup_agent_paths ap
+      join express_backup_agents a on a.id = ap.agent_id
+      where ap.client_id=${c.client_id} and a.status <> 'revoked' and a.revoked_at is null`) as {
+      agent_id: string;
+    }[];
+    if (machines.length === 0) {
+      await insertManualJob(c.client_id, null, by);
+      created++;
+    } else {
+      for (const m of machines) {
+        await insertManualJob(c.client_id, String(m.agent_id), by);
+        created++;
+      }
+    }
   }
   return { created, skipped };
 }
@@ -320,6 +605,26 @@ export async function cancelBackupJob(jobId: string): Promise<void> {
   await requireUser();
   await sql`update express_backup_jobs set status='cancelled', completed_at=now()
     where id=${jobId} and status in ('pending','running')`;
+}
+
+/** Delete a finished job: removes the R2 object (if any) then the DB row. */
+export async function deleteBackupJob(jobId: string): Promise<void> {
+  await requireUser();
+  const rows = (await sql`select id, status, storage_key from express_backup_jobs
+    where id=${jobId}`) as { id: string; status: string; storage_key: string | null }[];
+  const job = rows[0];
+  if (!job) throw new Error("ไม่พบงานสำรองข้อมูล");
+  if (job.status === "pending" || job.status === "running")
+    throw new Error("งานกำลังดำเนินการอยู่ ให้ยกเลิกก่อนลบ");
+  const key = job.storage_key ? String(job.storage_key) : null;
+  if (key) {
+    if (key.includes("..") || !key.startsWith("express-backups/"))
+      throw new Error("คีย์ไฟล์ไม่ถูกต้อง");
+    const { r2, R2_BUCKET } = await import("@/lib/r2");
+    const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+  }
+  await sql`delete from express_backup_jobs where id=${jobId}`;
 }
 
 export async function getBackupJob(jobId: string): Promise<ExpressBackupJob> {
@@ -429,4 +734,147 @@ export async function issueAgentSecret(agentId: string): Promise<{ secret: strin
   }[];
   if (!rows[0]) throw new Error("ไม่พบเครื่อง");
   return { secret: `${agentId}.${secret}` };
+}
+
+// ---------------------------------------------------------------------------
+// Human-gated restore (export to another machine).
+// Two human gates: approve (request → agent may download/verify/stage) and
+// confirm (staged → agent may .bak + place files). The agent can never place
+// files without both. Every transition is enforced in the UPDATE itself.
+// ---------------------------------------------------------------------------
+
+function toRestore(r: Record<string, unknown>): ExpressBackupRestore {
+  return {
+    id: String(r.id),
+    job_id: String(r.job_id),
+    client_id: String(r.client_id),
+    target_agent_id: r.target_agent_id == null ? null : String(r.target_agent_id),
+    target_agent_name: r.target_agent_name == null ? null : String(r.target_agent_name),
+    target_path: String(r.target_path ?? ""),
+    status: String(r.status),
+    requested_by: r.requested_by == null ? null : String(r.requested_by),
+    approved_by: r.approved_by == null ? null : String(r.approved_by),
+    confirmed_by: r.confirmed_by == null ? null : String(r.confirmed_by),
+    staged_file_count: r.staged_file_count == null ? null : num(r.staged_file_count),
+    bak_path: r.bak_path == null ? null : String(r.bak_path),
+    error_code: r.error_code == null ? null : String(r.error_code),
+    error_message: r.error_message == null ? null : String(r.error_message),
+    created_at: str(r.created_at),
+    updated_at: str(r.updated_at),
+    job_file_name: r.job_file_name == null ? null : String(r.job_file_name),
+    job_checksum: r.job_checksum == null ? null : String(r.job_checksum),
+    job_backup_size: r.job_backup_size == null ? null : num(r.job_backup_size),
+  };
+}
+
+/** Restore requests for one client, newest first (open + recent terminal). */
+export async function getRestores(clientId: string): Promise<ExpressBackupRestore[]> {
+  await requireUser();
+  let rows: Record<string, unknown>[];
+  try {
+    rows = (await sql`select r.*, a.agent_name as target_agent_name,
+        j.file_name as job_file_name, j.checksum as job_checksum,
+        j.backup_size_bytes as job_backup_size
+      from express_backup_restores r
+      left join express_backup_agents a on a.id = r.target_agent_id
+      left join express_backup_jobs j on j.id = r.job_id
+      where r.client_id=${clientId} order by r.created_at desc limit 20`) as Record<
+      string,
+      unknown
+    >[];
+  } catch (e) {
+    if (!isMissingTable(e, "express_backup_restores")) throw e;
+    return [];
+  }
+  return rows.map(toRestore);
+}
+
+function actorEmail(u: { email?: string | null; id?: string } | null): string {
+  if (!u) return "unknown";
+  return u.email ?? u.id ?? "unknown";
+}
+
+/** Gate 0 — request: pick a success backup + target machine + target folder. */
+export async function requestRestore(
+  jobId: string,
+  targetAgentId: string,
+  targetPath: string
+): Promise<ExpressBackupRestore> {
+  const user = await requireUser();
+  const path = targetPath.trim();
+  assertWindowsPath(path);
+  const jobs = (await sql`select id, client_id, status, storage_key from express_backup_jobs
+    where id=${jobId}`) as {
+    id: string;
+    client_id: string;
+    status: string;
+    storage_key: string | null;
+  }[];
+  const job = jobs[0];
+  if (!job) throw new Error("ไม่พบงานสำรองข้อมูล");
+  if (job.status !== "success") throw new Error("ส่งออกได้เฉพาะงานที่สำเร็จแล้ว");
+  const key = job.storage_key ? String(job.storage_key) : "";
+  if (!key || key.includes("..") || !key.startsWith("express-backups/")) {
+    throw new Error("ไฟล์สำรองนี้ไม่มีคีย์ที่ถูกต้อง");
+  }
+  const agents = (await sql`select id from express_backup_agents
+    where id=${targetAgentId} and status <> 'revoked' and revoked_at is null`) as {
+    id: string;
+  }[];
+  if (!agents[0]) throw new Error("ไม่พบเครื่องปลายทาง");
+  const dup = (await sql`select id from express_backup_restores
+    where job_id=${jobId} and target_agent_id=${targetAgentId}
+      and status in ('pending','approved','downloading','staged','confirmed')
+    limit 1`) as { id: string }[];
+  if (dup[0]) throw new Error("มีคำขอส่งออกที่ยังไม่เสร็จสำหรับงานนี้กับเครื่องนี้แล้ว");
+  const rows = (await sql`insert into express_backup_restores
+      (job_id, client_id, target_agent_id, target_path, status, requested_by)
+    values (${jobId}, ${String(job.client_id)}, ${targetAgentId}, ${path}, 'pending', ${actorEmail(user)})
+    returning *`) as Record<string, unknown>[];
+  const full = (await sql`select r.*, a.agent_name as target_agent_name,
+      j.file_name as job_file_name, j.checksum as job_checksum,
+      j.backup_size_bytes as job_backup_size
+    from express_backup_restores r
+    left join express_backup_agents a on a.id = r.target_agent_id
+    left join express_backup_jobs j on j.id = r.job_id
+    where r.id=${String(rows[0].id)}`) as Record<string, unknown>[];
+  return toRestore(full[0]);
+}
+
+/** Gate 1 — approve: details verified by human; agent may download/verify/stage. */
+export async function approveRestore(id: string): Promise<void> {
+  const user = await requireUser();
+  const rows = (await sql`update express_backup_restores
+    set status='approved', approved_by=${actorEmail(user)}, updated_at=now()
+    where id=${id} and status='pending' returning id`) as { id: string }[];
+  if (!rows[0]) throw new Error("คำขอนี้ไม่อยู่ในสถานะรออนุมัติแล้ว");
+}
+
+/** Reject a pending request (terminal, nothing runs). */
+export async function rejectRestore(id: string): Promise<void> {
+  await requireUser();
+  const rows = (await sql`update express_backup_restores
+    set status='rejected', updated_at=now()
+    where id=${id} and status='pending' returning id`) as { id: string }[];
+  if (!rows[0]) throw new Error("คำขอนี้ไม่อยู่ในสถานะรออนุมัติแล้ว");
+}
+
+/** Gate 2 — confirm: staged copy verified; agent may .bak + place files. */
+export async function confirmRestore(id: string): Promise<void> {
+  const user = await requireUser();
+  const rows = (await sql`update express_backup_restores
+    set status='confirmed', confirmed_by=${actorEmail(user)}, updated_at=now()
+    where id=${id} and status='staged' returning id`) as { id: string }[];
+  if (!rows[0]) throw new Error("รายการนี้ยังไม่พร้อมยืนยัน (ต้องอยู่ในสถานะเตรียมไฟล์แล้ว)");
+}
+
+/** Cancel an unfinished restore (nothing further runs; staged files stay local). */
+export async function cancelRestore(id: string): Promise<void> {
+  await requireUser();
+  const rows = (await sql`update express_backup_restores
+    set status='cancelled', updated_at=now()
+    where id=${id}
+      and status in ('pending','approved','downloading','staged','confirmed')
+    returning id`) as { id: string }[];
+  if (!rows[0]) throw new Error("รายการนี้ยกเลิกไม่ได้ (เสร็จหรือล้มเหลวไปแล้ว)");
 }

@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "crypto";
 import { sql } from "@/lib/db";
 import type { ExpressBackupStatus } from "./express-backup-ui";
 
-export type { ExpressBackupStatus } from "./express-backup-ui";
+export type { ExpressBackupRestore, ExpressBackupStatus } from "./express-backup-ui";
 export { BACKUP_ERROR_TH, STATUS_TH, thaiError } from "./express-backup-ui";
 
 export type ExpressBackupConfig = {
@@ -25,6 +25,8 @@ export type ExpressBackupJob = {
   id: string;
   client_id: string;
   agent_id: string | null;
+  target_agent_id: string | null;
+  source_path_used: string | null;
   status: string;
   trigger_type: string;
   started_at: string | null;
@@ -37,8 +39,10 @@ export type ExpressBackupJob = {
   checksum: string | null;
   error_code: string | null;
   error_message: string | null;
+  created_by: string | null;
   created_at: string;
   agent_name?: string | null;
+  target_agent_name?: string | null;
 };
 
 export type ExpressBackupAgent = {

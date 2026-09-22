@@ -2,10 +2,13 @@ import {
   PDFDocument,
   PDFPage,
   rgb,
+  setTextRenderingMode,
+  TextRenderingMode,
   type Color,
+  type PDFFont,
   type PDFImage,
 } from "pdf-lib";
-import { thaiBahtText } from "@/lib/thai-baht-text";
+import fontkit from "@pdf-lib/fontkit";
 
 const THAI_MONTHS_FULL = [
   "มกราคม",
@@ -44,12 +47,15 @@ export const ATTACHMENT_KIND_LABELS: Record<string, string> = {
 };
 
 export type ReportBankAccount = {
+  id?: string;
   label: string;
   bank_name: string;
   account_no: string;
   account_name: string;
   promptpay_id: string | null;
   qr_bytes?: ArrayBuffer | null;
+  logo_bytes?: ArrayBuffer | null;
+  logo_bottom_bytes?: ArrayBuffer | null;
 };
 
 export type ReportAttachment = {
@@ -62,6 +68,12 @@ export type ReportAttachment = {
   covered_filings?: string[];
 };
 
+export type ReportDocument = {
+  file_name: string;
+  mime_type: string | null;
+  bytes: ArrayBuffer;
+};
+
 export type ReportFiling = {
   id: string;
   form_code: string;
@@ -69,6 +81,7 @@ export type ReportFiling = {
   amount: number;
   due_date: string | null;
   remark?: string | null;
+  payment_method?: string | null;
   bank_account_id?: string | null;
   bank_account?: ReportBankAccount | null;
   attachments: ReportAttachment[];
@@ -87,13 +100,32 @@ const PAGE_H = 841.89;
 const M = 48;
 const CONTENT_W = PAGE_W - M * 2;
 
-const COL_DUE_W = 92;
-const COL_AMT_W = 85;
+
 
 const COLOR_TEXT = rgb(0.09, 0.09, 0.11);
 const COLOR_MUTED = rgb(0.45, 0.45, 0.5);
 const COLOR_BORDER = rgb(0.82, 0.82, 0.85);
 const COLOR_HEADER_BG = rgb(0.93, 0.94, 0.96);
+const COLOR_WHITE = rgb(1, 1, 1);
+// Monochrome palette for the modern (print-friendly) cover.
+const COLOR_INK = rgb(0.14, 0.14, 0.16);
+const COLOR_PANEL = rgb(0.97, 0.97, 0.97);
+const COLOR_PANEL_ALT = rgb(0.955, 0.955, 0.96);
+const COLOR_ZEBRA = rgb(0.95, 0.95, 0.95);
+
+export type CoverStyle = "modern" | "classic";
+
+function resolveCoverStyle(opts: BuildOptions): CoverStyle {
+  const env = process.env.NEXT_PUBLIC_REPORT_COVER_STYLE;
+  if (env === "classic" || env === "modern") return env;
+  return opts.coverStyle === "classic" ? "classic" : "modern";
+}
+
+function todayThaiDate(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear() + 543}`;
+}
 
 function fmtMoney(n: number): string {
   return Number(n ?? 0).toLocaleString("en-US", {
@@ -119,12 +151,6 @@ function periodToThai(periodLabel: string): string {
   return `${THAI_MONTHS_FULL[m - 1]} ${y + 543}`;
 }
 
-function nowThai(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear() + 543} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 async function loadFont(url: string): Promise<ArrayBuffer> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`โหลดฟอนต์ไม่สำเร็จ: ${url}`);
@@ -140,18 +166,42 @@ function cssColor(c: Color): string {
 }
 
 let canvasFontsLoaded = false;
+/** Raw Sarabun bytes, kept for embedding a selectable text layer in the PDF. */
+let pdfFontBuffers: { regular: ArrayBuffer; bold: ArrayBuffer } | null = null;
+
 async function ensureCanvasFonts(): Promise<void> {
   if (canvasFontsLoaded) return;
   const [regularBuf, boldBuf] = await Promise.all([
     loadFont("/fonts/Sarabun-Regular.ttf"),
     loadFont("/fonts/Sarabun-Bold.ttf"),
   ]);
-  const regular = new FontFace("Sarabun", regularBuf);
-  const bold = new FontFace("Sarabun", boldBuf, { weight: "bold" });
+  pdfFontBuffers = { regular: regularBuf, bold: boldBuf };
+  // Pass copies: FontFace may detach its input, but we still need the original
+  // bytes later to embed the PDF text layer.
+  const regular = new FontFace("Sarabun", regularBuf.slice(0));
+  const bold = new FontFace("Sarabun", boldBuf.slice(0), { weight: "bold" });
   await Promise.all([regular.load(), bold.load()]);
   document.fonts.add(regular);
   document.fonts.add(bold);
+  try {
+    await Promise.all([
+      document.fonts.load('16px Sarabun'),
+      document.fonts.load('bold 16px Sarabun'),
+    ]);
+    await document.fonts.ready;
+  } catch {
+    // ignore — canvas falls back to system Thai font
+  }
   canvasFontsLoaded = true;
+}
+
+function splitGraphemes(s: string): string[] {
+  try {
+    const seg = new Intl.Segmenter("th", { granularity: "grapheme" });
+    return Array.from(seg.segment(s), (x) => x.segment);
+  } catch {
+    return Array.from(s);
+  }
 }
 
 function wrapText(
@@ -159,6 +209,12 @@ function wrapText(
   measure: (s: string) => number,
   maxWidth: number
 ): string[] {
+  // Explicit newlines force a line break (e.g. label-style stacked values).
+  if (text.includes("\n")) {
+    return text
+      .split("\n")
+      .flatMap((p) => (p.trim() ? wrapText(p, measure, maxWidth) : [""]));
+  }
   const out: string[] = [];
   let line = "";
   const flush = () => {
@@ -177,7 +233,8 @@ function wrapText(
       }
     } else {
       flush();
-      for (const ch of Array.from(word)) {
+      // Grapheme-safe split: never detach สระบน/ล่าง + วรรณยุกต์ from base consonant
+      for (const ch of splitGraphemes(word)) {
         const candidate = line + ch;
         if (line && measure(candidate) > maxWidth) {
           out.push(line);
@@ -206,7 +263,6 @@ class ReportRenderer {
   doc!: PDFDocument;
   page!: PDFPage;
   y!: number;
-  footerDate: string;
   sim = false;
   pageIndex = 0;
   slipPageByAtt = new WeakMap<ReportAttachment, number>();
@@ -218,15 +274,27 @@ class ReportRenderer {
   private canvas = document.createElement("canvas");
   private ctx = this.canvas.getContext("2d")!;
   private textImageCache = new Map<string, PDFImage>();
-
-  constructor() {
-    this.footerDate = nowThai();
-  }
+  private bankLogoCache = new Map<ArrayBuffer, PDFImage>();
+  private pdfFontRegular: PDFFont | null = null;
+  private pdfFontBold: PDFFont | null = null;
 
   async init() {
     this.doc = await PDFDocument.create();
     this.textImageCache.clear();
+    this.bankLogoCache.clear();
     await ensureCanvasFonts();
+    // Embed the real font only for the final pass. It backs an invisible text
+    // layer so amounts/bank numbers can be selected and copied, while the
+    // canvas image keeps Thai shaping pixel-perfect.
+    if (!this.sim && pdfFontBuffers) {
+      this.doc.registerFontkit(fontkit);
+      this.pdfFontRegular = await this.doc.embedFont(pdfFontBuffers.regular, {
+        subset: true,
+      });
+      this.pdfFontBold = await this.doc.embedFont(pdfFontBuffers.bold, {
+        subset: true,
+      });
+    }
     this.pageIndex = -1;
     this.newPage();
   }
@@ -259,6 +327,24 @@ class ReportRenderer {
     return this.ctx.measureText(value).width / 2;
   }
 
+  /** Embed (and cache) a bank logo PNG/JPG. Returns null for unsupported bytes. */
+  async embedBankLogo(bytes: ArrayBuffer): Promise<PDFImage | null> {
+    const cached = this.bankLogoCache.get(bytes);
+    if (cached) return cached;
+    const view = new Uint8Array(bytes);
+    try {
+      const img = isPng(view)
+        ? await this.doc.embedPng(bytes)
+        : isJpeg(view)
+          ? await this.doc.embedJpg(bytes)
+          : null;
+      if (img) this.bankLogoCache.set(bytes, img);
+      return img;
+    } catch {
+      return null;
+    }
+  }
+
   async drawTextCanvas(
     value: string,
     x: number,
@@ -285,7 +371,8 @@ class ReportRenderer {
     if (!img) {
       const pad = 2;
       const canvasW = Math.ceil(textW) + pad * 2;
-      const canvasH = Math.ceil(size * scale * 1.4);
+      // Taller box: ascent 1.3 + descent 0.6 so Thai สระบน/ล่าง never clips
+      const canvasH = Math.ceil(size * scale * 1.9);
 
       this.canvas.width = canvasW;
       this.canvas.height = canvasH;
@@ -293,7 +380,7 @@ class ReportRenderer {
       this.ctx.font = `${weight} ${size * scale}px Sarabun`;
       this.ctx.fillStyle = cssColor(color);
       this.ctx.textBaseline = "alphabetic";
-      this.ctx.fillText(value, pad, size * scale);
+      this.ctx.fillText(value, pad, size * scale * 1.3);
 
       const dataUrl = this.canvas.toDataURL("image/png");
       const bytes = Uint8Array.from(atob(dataUrl.split(",")[1]), (c) =>
@@ -303,9 +390,25 @@ class ReportRenderer {
       this.textImageCache.set(cacheKey, img);
     }
 
-    const drawH = Math.ceil(size * scale * 1.4) / scale;
-    const imgY = baselineY - size * 0.4;
+    const drawH = Math.ceil(size * scale * 1.9) / scale;
+    const imgY = baselineY - size * 0.6;
     page.drawImage(img, { x, y: imgY, width: drawW, height: drawH });
+
+    // Invisible, selectable text layer on the same baseline as the image so
+    // the client can copy amounts and bank account numbers from the PDF.
+    // Uses text render mode 3 (Invisible) — the same technique OCR text
+    // layers use — which stays selectable in every PDF viewer.
+    const font = bold ? this.pdfFontBold : this.pdfFontRegular;
+    if (font) {
+      try {
+        page.pushOperators(setTextRenderingMode(TextRenderingMode.Invisible));
+        page.drawText(value, { x, y: baselineY, size, font, color });
+      } catch {
+        // Glyph missing from the font — keep the visual image only.
+      } finally {
+        page.pushOperators(setTextRenderingMode(TextRenderingMode.Fill));
+      }
+    }
 
     return drawW;
   }
@@ -324,7 +427,9 @@ class ReportRenderer {
   ): Promise<void> {
     this.realizePendingPage();
     const size = opts.size ?? 10;
-    const lineHeight = opts.lineHeight ?? size * 1.45;
+    // Canvas glyph box is ~1.0x above + 0.6x below baseline — keep >=1.7x
+    // leading so Thai สระบน/ล่าง never collides with adjacent lines.
+    const lineHeight = opts.lineHeight ?? size * 1.7;
     const w = this.measureText(value, size, opts.bold ?? false);
     let x = opts.x ?? M;
     if (opts.align === "center" && opts.width) {
@@ -356,7 +461,7 @@ class ReportRenderer {
     const measure = (s: string) =>
       this.measureText(s, size, opts.bold ?? false);
     const lines = wrapText(value, measure, opts.width);
-    const lineHeight = size * 1.4;
+    const lineHeight = size * 1.7;
     for (const line of lines) {
       await this.text(line, {
         x: opts.x,
@@ -381,33 +486,17 @@ class ReportRenderer {
     this.y -= 10;
   }
 
-  async drawFooters() {
+  /**
+   * Draw how many pages the document has, once, on the cover only.
+   * Attached evidence/document pages are intentionally left unmarked.
+   */
+  async drawCoverPageCount() {
     const pages = this.doc.getPages();
-    for (let i = 0; i < pages.length; i++) {
-      const p = pages[i];
-      p.drawLine({
-        start: { x: M, y: M - 14 },
-        end: { x: PAGE_W - M, y: M - 14 },
-        thickness: 0.5,
-        color: COLOR_BORDER,
-      });
-      await this.drawTextCanvas(
-        `ออกเอกสาร ${this.footerDate}`,
-        M,
-        M - 26,
-        { size: 8, color: COLOR_MUTED },
-        p
-      );
-      const label = `หน้า ${i + 1}/${pages.length}`;
-      const w = this.measureText(label, 8, false);
-      await this.drawTextCanvas(
-        label,
-        PAGE_W - M - w,
-        M - 26,
-        { size: 8, color: COLOR_MUTED },
-        p
-      );
-    }
+    if (!pages.length) return;
+    const label = `เอกสารนี้มีทั้งหมด ${pages.length} หน้า`;
+    // Bottom-left so it never collides with the classic cover watermark
+    // (bottom-right). Only the cover is marked.
+    await this.drawTextCanvas(label, M, M - 6, { size: 9, color: COLOR_MUTED }, pages[0]);
   }
 }
 
@@ -560,7 +649,7 @@ function isPdfBytes(bytes: Uint8Array): boolean {
   );
 }
 
-async function drawCover(
+async function drawCoverClassic(
   r: ReportRenderer,
   opts: BuildOptions,
   methodOf: (f: SectionFiling) => string
@@ -599,23 +688,22 @@ async function drawCover(
   r.y -= 10;
   await r.text("สรุปรายการ", { size: 12, bold: true });
 
-  const rowPadY = 5;
-  const headerH = 22;
-  const fontSize = 9;
-  const lh = fontSize * 1.35;
+  const rowPadY = 7;
+  const headerH = 24;
+  const fontSize = 9.5;
+  const lh = fontSize * 1.7;
 
+  // 5 cols: ลำดับ | รายการ | รายละเอียด | จำนวนเงิน (ขวา) | วิธีชำระ
   const idxX = M;
-  const idxW = 22;
+  const idxW = 28;
   const itemX = idxX + idxW;
-  const itemW = 186;
-  const dueX = itemX + itemW;
-  const dueW = 74;
-  const methX = dueX + dueW;
-  const methW = 92;
-  const amtX = methX + methW;
-  const amtW = 62;
-  const remX = amtX + amtW;
-  const remW = CONTENT_W - (remX - M);
+  const itemW = 90;
+  const amtW = 90;
+  const methW = 143;
+  const detW = CONTENT_W - idxW - itemW - amtW - methW;
+  const detX = itemX + itemW;
+  const amtX = detX + detW;
+  const methX = amtX + amtW;
   const tableRight = M + CONTENT_W;
 
   const drawTableHeader = async () => {
@@ -628,27 +716,27 @@ async function drawCover(
         height: headerH,
         color: COLOR_HEADER_BG,
       });
-    const baseline = r.y - 15;
+    const baseline = r.y - 16;
     await r.drawTextCanvas("ลำดับ", idxX + 6, baseline, {
-      size: 9,
+      size: 9.5,
       bold: true,
     });
     await r.drawTextCanvas("รายการ", itemX + 6, baseline, {
-      size: 9,
+      size: 9.5,
       bold: true,
     });
-    await r.drawTextCanvas("กำหนดชำระ", dueX + 6, baseline, {
-      size: 9,
+    await r.drawTextCanvas("รายละเอียด", detX + 6, baseline, {
+      size: 9.5,
       bold: true,
     });
-    await r.drawTextCanvas("ชำระผ่าน", methX + 6, baseline, {
-      size: 9,
-      bold: true,
-    });
-    const amtLabel = "จำนวนเงิน";
-    const aW = r.measureText(amtLabel, 9, true);
+    const amtLabel = "จำนวนเงิน (บาท)";
+    const aW = r.measureText(amtLabel, 9.5, true);
     await r.drawTextCanvas(amtLabel, amtX + amtW - 6 - aW, baseline, {
-      size: 9,
+      size: 9.5,
+      bold: true,
+    });
+    await r.drawTextCanvas("วิธีชำระ", methX + 6, baseline, {
+      size: 9.5,
       bold: true,
     });
     r.y -= headerH;
@@ -657,22 +745,16 @@ async function drawCover(
   await drawTableHeader();
 
   const filings = opts.filings as SectionFiling[];
-  let total = 0;
 
   for (let i = 0; i < filings.length; i++) {
     const f = filings[i];
-    total += Number(f.amount ?? 0);
-    const itemText =
-      [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
-    const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 10);
-    const methText = methodOf(f);
-    const linesMeth = wrapText(methText, (s) => r.measureText(s, fontSize, false), methW - 10);
-    const remText = f.remark?.trim() || "";
-    const linesRem = remText
-      ? wrapText(remText, (s) => r.measureText(s, fontSize, false), remW - 8)
-      : [""];
-    const maxLines = Math.max(linesItem.length, linesMeth.length, linesRem.length);
-    const rowH = Math.max(maxLines * lh + rowPadY * 2, 20);
+    const itemText = f.form_code?.trim() || "-";
+    const detText = f.description?.trim() || "-";
+    const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 12);
+    const linesDet = wrapText(detText, (s) => r.measureText(s, fontSize, false), detW - 12);
+    const methLines = wrapText(methodOf(f), (s) => r.measureText(s, fontSize, false), methW - 12);
+    const maxLines = Math.max(linesItem.length, linesDet.length, methLines.length);
+    const rowH = Math.max(maxLines * lh + rowPadY * 2, 24);
 
     if (r.y - rowH < M + 60) {
       await r.hr();
@@ -688,11 +770,8 @@ async function drawCover(
         size: fontSize,
       });
     }
-    await r.drawTextCanvas(formatDateTh(f.due_date), dueX + 6, top - 14, {
-      size: fontSize,
-    });
-    for (let li = 0; li < linesMeth.length; li++) {
-      await r.drawTextCanvas(linesMeth[li], methX + 6, top - 14 - li * lh, {
+    for (let li = 0; li < linesDet.length; li++) {
+      await r.drawTextCanvas(linesDet[li], detX + 6, top - 14 - li * lh, {
         size: fontSize,
       });
     }
@@ -701,8 +780,8 @@ async function drawCover(
     await r.drawTextCanvas(amtText, amtX + amtW - 6 - amtTw, top - 14, {
       size: fontSize,
     });
-    for (let li = 0; li < linesRem.length; li++) {
-      await r.drawTextCanvas(linesRem[li], remX + 4, top - 14 - li * lh, {
+    for (let li = 0; li < methLines.length; li++) {
+      await r.drawTextCanvas(methLines[li], methX + 6, top - 14 - li * lh, {
         size: fontSize,
       });
     }
@@ -715,181 +794,350 @@ async function drawCover(
       });
     r.y -= rowH;
   }
-
-  const totalRowH = 26;
-  r.y -= 4;
-  r.ensureSpace(totalRowH + 40);
-  const totalLabel = "ยอดรวมทั้งสิ้น";
-  await r.drawTextCanvas(totalLabel, dueX + 6, r.y - 15, {
-    size: 11,
-    bold: true,
-  });
-  const totalText = fmtMoney(total);
-  const totalTextW = r.measureText(totalText, 11, true);
-  await r.drawTextCanvas(totalText, amtX + amtW - 6 - totalTextW, r.y - 15, {
-    size: 11,
-    bold: true,
-  });
-  r.y -= totalRowH;
-
-  await r.text(`(${thaiBahtText(total)})`, { size: 10, color: COLOR_MUTED });
 }
 
-async function drawPaymentSection(
+async function drawCoverModern(
   r: ReportRenderer,
-  filings: SectionFiling[]
-): Promise<void> {
-  const rows = filings.filter(
-    (f) => f.attachments.some((a) => a.kind === "qr") || Boolean(f.bank_account)
-  );
-  if (!rows.length) return;
+  opts: BuildOptions,
+  methodOf: (f: SectionFiling) => string
+) {
+  const periodTh = periodToThai(opts.periodLabel);
+  const firmName = opts.firmName?.trim() || "Taxwork";
+  const reportNo =
+    opts.reportNo?.trim() || `TW-${opts.periodLabel.replace(/[^0-9]/g, "")}`;
+  const reportDate = opts.issueDate?.trim() || todayThaiDate();
+  const preparedBy = opts.preparedBy?.trim() || firmName;
+  const reportLabel = opts.reportLabel?.trim() || "";
 
-  const headerH = 20;
-  const rowPadY = 5;
-  const qrSize = 54;
-  const colItemW = 258;
-  const colXDues = M + colItemW;
-  const colXAmt = colXDues + COL_DUE_W;
-  const colXQr = colXAmt + COL_AMT_W;
-  const qrColW = CONTENT_W - (colXQr - M);
-  const tableRight = M + CONTENT_W;
-
-  const itemLinesOf = (f: ReportFiling): string[] => {
-    const base =
-      [f.form_code, f.description].filter(Boolean).join(" – ") || "-";
-    const lines = wrapText(
-      base,
-      (s) => r.measureText(s, 9.5, false),
-      colItemW - 12
-    );
-    if (!f.attachments.some((a) => a.kind === "qr") && f.bank_account) {
-      lines.push(
-        `โอนเข้า ${f.bank_account.bank_name} ${f.bank_account.account_no}`
-      );
+  // ---- Letterhead: centered logo on a white band ----
+  const letterheadTop = PAGE_H - 30;
+  let letterheadBottom = letterheadTop;
+  if (opts.logo?.bytes) {
+    const view = new Uint8Array(opts.logo.bytes);
+    try {
+      const img = isPng(view)
+        ? await r.doc.embedPng(opts.logo.bytes)
+        : isJpeg(view)
+          ? await r.doc.embedJpg(opts.logo.bytes)
+          : null;
+      if (img) {
+        const maxLogoH = 57.6;
+        const maxLogoW = 176;
+        let lw = maxLogoW;
+        let lh = (img.height / img.width) * lw;
+        if (lh > maxLogoH) {
+          lh = maxLogoH;
+          lw = (img.width / img.height) * lh;
+        }
+        if (!r.sim)
+          r.page.drawImage(img, {
+            x: (PAGE_W - lw) / 2,
+            y: letterheadTop - lh,
+            width: lw,
+            height: lh,
+          });
+        letterheadBottom = letterheadTop - lh;
+      }
+    } catch {
+      // ignore invalid logo
     }
-    return lines;
-  };
-  const rowHasQr = (f: ReportFiling): boolean =>
-    f.attachments.some((a) => a.kind === "qr") ||
-    Boolean(f.bank_account?.qr_bytes);
-  const rowHOf = (f: ReportFiling): number => {
-    const hasQr = rowHasQr(f);
-    const linesH = itemLinesOf(f).length * 9.5 * 1.4 + rowPadY * 2;
-    return Math.max(hasQr ? qrSize + rowPadY * 2 : 20, linesH);
-  };
+  }
 
-  r.ensureSpace(headerH + 80);
-  r.y -= 6;
-  await r.text("ข้อมูลการชำระ", { size: 12, bold: true });
-  r.y -= 4;
+  r.y = letterheadBottom - 14;
+  if (!r.sim)
+    r.page.drawLine({
+      start: { x: M, y: r.y },
+      end: { x: PAGE_W - M, y: r.y },
+      thickness: 1,
+      color: COLOR_INK,
+    });
+  r.y -= 20;
 
-  const drawHeader = async () => {
-    r.ensureSpace(headerH + 70);
+  // ---- Title (centered) ----
+  const titleText = `รายงานงานภาษีประจำเดือน ${periodTh}${
+    reportLabel ? ` (${reportLabel})` : ""
+  }`;
+  await r.text(titleText, {
+    size: 15,
+    bold: true,
+    align: "center",
+    width: CONTENT_W,
+  });
+  r.y -= 5;
+  const underlineW = 88;
+  if (!r.sim)
+    r.page.drawRectangle({
+      x: M + (CONTENT_W - underlineW) / 2,
+      y: r.y - 3,
+      width: underlineW,
+      height: 2.5,
+      color: COLOR_INK,
+    });
+  r.y -= 18;
+
+  // ---- Client card ----
+  const contactLine = [opts.client.phone, opts.client.email]
+    .filter(Boolean)
+    .join("  ·  ");
+  const cardPadX = 14;
+  const cardPadY = 10;
+  const nameH = 15;
+  const metaLineH = 13.5;
+  const addrLines = opts.client.address
+    ? wrapText(
+        opts.client.address,
+        (s) => r.measureText(s, 9.5, false),
+        CONTENT_W - cardPadX * 2
+      )
+    : [];
+  const cardH =
+    cardPadY * 2 +
+    nameH +
+    (opts.client.tax_id ? metaLineH : 0) +
+    addrLines.length * metaLineH +
+    (contactLine ? metaLineH : 0);
+  const cardTop = r.y;
+  if (!r.sim)
     r.page.drawRectangle({
       x: M,
-      y: r.y - headerH,
+      y: cardTop - cardH,
       width: CONTENT_W,
-      height: headerH,
-      color: COLOR_HEADER_BG,
+      height: cardH,
+      color: COLOR_PANEL,
+      borderColor: COLOR_BORDER,
+      borderWidth: 0.8,
     });
+  let cy = cardTop - cardPadY - 10.5;
+  await r.drawTextCanvas(opts.client.name, M + cardPadX, cy, {
+    size: 12,
+    bold: true,
+  });
+  cy -= nameH;
+  if (opts.client.tax_id) {
+    await r.drawTextCanvas(
+      `เลขประจำตัวผู้เสียภาษี: ${opts.client.tax_id}`,
+      M + cardPadX,
+      cy,
+      { size: 9.5, color: COLOR_MUTED }
+    );
+    cy -= metaLineH;
+  }
+  for (const line of addrLines) {
+    await r.drawTextCanvas(line, M + cardPadX, cy, { size: 9.5 });
+    cy -= metaLineH;
+  }
+  if (contactLine) {
+    await r.drawTextCanvas(contactLine, M + cardPadX, cy, {
+      size: 9.5,
+      color: COLOR_MUTED,
+    });
+  }
+  r.y = cardTop - cardH - 10;
+
+  // ---- Meta grid (single row, 4 columns) ----
+  const metaItems: [string, string][] = [
+    ["เลขที่รายงาน", reportNo],
+    [reportLabel ? "ครั้งที่" : "รอบงวด", reportLabel || periodTh],
+    ["วันที่ออกเอกสาร", reportDate],
+    ["ผู้จัดทำ", preparedBy],
+  ];
+  const colW = CONTENT_W / 4;
+  const rowH = 30;
+  const gridH = rowH + 6;
+  const gridTop = r.y;
+  const fitMeta = (s: string, maxW: number): string => {
+    if (r.measureText(s, 9.5, true) <= maxW) return s;
+    let out = "";
+    for (const ch of Array.from(s)) {
+      if (r.measureText(out + ch + "…", 9.5, true) > maxW) break;
+      out += ch;
+    }
+    return out + "…";
+  };
+  if (!r.sim)
+    r.page.drawRectangle({
+      x: M,
+      y: gridTop - gridH,
+      width: CONTENT_W,
+      height: gridH,
+      color: COLOR_PANEL_ALT,
+      borderColor: COLOR_BORDER,
+      borderWidth: 0.6,
+    });
+  for (let i = 0; i < metaItems.length; i++) {
+    const x = M + i * colW + 10;
+    const value = fitMeta(metaItems[i][1], colW - 20);
+    await r.drawTextCanvas(metaItems[i][0], x, gridTop - 11, {
+      size: 8,
+      color: COLOR_MUTED,
+    });
+    await r.drawTextCanvas(value, x, gridTop - 23, {
+      size: 9.5,
+      bold: true,
+    });
+    if (!r.sim && i > 0)
+      r.page.drawLine({
+        start: { x: M + i * colW, y: gridTop - 6 },
+        end: { x: M + i * colW, y: gridTop - gridH + 6 },
+        thickness: 0.5,
+        color: COLOR_BORDER,
+      });
+  }
+  r.y = gridTop - gridH - 12;
+
+  // ---- Summary heading ----
+  await r.text("สรุปรายการ", { size: 11, bold: true });
+  r.y -= 3;
+
+  const rowPadY = 6;
+  const headerH = 22;
+  const fontSize = 9.5;
+  const lh = fontSize * 1.6;
+
+  // 5 cols: ลำดับ | รายการ | รายละเอียด | จำนวนเงิน (ขวา) | วิธีชำระ
+  const idxX = M;
+  const idxW = 28;
+  const itemX = idxX + idxW;
+  const itemW = 80;
+  const amtW = 90;
+  const methW = 160;
+  const detW = CONTENT_W - idxW - itemW - amtW - methW;
+  const detX = itemX + itemW;
+  const amtX = detX + detW;
+  const methX = amtX + amtW;
+  const tableRight = M + CONTENT_W;
+
+  const drawTableHeader = async () => {
+    r.ensureSpace(headerH + 24);
+    if (!r.sim)
+      r.page.drawRectangle({
+        x: M,
+        y: r.y - headerH,
+        width: CONTENT_W,
+        height: headerH,
+        color: COLOR_INK,
+      });
     const baseline = r.y - 14;
-    await r.drawTextCanvas("รายการ", M + 6, baseline, {
+    await r.drawTextCanvas("ลำดับ", idxX + 6, baseline, {
       size: 9.5,
       bold: true,
+      color: COLOR_WHITE,
     });
-    await r.drawTextCanvas("กำหนดชำระ", colXDues + 6, baseline, {
+    await r.drawTextCanvas("รายการ", itemX + 6, baseline, {
       size: 9.5,
       bold: true,
+      color: COLOR_WHITE,
+    });
+    await r.drawTextCanvas("รายละเอียด", detX + 6, baseline, {
+      size: 9.5,
+      bold: true,
+      color: COLOR_WHITE,
     });
     const amtLabel = "จำนวนเงิน";
-    const amtW = r.measureText(amtLabel, 9.5, true);
-    await r.drawTextCanvas(amtLabel, colXQr - 6 - amtW, baseline, {
+    const aW = r.measureText(amtLabel, 9.5, true);
+    await r.drawTextCanvas(amtLabel, amtX + amtW - 6 - aW, baseline, {
       size: 9.5,
       bold: true,
+      color: COLOR_WHITE,
     });
-    const qrLabel = "QR";
-    const qrLabelW = r.measureText(qrLabel, 9.5, true);
-    await r.drawTextCanvas(
-      qrLabel,
-      colXQr + (qrColW - qrLabelW) / 2,
-      baseline,
-      { size: 9.5, bold: true }
-    );
+    await r.drawTextCanvas("วิธีชำระ", methX + 6, baseline, {
+      size: 9.5,
+      bold: true,
+      color: COLOR_WHITE,
+    });
     r.y -= headerH;
   };
 
-  await drawHeader();
+  await drawTableHeader();
 
-  for (const f of rows) {
-    const rowH = rowHOf(f);
-    if (r.y - rowH < M + 60) {
+  const filings = opts.filings as SectionFiling[];
+
+  for (let i = 0; i < filings.length; i++) {
+    const f = filings[i];
+    const itemText = f.form_code?.trim() || "-";
+    const detText = f.description?.trim() || "-";
+
+    // Bank logos: "บน" renders on the first method line (bank name) and
+    // "ล่าง" on the second (account number).
+    const embedLogo = async (bytes?: ArrayBuffer | null) => {
+      if (!bytes) return null;
+      const img = await r.embedBankLogo(bytes);
+      if (!img || !img.width || !img.height) return null;
+      const h = 11;
+      const w = Math.min((img.width / img.height) * h, 32);
+      return { img, w, h: w / (img.width / img.height) };
+    };
+    const topLogo = await embedLogo(f.bank_account?.logo_bytes);
+    const bottomLogo = await embedLogo(f.bank_account?.logo_bottom_bytes);
+    const maxLogoW = Math.max(topLogo?.w ?? 0, bottomLogo?.w ?? 0);
+    const methWrapW = methW - 12 - (maxLogoW ? maxLogoW + 4 : 0);
+
+    const linesItem = wrapText(itemText, (s) => r.measureText(s, fontSize, false), itemW - 12);
+    const linesDet = wrapText(detText, (s) => r.measureText(s, fontSize, false), detW - 12);
+    const methLines = wrapText(methodOf(f), (s) => r.measureText(s, fontSize, false), methWrapW);
+    const maxLines = Math.max(linesItem.length, linesDet.length, methLines.length);
+    const rowH = Math.max(maxLines * lh + rowPadY * 2, 22);
+
+    if (r.y - rowH < M + 50) {
       await r.hr();
-      await drawHeader();
+      await drawTableHeader();
     }
+
     const top = r.y;
-    const lines = itemLinesOf(f);
-    for (let li = 0; li < lines.length; li++) {
-      await r.drawTextCanvas(
-        lines[li],
-        M + 6,
-        top - 14 - li * 9.5 * 1.4,
-        { size: 9.5 }
-      );
-    }
-    await r.drawTextCanvas(formatDateTh(f.due_date), colXDues + 6, top - 14, {
-      size: 9.5,
+    if (!r.sim && i % 2 === 1)
+      r.page.drawRectangle({
+        x: M,
+        y: top - rowH,
+        width: CONTENT_W,
+        height: rowH,
+        color: COLOR_ZEBRA,
+      });
+    await r.drawTextCanvas(String(i + 1), idxX + 6, top - 13, {
+      size: fontSize,
     });
+    for (let li = 0; li < linesItem.length; li++) {
+      await r.drawTextCanvas(linesItem[li], itemX + 6, top - 13 - li * lh, {
+        size: fontSize,
+      });
+    }
+    for (let li = 0; li < linesDet.length; li++) {
+      await r.drawTextCanvas(linesDet[li], detX + 6, top - 13 - li * lh, {
+        size: fontSize,
+      });
+    }
     const amtText = fmtMoney(Number(f.amount ?? 0));
-    const amtW2 = r.measureText(amtText, 9.5, false);
-    await r.drawTextCanvas(amtText, colXQr - 6 - amtW2, top - 14, {
-      size: 9.5,
+    const amtTw = r.measureText(amtText, fontSize, false);
+    await r.drawTextCanvas(amtText, amtX + amtW - 6 - amtTw, top - 13, {
+      size: fontSize,
     });
-
-    const qrAtt = f.attachments.find((a) => a.kind === "qr");
-    const qrBytes = qrAtt?.bytes ?? f.bank_account?.qr_bytes ?? null;
-    if (qrBytes) {
-      try {
-        const view = new Uint8Array(qrBytes);
-        const img = isPng(view)
-          ? await r.doc.embedPng(qrBytes)
-          : isJpeg(view)
-            ? await r.doc.embedJpg(qrBytes)
-            : null;
-        if (img) {
-          const s = Math.min(
-            qrSize,
-            qrColW - 8,
-            (img.width / img.height) * qrSize
-          );
-          const h = (img.height / img.width) * s;
-          if (!r.sim)
-            r.page.drawImage(img, {
-              x: colXQr + (qrColW - s) / 2,
-              y: top - rowPadY - h,
-              width: s,
-              height: h,
-            });
-        } else {
-          throw new Error("unsupported qr image");
-        }
-      } catch {
-        const ph = "[QR]";
-        const phW = r.measureText(ph, 8, false);
-        await r.drawTextCanvas(
-          ph,
-          colXQr + (qrColW - phW) / 2,
-          top - 20,
-          { size: 8, color: COLOR_MUTED }
-        );
-      }
+    for (let li = 0; li < methLines.length; li++) {
+      await r.drawTextCanvas(methLines[li], methX + 6, top - 13 - li * lh, {
+        size: fontSize,
+      });
     }
-
-    r.page.drawLine({
-      start: { x: M, y: top - rowH },
-      end: { x: tableRight, y: top - rowH },
-      thickness: 0.5,
-      color: COLOR_BORDER,
-    });
+    const drawMethodLogo = (
+      logo: { img: PDFImage; w: number; h: number } | null,
+      lineIdx: number
+    ) => {
+      if (!logo || r.sim) return;
+      const idx = Math.min(lineIdx, methLines.length - 1);
+      const baseline = top - 13 - idx * lh;
+      r.page.drawImage(logo.img, {
+        x: methX + methW - 6 - logo.w,
+        y: baseline - logo.h / 2 + 3,
+        width: logo.w,
+        height: logo.h,
+      });
+    };
+    drawMethodLogo(topLogo, 0);
+    drawMethodLogo(bottomLogo, 1);
+    if (!r.sim)
+      r.page.drawLine({
+        start: { x: M, y: top - rowH },
+        end: { x: tableRight, y: top - rowH },
+        thickness: 0.5,
+        color: COLOR_BORDER,
+      });
     r.y -= rowH;
   }
 }
@@ -915,6 +1163,82 @@ async function drawEvidencePages(
   for (const att of items) await drawImageOrPdf(r, att);
 }
 
+async function drawDocument(r: ReportRenderer, doc: ReportDocument): Promise<void> {
+  const view = new Uint8Array(doc.bytes);
+  const targetW = CONTENT_W;
+  const maxY = PAGE_H - M * 2 - 30;
+
+  if (isPng(view) || isJpeg(view)) {
+    try {
+      const probe = isPng(view)
+        ? await r.doc.embedPng(doc.bytes)
+        : await r.doc.embedJpg(doc.bytes);
+      const dims = { width: probe.width, height: probe.height };
+      const img = r.sim ? null : await (isPng(view) ? r.doc.embedPng(doc.bytes) : r.doc.embedJpg(doc.bytes));
+
+      let w = targetW;
+      let h = (dims.height / dims.width) * w;
+      if (h > maxY) {
+        h = maxY;
+        w = (dims.width / dims.height) * h;
+      }
+      r.ensureSpace(h + 18);
+      r.y -= 2;
+      await r.text(doc.file_name, { size: 8.5, color: COLOR_MUTED });
+      if (img)
+        r.page.drawImage(img, {
+          x: M + (CONTENT_W - w) / 2,
+          y: r.y - h,
+          width: w,
+          height: h,
+        });
+      r.y -= h + 14;
+      return;
+    } catch {
+      await r.text(`[ไม่สามารถฝังรูปภาพได้: ${doc.file_name}]`, {
+        size: 9,
+        color: COLOR_MUTED,
+      });
+      return;
+    }
+  }
+
+  if (isPdfBytes(view)) {
+    try {
+      const src = await PDFDocument.load(doc.bytes, { ignoreEncryption: true });
+      const indices = src.getPageIndices();
+      if (r.sim) {
+        for (let i = 0; i < indices.length; i++) r.doc.addPage([PAGE_W, PAGE_H]);
+      } else {
+        const copied = await r.doc.copyPages(src, indices);
+        for (const p of copied) r.doc.addPage(p);
+      }
+      r.requestFreshPage();
+      return;
+    } catch {
+      await r.text(`[ไม่สามารถฝังไฟล์ PDF ได้: ${doc.file_name}]`, {
+        size: 9,
+        color: COLOR_MUTED,
+      });
+      return;
+    }
+  }
+
+  await r.text(
+    `[ไม่รองรับไฟล์ประเภทนี้ในรายงาน (${doc.mime_type ?? "ไม่ทราบชนิด"}): ${doc.file_name}]`,
+    { size: 9, color: COLOR_MUTED }
+  );
+}
+
+async function drawDocumentPages(
+  r: ReportRenderer,
+  docs: ReportDocument[]
+): Promise<void> {
+  if (!docs.length) return;
+  r.requestFreshPage();
+  for (const d of docs) await drawDocument(r, d);
+}
+
 async function drawWatermark(r: ReportRenderer, opts: BuildOptions): Promise<void> {
   if (!opts.logo?.bytes) return;
   const view = new Uint8Array(opts.logo.bytes);
@@ -927,8 +1251,8 @@ async function drawWatermark(r: ReportRenderer, opts: BuildOptions): Promise<voi
     if (!img) return;
     const firstPage = r.doc.getPages()[0];
     if (!firstPage) return;
-    const maxH = 90;
-    const maxW = CONTENT_W * 0.45;
+    const maxH = 72;
+    const maxW = CONTENT_W * 0.36;
     let w = maxW;
     let h = (img.height / img.width) * w;
     if (h > maxH) {
@@ -937,10 +1261,10 @@ async function drawWatermark(r: ReportRenderer, opts: BuildOptions): Promise<voi
     }
     firstPage.drawImage(img, {
       x: PAGE_W - M - w,
-      y: M + 20,
+      y: M - 8,
       width: w,
       height: h,
-      opacity: 0.65,
+      opacity: 0.85,
     });
   } catch {
     // ignore invalid logo
@@ -953,6 +1277,20 @@ type BuildOptions = {
   periodLabel: string;
   filings: ReportFiling[];
   logo?: { bytes: ArrayBuffer } | null;
+  /** Flat ordered documents appended after the cover, in upload order. */
+  documents?: ReportDocument[];
+  /** Cover design. "classic" keeps the original grayscale cover for rollback. */
+  coverStyle?: CoverStyle;
+  /** Report number shown in the cover meta grid. Derived from period if omitted. */
+  reportNo?: string;
+  /** Round label, e.g. "ครั้งที่ 2", shown in the title and meta grid. */
+  reportLabel?: string;
+  /** Issue date shown in the cover meta grid. Defaults to today (พ.ศ.). */
+  issueDate?: string;
+  /** Preparer shown in the cover meta grid. Defaults to the firm name. */
+  preparedBy?: string;
+  /** When true, render only the cover page (for fast previews). */
+  preview?: boolean;
 };
 
 type SectionFiling = ReportFiling & { attachments: ReportAttachment[] };
@@ -963,6 +1301,19 @@ function makeMethodOf(
 ) {
   const indexOf = new Map(orderedItems.map((a, i) => [a, i] as const));
   return (f: SectionFiling): string => {
+    const custom = f.payment_method?.trim();
+    const ba = f.bank_account;
+    const acct = ba?.account_no?.trim();
+    const bank = ba?.bank_name?.trim() || ba?.label?.trim() || "";
+    const transferLike = custom
+      ? /โอน|transfer|ธนาคาร|บัญชี/i.test(custom)
+      : Boolean(ba);
+
+    // Bank transfer: bank name and account number on their own lines.
+    if (ba && transferLike && acct) {
+      return [bank, `เลขที่ ${acct}`].filter(Boolean).join("\n");
+    }
+    if (custom) return custom;
     const slips = f.attachments.filter(
       (a) => a.kind === "slip" && (a.covered_filings ?? []).includes(f.id)
     );
@@ -984,7 +1335,11 @@ function makeMethodOf(
       f.bank_account?.qr_bytes
     )
       return "QR Code";
-    if (f.bank_account) return `โอนเข้า ${f.bank_account.label}`;
+    if (ba)
+      return (
+        [bank, acct ? `เลขที่ ${acct}` : ""].filter(Boolean).join("\n") ||
+        ba.label
+      );
     return "-";
   };
 }
@@ -1004,36 +1359,47 @@ export async function buildMonthlyReportPdf(
   const r = new ReportRenderer();
   const filings = opts.filings as SectionFiling[];
   const orderedEvidence = collectEvidenceItems(filings);
+  const style = resolveCoverStyle(opts);
+  const drawCoverFn = style === "classic" ? drawCoverClassic : drawCoverModern;
+  const preview = opts.preview === true;
 
   let prevSig = "";
   let pageByIndex: number[] = [];
 
   // Simulated passes: resolve which report page each slip lands on.
-  for (let iter = 0; iter < 4; iter++) {
-    r.sim = true;
-    r.slipPageByAtt = new WeakMap();
-    await r.init();
-    applyDocMeta(r, opts);
-    await drawCover(r, opts, makeMethodOf(orderedEvidence, iter === 0 ? null : pageByIndex));
-    await drawPaymentSection(r, filings);
-    await drawEvidencePages(r, filings);
-    pageByIndex = orderedEvidence.map(
-      (a) => r.slipPageByAtt.get(a) ?? -1
-    );
-    const sig = `${r.doc.getPageCount()}|${pageByIndex.join(",")}`;
-    if (sig === prevSig) break;
-    prevSig = sig;
+  // Skipped for cover-only previews, which never reference slip pages.
+  if (!preview) {
+    for (let iter = 0; iter < 4; iter++) {
+      r.sim = true;
+      r.slipPageByAtt = new WeakMap();
+      await r.init();
+      applyDocMeta(r, opts);
+      const method = makeMethodOf(orderedEvidence, iter === 0 ? null : pageByIndex);
+      await drawCoverFn(r, opts, method);
+      await drawEvidencePages(r, filings);
+      await drawDocumentPages(r, opts.documents ?? []);
+      pageByIndex = orderedEvidence.map(
+        (a) => r.slipPageByAtt.get(a) ?? -1
+      );
+      const sig = `${r.doc.getPageCount()}|${pageByIndex.join(",")}`;
+      if (sig === prevSig) break;
+      prevSig = sig;
+    }
   }
 
   // Real pass.
   r.sim = false;
   await r.init();
   applyDocMeta(r, opts);
-  await drawCover(r, opts, makeMethodOf(orderedEvidence, pageByIndex));
-  await drawWatermark(r, opts);
-  await drawPaymentSection(r, filings);
-  await drawEvidencePages(r, filings);
-  await r.drawFooters();
+  const method = makeMethodOf(orderedEvidence, preview ? null : pageByIndex);
+  await drawCoverFn(r, opts, method);
+  if (style === "classic") await drawWatermark(r, opts);
+  if (!preview) {
+    await drawEvidencePages(r, filings);
+    await drawDocumentPages(r, opts.documents ?? []);
+    // Page count goes on the cover only — attached documents stay clean.
+    await r.drawCoverPageCount();
+  }
 
   return r.doc.save();
 }
@@ -1041,6 +1407,15 @@ export async function buildMonthlyReportPdf(
 export async function fetchAttachmentBytes(
   storagePath: string
 ): Promise<ArrayBuffer> {
+  // Same-origin path (e.g. a bundled asset under /public) — used for local
+  // mock logos/QRs that aren't stored in R2.
+  if (storagePath.startsWith("/")) {
+    const local = await fetch(storagePath);
+    if (!local.ok) {
+      throw new Error(`โหลดไฟล์ไม่สำเร็จ (HTTP ${local.status}): ${storagePath}`);
+    }
+    return local.arrayBuffer();
+  }
   const res = await fetch("/api/files/fetch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

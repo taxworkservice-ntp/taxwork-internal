@@ -21,7 +21,24 @@ export async function POST(request: NextRequest) {
     where client_id=${clientId} and status in ('pending','running') limit 1`) as { id: string }[];
   if (busy[0]) return NextResponse.json({ error: "job already pending" }, { status: 409 });
 
-  const rows = (await sql`insert into express_backup_jobs (client_id, status, trigger_type)
-    values (${clientId}, 'pending', 'manual') returning id`) as { id: string }[];
-  return NextResponse.json({ id: String(rows[0].id) });
+  const machines = (await sql`select ap.agent_id from express_backup_agent_paths ap
+    join express_backup_agents a on a.id = ap.agent_id
+    where ap.client_id=${clientId} and a.status <> 'revoked' and a.revoked_at is null`) as {
+    agent_id: string;
+  }[];
+  if (machines.length === 0) {
+    const rows = (await sql`insert into express_backup_jobs (client_id, status, trigger_type)
+      values (${clientId}, 'pending', 'manual') returning id`) as { id: string }[];
+    return NextResponse.json({ id: String(rows[0].id) });
+  }
+  const ids: string[] = [];
+  for (const m of machines) {
+    const rows = (await sql`insert into express_backup_jobs
+        (client_id, target_agent_id, status, trigger_type)
+      values (${clientId}, ${String(m.agent_id)}, 'pending', 'manual') returning id`) as {
+      id: string;
+    }[];
+    ids.push(String(rows[0].id));
+  }
+  return NextResponse.json({ ids });
 }

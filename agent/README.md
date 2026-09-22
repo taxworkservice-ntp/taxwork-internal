@@ -53,6 +53,17 @@ Confirm in the web UI: **เครื่องออนไลน์** and “เ
 3. Action: `pythonw.exe C:\TaxworkAgent\main.py` (use `pythonw` for no console window).
 4. Condition: Start only if network available; **do NOT require admin** unless the Express folder needs it.
 
+Alternative without admin rights: Startup-folder launcher (same effect, per-user).
+Save as `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\TaxworkExpressBackupAgent.vbs`:
+
+```vb
+CreateObject("Wscript.Shell").Run """C:\Path\To\pythonw.exe"" ""C:\TaxworkAgent\main.py""", 0, False
+```
+
+Double-click it once to start now. Logs go to
+`%LOCALAPPDATA%\TaxworkExpressBackup\agent.log` — if the file stays empty,
+the agent is not running (check Task Manager for `pythonw.exe`).
+
 ## 4. Test without touching real data
 
 Set in `config.json`:
@@ -64,11 +75,34 @@ Set in `config.json`:
 The agent backs up the dummy folder instead of every job's `source_path`.
 Never point tests at real accounting data. Remove the key for production.
 
+Note: when the same client exists on several machines at different folders, each
+machine gets its own path in the web UI (client page → พาธตามเครื่อง). The server
+sends this machine's folder with every job — no agent config needed for that.
+
 ## 5. Manual backup check
 
 1. Web: open a client → **สำรองข้อมูลตอนนี้** → status becomes รอดำเนินการ.
 2. Within ~30 s the agent claims it (กำลังสำรอง), uploads, and the web shows ปกติ with size + SHA-256.
 3. **ดาวน์โหลด** the ZIP from history and verify it opens.
+
+## 5b. Assisted restore (export to another machine)
+
+Requires two human approvals in the web UI — the agent never places files on its own:
+
+1. Client page → export card → pick target machine + folder → **ขอส่งออก**, then **อนุมัติ**.
+2. The target agent downloads, verifies SHA-256, extracts to
+   `%LOCALAPPDATA%\TaxworkExpressBackup\staging\` and reports staged.
+3. Verify the staged report in the web UI → **ยืนยันนำเข้าที่**.
+4. The agent copies the existing target to `<target>.bak-<id8>` (rollback),
+   merges the staged files in (nothing deleted), and reports completion.
+5. Open Express on the target machine and verify the company before continuing work.
+
+Staging survives restarts and is cleaned after completion. Logs:
+`%LOCALAPPDATA%\TaxworkExpressBackup\agent.log`.
+
+Compatibility: old agents ignore restores (endpoints are additive); a new agent
+against an old server treats missing restore endpoints as "no work" and keeps
+backing up normally.
 
 ## 6. Troubleshooting
 
