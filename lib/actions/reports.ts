@@ -1,10 +1,19 @@
 "use server";
 
+import { cookies, headers } from "next/headers";
 import { sql } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { generatePublicId } from "@/lib/ids";
 import { appOrigin } from "@/lib/app-url";
 import { shareSlug, shareTokenFromSegment, shareUrl } from "@/lib/share-link";
+import {
+  isValidTaxId,
+  normalizeTaxId,
+  shareAccessCookieName,
+  shareAccessCookieOptions,
+  signShareAccess,
+} from "@/lib/share-access";
+import { clientKey, rateLimit } from "@/lib/rate-limit";
 import { buildUpdate, num } from "./db-helpers";
 
 export type ClientRow = {
@@ -879,20 +888,31 @@ export async function getReportShare(reportId: string): Promise<ReportShare | nu
 /** Mint (or refresh) a share link. Only issued rounds may be shared. */
 export async function createReportShareLink(
   reportId: string,
-  days = 30
+  days = 7
 ): Promise<ReportShareResult> {
   try {
     await requireUser();
     const rows = (await sql`
-      select status, period_label, seq from monthly_reports where id=${reportId}
+      select r.status, r.period_label, r.seq, c.tax_id
+      from monthly_reports r
+      join clients c on c.id = r.client_id
+      where r.id=${reportId}
     `) as {
       status: string;
       period_label: string;
       seq: number;
+      tax_id: string | null;
     }[];
     if (!rows[0]) return { ok: false, error: "ไม่พบรายงาน" };
     if (rows[0].status !== "issued")
       return { ok: false, error: "ต้องออกรายงานก่อนจึงจะสร้างลิงก์ได้" };
+    // The client must be able to pass the tax-ID gate, so a tax ID is required.
+    if (!isValidTaxId(rows[0].tax_id))
+      return {
+        ok: false,
+        error:
+          "ลูกค้ายังไม่มีเลขประจำตัวผู้เสียภาษี (13 หลัก) กรุณาเพิ่มที่หน้าลูกค้าก่อนสร้างลิงก์",
+      };
 
     // The token is a long random secret and the only lookup key; the slug in
     // the URL is decorative. Writing a new token on the single monthly_reports
@@ -951,6 +971,122 @@ export async function resolveShareToken(
     reportId: String(row.id),
     expiresAt: row.share_expires_at ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Tax-ID gate (client-facing share links)
+// ---------------------------------------------------------------------------
+
+export type ShareGateInfo = {
+  reportId: string;
+  firmName: string;
+  hasTaxId: boolean;
+  expiresAt: string | null;
+};
+
+/**
+ * Public: minimal info needed to render the gate screen. Deliberately does not
+ * load the report model (no client name, amounts, or R2 assets).
+ */
+export async function getShareGateInfo(
+  token: string
+): Promise<ShareGateInfo | null> {
+  const key = shareTokenFromSegment(token);
+  if (!key) return null;
+  const rows = (await sql`
+    select r.id, r.share_token, r.share_expires_at, r.share_revoked_at,
+           c.tax_id, s.firm_name
+    from monthly_reports r
+    join clients c on c.id = r.client_id
+    left join app_settings s on s.id = 1
+    where r.share_token=${key}
+  `) as {
+    id: string;
+    share_token: string | null;
+    share_expires_at: string | null;
+    share_revoked_at: string | null;
+    tax_id: string | null;
+    firm_name: string | null;
+  }[];
+  const row = rows[0];
+  if (!row || !isShareActive(row)) return null;
+  return {
+    reportId: String(row.id),
+    firmName: (row.firm_name ?? "").trim() || "Taxwork",
+    hasTaxId: normalizeTaxId(row.tax_id).length > 0,
+    expiresAt: row.share_expires_at ?? null,
+  };
+}
+
+export type ShareVerifyResult =
+  | { ok: true }
+  | { ok: false; error: string; retryAfter?: number };
+
+/** Cookie lifetime: don't outlive the link, and cap at 30 days. */
+function shareCookieMaxAge(expiresAt: string | null): number {
+  const cap = 30 * 86400;
+  if (!expiresAt) return cap;
+  const secs = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000);
+  if (!Number.isFinite(secs) || secs <= 0) return 60;
+  return Math.min(secs, cap);
+}
+
+/**
+ * Public: check the submitted tax ID against the report's client. On success,
+ * sets the signed access cookie so the page, PDF, and slip routes are unlocked.
+ * Rate-limited per IP to blunt guessing. Errors are intentionally generic.
+ */
+export async function verifyShareTaxId(
+  token: string,
+  taxId: string
+): Promise<ShareVerifyResult> {
+  const key = shareTokenFromSegment(token);
+  if (!key) return { ok: false, error: "ลิงก์ไม่ถูกต้องหรือหมดอายุ" };
+
+  const limit = rateLimit(clientKey(await headers(), "share-verify"), 5, 10 * 60_000);
+  if (!limit.ok) {
+    const mins = Math.max(1, Math.ceil(limit.retryAfter / 60));
+    return {
+      ok: false,
+      error: `พยายามหลายครั้งเกินไป กรุณาลองใหม่ในอีก ${mins} นาที`,
+      retryAfter: limit.retryAfter,
+    };
+  }
+
+  const input = normalizeTaxId(taxId);
+  if (input.length !== 13) {
+    return { ok: false, error: "กรุณากรอกเลขประจำตัวผู้เสียภาษี 13 หลัก" };
+  }
+
+  const rows = (await sql`
+    select r.id, r.share_token, r.share_expires_at, r.share_revoked_at, c.tax_id
+    from monthly_reports r
+    join clients c on c.id = r.client_id
+    where r.share_token=${key}
+  `) as {
+    id: string;
+    share_token: string | null;
+    share_expires_at: string | null;
+    share_revoked_at: string | null;
+    tax_id: string | null;
+  }[];
+  const row = rows[0];
+  if (!row || !isShareActive(row)) {
+    return { ok: false, error: "ลิงก์ไม่ถูกต้องหรือหมดอายุ" };
+  }
+
+  const expected = normalizeTaxId(row.tax_id);
+  if (expected.length !== 13 || input !== expected) {
+    return { ok: false, error: "เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง" };
+  }
+
+  const store = await cookies();
+  store.set(
+    shareAccessCookieName(key),
+    signShareAccess(key),
+    shareAccessCookieOptions(shareCookieMaxAge(row.share_expires_at))
+  );
+  return { ok: true };
 }
 
 /** Public: newest stored PDF copy for a report (for the share download). */

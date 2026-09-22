@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { resolveShareToken, latestReportFile } from "@/lib/actions/reports";
+import { shareTokenFromSegment } from "@/lib/share-link";
+import {
+  shareAccessCookieName,
+  verifyShareAccess,
+} from "@/lib/share-access";
 import { r2, R2_BUCKET } from "@/lib/r2";
 
 export const runtime = "nodejs";
@@ -20,10 +26,21 @@ function asciiFileName(name: string): string {
  * browser downloads it instead of opening it inline.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+
+  // Require the tax-ID gate before handing over the PDF.
+  const key = shareTokenFromSegment(token);
+  const cookie = (await cookies()).get(shareAccessCookieName(key))?.value;
+  if (!verifyShareAccess(cookie, key)) {
+    return NextResponse.redirect(
+      new URL(`/r/${encodeURIComponent(token)}`, request.url),
+      303
+    );
+  }
+
   const resolved = await resolveShareToken(token);
   if (!resolved) {
     return NextResponse.json({ error: "expired or invalid link" }, { status: 404 });

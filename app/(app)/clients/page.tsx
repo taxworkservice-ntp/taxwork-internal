@@ -12,6 +12,7 @@ import ClientAvatar from "@/components/client-avatar";
 import InlineConfirm from "@/components/inline-confirm";
 import PasswordValue from "@/components/password-value";
 import { ToastStack, useToasts } from "@/components/toast";
+import { useClientFavorites } from "@/lib/use-client-favorites";
 
 type Client = {
   id: string;
@@ -91,25 +92,8 @@ export default function ClientsPage() {
   const [credLoading, setCredLoading] = useState<Record<string, boolean>>({});
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "name", dir: "asc" });
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("clients.favorites") ?? "[]");
-    } catch {
-      return [];
-    }
-  });
-  const [onlyFav, setOnlyFav] = useState(false);
+  const { favorites, toggleFav, onlyFav, setOnlyFav } = useClientFavorites();
   const { toasts, push, dismiss } = useToasts();
-
-  useEffect(() => {
-    localStorage.setItem("clients.favorites", JSON.stringify(favorites));
-  }, [favorites]);
-
-  function toggleFav(id: string) {
-    setFavorites((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
 
   useEffect(() => {
     try {

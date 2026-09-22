@@ -58,6 +58,7 @@ import {
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
 import ClientAvatar from "@/components/client-avatar";
+import ClientSelect from "@/components/client-select";
 import { contrastText, normalizeHex } from "@/lib/client-avatar";
 
 const FORM_PRESETS = [
@@ -1370,7 +1371,7 @@ export default function ReportsPage() {
     setShareBusy(true);
     setStatus("");
     try {
-      const res = await createReportShareLink(activeReportId, 30);
+      const res = await createReportShareLink(activeReportId, 7);
       if (!res.ok) {
         alert(res.error);
         return;
@@ -1546,18 +1547,11 @@ export default function ReportsPage() {
       <div className="card max-w-xl space-y-3">
         <div>
           <label className="label">ลูกค้า</label>
-          <select
-            className="input"
+          <ClientSelect
+            clients={clients}
             value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-          >
-            <option value="">— เลือกลูกค้า —</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+            onChange={setClientId}
+          />
         </div>
 
         {selectedClient && (
@@ -2090,7 +2084,7 @@ export default function ReportsPage() {
                       ? "กำลังดำเนินการ..."
                       : share
                         ? "คัดลอกลิงก์"
-                        : "สร้างลิงก์แชร์ (30 วัน)"}
+                        : "สร้างลิงก์แชร์ (7 วัน)"}
                   </button>
                 </div>
                 {share ? (
@@ -2107,7 +2101,8 @@ export default function ReportsPage() {
                   </div>
                 ) : (
                   <p className="text-xs text-neutral-500">
-                    ส่งลิงก์นี้ให้ลูกค้าทาง LINE เพื่อดูรายการ ชำระเงิน และดาวน์โหลด PDF
+                    ส่งลิงก์นี้ให้ลูกค้าทาง LINE เพื่อดูรายการ ชำระเงิน และดาวน์โหลด PDF —
+                    ลูกค้าต้องกรอกเลขประจำตัวผู้เสียภาษีเพื่อเปิดลิงก์ (ลิงก์ใช้ได้ 7 วัน)
                   </p>
                 )}
               </div>

@@ -49,6 +49,7 @@ type Section = {
   id: string;
   title: string;
   description: string | null;
+  remark: string | null;
   amount: number;
   paymentMethod: string | null;
   bankName: string | null;
@@ -65,6 +66,7 @@ function buildSections(model: ReportModel): Section[] {
     id: f.id,
     title: f.form_code?.trim() || "รายการ",
     description: f.description?.trim() || null,
+    remark: f.remark?.trim() || null,
     amount: Number(f.amount ?? 0),
     paymentMethod: f.payment_method?.trim() || null,
     bankName: f.bank?.bank_name || f.bank?.label || null,
@@ -252,6 +254,9 @@ export default function ShareView({
 }) {
   const sections = buildSections(model);
   const grandTotal = sections.reduce((sum, s) => sum + s.amount, 0);
+  const hasSlip = sections.some((s) => s.slips.length > 0);
+  const hasQr = sections.some((s) => s.qr);
+  const hasBank = sections.some((s) => s.accountNo || s.promptpay || s.bankName);
   const expiryLabel = expiresAt
     ? new Date(expiresAt).toLocaleDateString("th-TH", {
         day: "numeric",
@@ -285,8 +290,11 @@ export default function ShareView({
             href={`/r/${token}/pdf`}
             className="block rounded-xl bg-neutral-900 px-4 py-3 text-center text-sm font-semibold text-white shadow-sm active:bg-neutral-800"
           >
-            ดาวน์โหลดรายงาน (PDF)
+            ดาวน์โหลดรายงานฉบับเต็ม (PDF)
           </a>
+          <p className="mt-1 text-center text-xs text-neutral-500">
+            แนะนำให้ดาวน์โหลดรายงานฉบับเต็มเพื่อเก็บไว้ตรวจสอบและเป็นหลักฐานการชำระเงิน
+          </p>
           {expiryLabel && (
             <p className="mt-1 text-center text-xs text-neutral-400">
               ลิงก์นี้ใช้ได้ถึง {expiryLabel}
@@ -305,14 +313,42 @@ export default function ShareView({
           </div>
         ) : (
           <>
-            <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
-              <div className="mb-1 font-medium text-neutral-700">วิธีชำระเงิน</div>
-              <ol className="list-inside list-decimal space-y-0.5">
-                <li>แตะที่รูป QR หรือสลิปเพื่อบันทึกภาพ</li>
-                <li>เปิดแอปธนาคาร แล้วเลือกสแกน / อัปโหลดจากอัลบั้ม</li>
-                <li>หรือโอนเข้าบัญชี / พร้อมเพย์ ตามหมายเลขที่แสดง</li>
-              </ol>
-            </div>
+            {(hasSlip || hasQr || hasBank) && (
+              <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-xs text-neutral-600">
+                <div className="mb-2 font-semibold text-neutral-800">วิธีชำระเงิน</div>
+                <div className="space-y-3">
+                  {hasSlip && (
+                    <p>
+                      รายการที่แนบ Pay-in slip ให้ชำระผ่านใบนำฝากที่แนบไว้ โดยเปิดรูปหรือไฟล์ด้านล่างแล้วชำระตามใบนำฝาก
+                    </p>
+                  )}
+                  {hasQr && (
+                    <div>
+                      <div className="font-medium text-neutral-700">สแกน QR (แนะนำ)</div>
+                      <ol className="mt-1 list-inside list-decimal space-y-0.5">
+                        <li>แตะที่รูป QR เพื่อบันทึกภาพลงเครื่อง</li>
+                        <li>
+                          เปิดแอปธนาคาร เลือก &quot;สแกน&quot; แล้วเลือกภาพ QR จากอัลบั้ม
+                        </li>
+                        <li>ตรวจสอบชื่อบัญชีผู้รับและยอดเงินให้ถูกต้องก่อนยืนยัน</li>
+                      </ol>
+                    </div>
+                  )}
+                  {hasBank && (
+                    <div>
+                      <div className="font-medium text-neutral-700">โอนเงิน / พร้อมเพย์</div>
+                      <p className="mt-1">
+                        โอนเข้าบัญชีหรือพร้อมเพย์ตามหมายเลขที่แสดงในแต่ละรายการ
+                        และตรวจสอบชื่อบัญชีผู้รับให้ถูกต้อง
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <p className="mt-3 border-t border-neutral-200 pt-2 text-neutral-500">
+                  กรุณาชำระเต็มจำนวนตามยอดที่แสดง และส่งหลักฐานการชำระเงินให้เจ้าหน้าที่
+                </p>
+              </div>
+            )}
 
             <div className="space-y-4">
               {sections.map((s, i) => {
@@ -343,6 +379,11 @@ export default function ShareView({
                           {s.description && (
                             <div className="truncate text-xs text-neutral-500">
                               {s.description}
+                            </div>
+                          )}
+                          {s.remark && (
+                            <div className="truncate text-xs text-neutral-500">
+                              หมายเหตุ: {s.remark}
                             </div>
                           )}
                         </div>
@@ -473,7 +514,7 @@ export default function ShareView({
                         {hasQr && (
                           <div className="mt-3">
                             <p className="mb-2 text-xs text-neutral-600">
-                              บันทึกภาพ QR แล้วสแกนจากอัลบั้มในแอปธนาคาร — แตะที่รูปเพื่อดาวน์โหลด
+                              แตะที่รูป QR เพื่อบันทึกภาพ แล้วเลือกสแกนจากอัลบั้มในแอปธนาคาร
                             </p>
                             <QrBlock
                               dataUri={s.qr!}
@@ -522,6 +563,9 @@ export default function ShareView({
         )}
         <p className="text-[11px] text-neutral-400">
           {model.firmName} · เอกสารสร้างโดยระบบอัตโนมัติ
+        </p>
+        <p className="text-[11px] text-neutral-400">
+          เอกสารนี้เป็นความลับสำหรับลูกค้าเท่านั้น กรุณาอย่าแชร์ลิงก์นี้
         </p>
       </footer>
     </main>
