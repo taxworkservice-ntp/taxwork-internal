@@ -3,6 +3,7 @@
 import { sql } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { generatePublicId } from "@/lib/ids";
+import { appOrigin } from "@/lib/app-url";
 import { buildUpdate, num } from "./db-helpers";
 
 export type ClientRow = {
@@ -731,14 +732,6 @@ export type ReportShareResult =
   | { ok: true; share: ReportShare | null }
   | { ok: false; error: string };
 
-function shareBaseUrl(): string {
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.BETTER_AUTH_URL?.trim() ||
-    "https://internal.taxworkaccount.com";
-  return base.replace(/\/+$/, "");
-}
-
 function isShareActive(row: {
   share_token: string | null;
   share_expires_at: string | null;
@@ -759,9 +752,10 @@ export async function getReportShare(reportId: string): Promise<ReportShare | nu
   `) as { share_token: string | null; share_expires_at: string | null; share_revoked_at: string | null }[];
   const row = rows[0];
   if (!row || !isShareActive(row)) return null;
+  const origin = await appOrigin();
   return {
     token: row.share_token!,
-    url: `${shareBaseUrl()}/r/${row.share_token}`,
+    url: `${origin}/r/${row.share_token}`,
     expiresAt: row.share_expires_at ?? "",
   };
 }
@@ -785,11 +779,12 @@ export async function createReportShareLink(
     await sql`update monthly_reports
       set share_token=${token}, share_expires_at=${expires.toISOString()}, share_revoked_at=null
       where id=${reportId}`;
+    const origin = await appOrigin();
     return {
       ok: true,
       share: {
         token,
-        url: `${shareBaseUrl()}/r/${token}`,
+        url: `${origin}/r/${token}`,
         expiresAt: expires.toISOString(),
       },
     };

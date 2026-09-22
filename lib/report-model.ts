@@ -1,6 +1,7 @@
 import "server-only";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { sql } from "@/lib/db";
+import { appOrigin } from "@/lib/app-url";
 import { r2, R2_BUCKET } from "@/lib/r2";
 
 /**
@@ -64,14 +65,6 @@ export type ReportModel = {
   /** Public share URL when an active link exists (rendered on the payment page). */
   shareUrl: string | null;
 };
-
-function shareBaseUrl(): string {
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.BETTER_AUTH_URL?.trim() ||
-    "https://internal.taxworkaccount.com";
-  return base.replace(/\/+$/, "");
-}
 
 async function getBytes(
   storagePath: string | null
@@ -219,7 +212,7 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     Boolean(shareToken) &&
     !shareRevoked &&
     (!shareExpires || new Date(shareExpires).getTime() > Date.now());
-  const shareUrl = shareActive ? `${shareBaseUrl()}/r/${shareToken}` : null;
+  const shareUrl = shareActive ? `${await appOrigin()}/r/${shareToken}` : null;
 
   return {
     reportId,

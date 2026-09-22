@@ -25,5 +25,8 @@ export async function GET(
   const url = await signedUrl(
     new GetObjectCommand({ Bucket: R2_BUCKET, Key: file.storage_path })
   );
-  return NextResponse.redirect(url, 302);
+  const redirect = NextResponse.redirect(url, 302);
+  redirect.headers.set("Cache-Control", "no-store");
+  redirect.headers.set("X-Robots-Tag", "noindex, nofollow");
+  return redirect;
 }
