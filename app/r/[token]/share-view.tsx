@@ -242,10 +242,7 @@ export default function ShareView({
             className="h-9 w-auto object-contain"
           />
         )}
-        <div className="mt-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
-          {model.firmName}
-        </div>
-        <h1 className="mt-1 text-lg font-bold leading-tight text-neutral-900">
+        <h1 className="mt-2 text-lg font-bold leading-tight text-neutral-900">
           รายงานภาษี {periodToThai(model.periodLabel)}
         </h1>
         <div className="mt-1 text-sm text-neutral-700">{model.client.name}</div>

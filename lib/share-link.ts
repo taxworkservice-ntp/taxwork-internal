@@ -4,23 +4,24 @@
  * anywhere.
  */
 
-const SHORT_THAI_MONTHS = [
-  "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
-  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+const SHORT_EN_MONTHS = [
+  "jan", "feb", "mar", "apr", "may", "jun",
+  "jul", "aug", "sep", "oct", "nov", "dec",
 ];
 
 /**
- * Short, human-readable URL slug: "รายงานภาษี-ส.ค.2569" (+ "-ครั้งที่2" for
- * rounds after the first). Decorative only — the random token is the key.
+ * Short, human-readable URL slug: "tax-report-aug-2026" (+ "-round-2" for
+ * rounds after the first). ASCII-only so it never gets percent-encoded.
+ * Decorative only — the random token is the key.
  */
 export function shareSlug(periodLabel: string, seq: number): string {
   const [y, m] = periodLabel.split("-").map(Number);
-  let slug = "รายงานภาษี";
+  let slug = "tax-report";
   if (y && m >= 1 && m <= 12) {
-    slug += `-${SHORT_THAI_MONTHS[m - 1]}${y + 543}`;
+    slug += `-${SHORT_EN_MONTHS[m - 1]}-${y}`;
   }
-  if (seq > 1) slug += `-ครั้งที่${seq}`;
-  return slug.replace(/[/\\?#%]+/g, "").slice(0, 48);
+  if (seq > 1) slug += `-round-${seq}`;
+  return slug.replace(/[^a-z0-9-]+/gi, "").slice(0, 48);
 }
 
 export function shareUrl(origin: string, slug: string, token: string): string {
@@ -33,9 +34,8 @@ export function shareUrl(origin: string, slug: string, token: string): string {
 /** Extract the random token from a (possibly slug-prefixed) share segment. */
 export function shareTokenFromSegment(segment: string): string {
   const value = decodeURIComponent(segment);
-  const lastDash = value.lastIndexOf("-");
-  // Random tokens are base32 (no dashes); slug contains dashes.
-  if (lastDash < 0) return value;
-  const tail = value.slice(lastDash + 1);
-  return /^[0-9A-Z]+$/.test(tail) ? tail : value;
+  // Random tokens are 20-char Crockford base32 (no dashes).
+  const match = value.match(/[0-9A-Z]{20}$/);
+  if (match) return match[0];
+  return value;
 }

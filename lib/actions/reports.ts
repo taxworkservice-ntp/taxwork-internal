@@ -842,7 +842,8 @@ export async function createReportShareLink(
       return { ok: false, error: "ต้องออกรายงานก่อนจึงจะสร้างลิงก์ได้" };
 
     // The token is a long random secret and the only lookup key; the slug in
-    // the URL is decorative.
+    // the URL is decorative. Writing a new token on the single monthly_reports
+    // row replaces (cancels) any previous link immediately.
     const token = generatePublicId(20);
     const expires = new Date(Date.now() + Math.max(1, days) * 86400000);
     await sql`update monthly_reports
