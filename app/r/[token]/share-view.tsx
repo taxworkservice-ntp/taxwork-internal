@@ -375,10 +375,20 @@ export default function ShareView({
                     {/* slips first */}
                     {hasSlip && (
                       <div className="space-y-3 border-b border-neutral-100 px-4 py-4">
-                        <div className="text-xs font-semibold text-neutral-700">
-                          Pay-in slip
-                          {slipPage ? ` · หน้า ${slipPage} ในไฟล์ PDF` : ""}
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            Pay-in slip
+                          </span>
+                          {slipPage ? (
+                            <span className="text-[11px] text-neutral-400">
+                              หน้า {slipPage} ในไฟล์ PDF
+                            </span>
+                          ) : null}
                         </div>
+                        <p className="text-xs text-neutral-600">
+                          ให้ชำระผ่าน Pay-in slip ที่แนบไว้ — เปิดไฟล์ด้านล่างแล้วชำระตามใบนำฝาก
+                        </p>
                         {s.slips.map((slip) =>
                           slip.isImage && slip.dataUri ? (
                             <ImageBlock
@@ -412,18 +422,17 @@ export default function ShareView({
                     {/* bank / QR */}
                     {(hasBank || hasQr) && (
                       <div className="px-4 py-3">
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                          วิธีชำระ
+                        </div>
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0 text-sm font-medium text-neutral-800">
                             {s.bankName || (hasQr ? s.paymentMethod?.trim() || "ชำระผ่าน QR" : "")}
                           </div>
                           <div className="flex shrink-0 flex-col items-end gap-1">
-                            {hasSlip && (
-                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                                Pay-in slip
-                              </span>
-                            )}
                             {hasQr && (
-                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                                 QR code
                               </span>
                             )}
@@ -459,6 +468,9 @@ export default function ShareView({
                         )}
                         {hasQr && (
                           <div className="mt-3">
+                            <p className="mb-2 text-xs text-neutral-600">
+                              สแกน QR ด้านล่างเพื่อชำระเงิน — หรือแตะที่รูปเพื่อคัดลอก
+                            </p>
                             <QrBlock
                               dataUri={s.qr!}
                               fileName={`qr-${s.title.replace(/\s+/g, "-")}.png`}
@@ -474,13 +486,6 @@ export default function ShareView({
                         {s.paymentMethod
                           ? `วิธีชำระ: ${s.paymentMethod}`
                           : "ชำระตามช่องทางที่เจ้าหน้าที่แจ้ง"}
-                      </div>
-                    )}
-                    {!hasBank && !hasQr && hasSlip && (
-                      <div className="flex justify-end border-t border-neutral-100 px-4 py-2">
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                          Pay-in slip
-                        </span>
                       </div>
                     )}
                   </div>
