@@ -398,22 +398,43 @@ export default function ShareView({
                               hint="แตะที่สลิปเพื่อคัดลอกรูป"
                             />
                           ) : (
-                            <div key={slip.id}>
-                              <a
-                                href={`/r/${token}/slip/${slip.id}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-center text-sm font-semibold text-emerald-700 active:bg-emerald-100"
+                            <a
+                              key={slip.id}
+                              href={`/r/${token}/slip/${slip.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white p-3 transition-colors hover:bg-neutral-50 active:bg-neutral-100"
+                            >
+                              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-[10px] font-bold text-neutral-500">
+                                PDF
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-sm font-medium text-neutral-800">
+                                  เปิดใบนำฝาก
+                                </span>
+                                <span
+                                  className="block truncate text-xs text-neutral-500"
+                                  title={slip.file_name}
+                                >
+                                  {slip.file_name}
+                                </span>
+                              </span>
+                              <svg
+                                width="16"
+                                height="16"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                                className="shrink-0 text-neutral-400"
                               >
-                                เปิดสลิป (PDF)
-                              </a>
-                              <div
-                                className="mt-1 truncate text-xs text-neutral-500"
-                                title={slip.file_name}
-                              >
-                                {slip.file_name}
-                              </div>
-                            </div>
+                                <path
+                                  d="M6 3h7v7M13 3L6.5 9.5"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </a>
                           )
                         )}
                       </div>
