@@ -84,6 +84,8 @@ export type MonthlyReportFileRow = {
   uploaded_by: string | null;
   client_id: string | null;
   client_name: string | null;
+  client_avatar_text: string | null;
+  client_avatar_color: string | null;
   report_id: string | null;
   period_label: string | null;
   seq: number | null;
@@ -95,53 +97,28 @@ export type MonthlyReportFileRow = {
 };
 
 /**
- * Every file that belongs to a monthly report: the archived report PDFs,
- * the Part 2 documents, and the pay-in slips / QR images attached to filings.
- * Joined to the round + client so the files page can filter and label them.
+ * The report PDFs worth surfacing on the files page: for every round
+ * (ครั้งที่) only the newest generated copy, joined to its client + period.
+ * Attachments, slips, and QR images are intentionally excluded.
  */
 export async function listMonthlyReportFiles(): Promise<MonthlyReportFileRow[]> {
   await requireUser();
   const rows = (await sql`
-    select f.id::text as id, 'report' as kind, f.storage_path, f.file_name,
-      f.size_bytes, f.mime_type, f.uploaded_at as created_at, f.uploaded_by,
-      f.client_id::text as client_id, c.name as client_name,
-      r.id::text as report_id, r.period_label, r.seq, r.label, r.status, r.report_no,
-      null::text as form_code, null::numeric as amount
-    from files f
-    left join monthly_reports r on r.id = f.report_id
-    left join clients c on c.id = f.client_id
-    where f.category = 'monthly-report'
-
-    union all
-
-    select d.id::text as id, 'document' as kind, d.storage_path, d.file_name,
-      d.size_bytes, d.mime_type, d.created_at, null::text as uploaded_by,
-      r.client_id::text as client_id, c.name as client_name,
-      r.id::text as report_id, r.period_label, r.seq, r.label, r.status, r.report_no,
-      null::text as form_code, null::numeric as amount
-    from report_documents d
-    join monthly_reports r on r.id = d.report_id
-    left join clients c on c.id = r.client_id
-
-    union all
-
-    select a.id::text as id,
-      case
-        when a.kind = 'qr' then 'qr'
-        when a.kind = 'document' then 'document'
-        else 'slip'
-      end as kind,
-      a.storage_path, a.file_name, a.size_bytes, a.mime_type, a.created_at,
-      null::text as uploaded_by,
-      r.client_id::text as client_id, c.name as client_name,
-      r.id::text as report_id, r.period_label, r.seq, r.label, r.status, r.report_no,
-      mf.form_code, mf.amount
-    from filing_attachments a
-    join monthly_filings mf on mf.id = a.filing_id
-    join monthly_reports r on r.id = mf.report_id
-    left join clients c on c.id = r.client_id
-
-    order by created_at desc
+    select * from (
+      select distinct on (f.report_id)
+        f.id::text as id, 'report' as kind, f.storage_path, f.file_name,
+        f.size_bytes, f.mime_type, f.uploaded_at as created_at, f.uploaded_by,
+        f.client_id::text as client_id, c.name as client_name,
+        c.avatar_text as client_avatar_text, c.avatar_color as client_avatar_color,
+        r.id::text as report_id, r.period_label, r.seq, r.label, r.status, r.report_no,
+        null::text as form_code, null::numeric as amount
+      from files f
+      join monthly_reports r on r.id = f.report_id
+      left join clients c on c.id = f.client_id
+      where f.category = 'monthly-report'
+      order by f.report_id, f.uploaded_at desc
+    ) latest
+    order by latest.created_at desc
   `) as Record<string, unknown>[];
   return rows.map((r) => ({
     id: String(r.id),
@@ -157,6 +134,10 @@ export async function listMonthlyReportFiles(): Promise<MonthlyReportFileRow[]> 
     uploaded_by: r.uploaded_by == null ? null : String(r.uploaded_by),
     client_id: r.client_id == null ? null : String(r.client_id),
     client_name: r.client_name == null ? null : String(r.client_name),
+    client_avatar_text:
+      r.client_avatar_text == null ? null : String(r.client_avatar_text),
+    client_avatar_color:
+      r.client_avatar_color == null ? null : String(r.client_avatar_color),
     report_id: r.report_id == null ? null : String(r.report_id),
     period_label: r.period_label == null ? null : String(r.period_label),
     seq: r.seq == null ? null : num(r.seq),

@@ -8,6 +8,7 @@ import PageHeader from "@/components/page-header";
 import SearchInput from "@/components/search-input";
 import EmptyState from "@/components/empty-state";
 import Badge from "@/components/badge";
+import ClientAvatar from "@/components/client-avatar";
 import InlineConfirm from "@/components/inline-confirm";
 import PasswordValue from "@/components/password-value";
 import { ToastStack, useToasts } from "@/components/toast";
@@ -21,6 +22,8 @@ type Client = {
   address: string | null;
   notes: string | null;
   status: string;
+  avatar_text: string | null;
+  avatar_color: string | null;
   created_at: string;
 };
 
@@ -413,11 +416,21 @@ export default function ClientsPage() {
                         </button>
                       </td>
                       <td>
-                        <Link href={`/clients/${c.id}`} className="font-medium text-blue-700 hover:underline">
-                          {c.name}
-                        </Link>
-                        <div className="mt-0.5 text-xs text-neutral-500">
-                          {c.tax_id ? `เลขภาษี ${c.tax_id}` : "ยังไม่มีเลขผู้เสียภาษี"}
+                        <div className="flex items-center gap-2">
+                          <ClientAvatar
+                            name={c.name}
+                            text={c.avatar_text}
+                            color={c.avatar_color}
+                            size="sm"
+                          />
+                          <div className="min-w-0">
+                            <Link href={`/clients/${c.id}`} className="font-medium text-blue-700 hover:underline">
+                              {c.name}
+                            </Link>
+                            <div className="mt-0.5 text-xs text-neutral-500">
+                              {c.tax_id ? `เลขภาษี ${c.tax_id}` : "ยังไม่มีเลขผู้เสียภาษี"}
+                            </div>
+                          </div>
                         </div>
                       </td>
                       <td>

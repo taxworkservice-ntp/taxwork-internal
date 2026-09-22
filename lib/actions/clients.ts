@@ -13,6 +13,8 @@ export type Client = {
   address: string | null;
   notes: string | null;
   status: string;
+  avatar_text: string | null;
+  avatar_color: string | null;
   created_at: string;
 };
 
@@ -64,7 +66,16 @@ function str(v: unknown): string {
   return String(v ?? "");
 }
 
-const CLIENT_EDITABLE = ["name", "tax_id", "email", "phone", "address", "notes"];
+const CLIENT_EDITABLE = [
+  "name",
+  "tax_id",
+  "email",
+  "phone",
+  "address",
+  "notes",
+  "avatar_text",
+  "avatar_color",
+];
 
 export async function listClients(): Promise<Client[]> {
   await requireUser();

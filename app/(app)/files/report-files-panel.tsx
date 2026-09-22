@@ -2,13 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  listMonthlyReportFiles,
-  type MonthlyReportFileRow,
-  type ReportFileKind,
-} from "@/lib/actions/files";
+import { listMonthlyReportFiles, type MonthlyReportFileRow } from "@/lib/actions/files";
 import SearchInput from "@/components/search-input";
 import EmptyState from "@/components/empty-state";
+import ClientAvatar from "@/components/client-avatar";
 import { ToastStack, useToasts } from "@/components/toast";
 
 const THAI_MONTHS = [
@@ -42,24 +39,6 @@ function periodToThai(period: string | null): string {
   return `${THAI_MONTHS[m - 1]} ${y + 543}`;
 }
 
-const KIND_META: Record<ReportFileKind, { label: string; badge: string }> = {
-  report: { label: "รายงาน PDF", badge: "bg-blue-50 text-blue-700 ring-blue-600/20" },
-  document: { label: "เอกสารแนบ", badge: "bg-violet-50 text-violet-700 ring-violet-600/20" },
-  slip: { label: "สลิป", badge: "bg-emerald-50 text-emerald-700 ring-emerald-600/20" },
-  qr: { label: "QR", badge: "bg-amber-50 text-amber-700 ring-amber-600/20" },
-};
-
-function KindBadge({ kind }: { kind: ReportFileKind }) {
-  const meta = KIND_META[kind];
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${meta.badge}`}
-    >
-      {meta.label}
-    </span>
-  );
-}
-
 function StatusBadge({ status }: { status: string | null }) {
   if (!status) return <span className="text-neutral-400">—</span>;
   const issued = status === "issued";
@@ -91,7 +70,6 @@ export default function ReportFilesPanel() {
   const [filterClient, setFilterClient] = useState("");
   const [filterYear, setFilterYear] = useState("");
   const [filterMonth, setFilterMonth] = useState("");
-  const [filterKind, setFilterKind] = useState<"" | ReportFileKind>("");
   const [filterStatus, setFilterStatus] = useState("");
   const { toasts, push, dismiss } = useToasts();
 
@@ -123,9 +101,8 @@ export default function ReportFilesPanel() {
       ),
     [rows]
   );
-  const hasFilter =
-    filterClient !== "" || filterYear !== "" || filterMonth !== "" || filterKind !== "" || filterStatus !== "";
-  const activeFilterCount = [filterClient, filterYear, filterMonth, filterKind, filterStatus].filter(Boolean).length;
+  const hasFilter = filterClient !== "" || filterYear !== "" || filterMonth !== "" || filterStatus !== "";
+  const activeFilterCount = [filterClient, filterYear, filterMonth, filterStatus].filter(Boolean).length;
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -135,29 +112,25 @@ export default function ReportFilesPanel() {
           !r.file_name.toLowerCase().includes(q) &&
           !(r.client_name ?? "").toLowerCase().includes(q) &&
           !(r.report_no ?? "").toLowerCase().includes(q) &&
-          !(r.form_code ?? "").toLowerCase().includes(q) &&
           !periodToThai(r.period_label).toLowerCase().includes(q)
         )
           return false;
       }
       if (filterClient && r.client_id !== filterClient) return false;
-      if (filterKind && r.kind !== filterKind) return false;
       if (filterStatus && r.status !== filterStatus) return false;
       if (filterYear && r.period_label?.slice(0, 4) !== filterYear) return false;
       if (filterMonth && r.period_label?.slice(5, 7) !== filterMonth.padStart(2, "0")) return false;
       return true;
     });
-  }, [rows, search, filterClient, filterKind, filterStatus, filterYear, filterMonth]);
+  }, [rows, search, filterClient, filterStatus, filterYear, filterMonth]);
 
   const totalSize = useMemo(() => filtered.reduce((s, r) => s + r.size_bytes, 0), [filtered]);
-  const reportCount = useMemo(() => new Set(filtered.map((r) => r.report_id).filter(Boolean)).size, [filtered]);
   const clientCount = useMemo(() => new Set(filtered.map((r) => r.client_id).filter(Boolean)).size, [filtered]);
 
   function clearFilters() {
     setFilterClient("");
     setFilterYear("");
     setFilterMonth("");
-    setFilterKind("");
     setFilterStatus("");
   }
 
@@ -179,11 +152,10 @@ export default function ReportFilesPanel() {
   return (
     <div className="space-y-4">
       {/* Summary */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="ไฟล์ที่แสดง" value={filtered.length.toLocaleString()} />
-        <StatCard label="ขนาดรวม" value={fmtSize(totalSize)} />
-        <StatCard label="รอบรายงาน" value={reportCount.toLocaleString()} />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <StatCard label="ไฟล์รายงาน" value={filtered.length.toLocaleString()} />
         <StatCard label="ลูกค้า" value={clientCount.toLocaleString()} />
+        <StatCard label="ขนาดรวม" value={fmtSize(totalSize)} />
       </div>
 
       {/* Search + filters */}
@@ -192,7 +164,7 @@ export default function ReportFilesPanel() {
           <SearchInput
             value={search}
             onChange={setSearch}
-            placeholder="ค้นหาไฟล์ ลูกค้า เลขที่รายงาน หรือแบบฟอร์ม..."
+            placeholder="ค้นหาไฟล์ ลูกค้า เลขที่รายงาน หรือเดือน..."
           />
           {hasFilter && (
             <button type="button" className="btn" onClick={clearFilters}>
@@ -200,7 +172,7 @@ export default function ReportFilesPanel() {
             </button>
           )}
           <span className="ml-auto text-xs text-neutral-500">
-            {loading ? "กำลังโหลด..." : `${filtered.length.toLocaleString()} ไฟล์`}
+            {loading ? "กำลังโหลด..." : `${filtered.length.toLocaleString()} รายการ`}
           </span>
         </div>
 
@@ -212,20 +184,6 @@ export default function ReportFilesPanel() {
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
-            </select>
-          </div>
-          <div className="min-w-[150px]">
-            <label className="label">ประเภทไฟล์</label>
-            <select
-              className="input"
-              value={filterKind}
-              onChange={(e) => setFilterKind(e.target.value as "" | ReportFileKind)}
-            >
-              <option value="">ทุกประเภท</option>
-              <option value="report">รายงาน PDF</option>
-              <option value="document">เอกสารแนบ</option>
-              <option value="slip">สลิป</option>
-              <option value="qr">QR</option>
             </select>
           </div>
           <div className="min-w-[120px]">
@@ -268,15 +226,6 @@ export default function ReportFilesPanel() {
                 {clients.find((c) => c.id === filterClient)?.name ?? "ลูกค้า"} <span className="text-neutral-400">×</span>
               </button>
             )}
-            {filterKind && (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-neutral-700 hover:bg-neutral-200"
-                onClick={() => setFilterKind("")}
-              >
-                {KIND_META[filterKind].label} <span className="text-neutral-400">×</span>
-              </button>
-            )}
             {filterYear && (
               <button
                 type="button"
@@ -310,11 +259,11 @@ export default function ReportFilesPanel() {
 
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">
-        <table className="table-base w-full min-w-[900px]">
+        <table className="table-base w-full min-w-[820px]">
           <thead>
             <tr>
               <th>ไฟล์</th>
-              <th className="w-40">ลูกค้า</th>
+              <th className="whitespace-nowrap">ลูกค้า</th>
               <th className="w-56">รอบรายงาน</th>
               <th className="w-28">สถานะ</th>
               <th className="w-32">วันที่</th>
@@ -332,7 +281,7 @@ export default function ReportFilesPanel() {
 
             {!loading &&
               filtered.map((r) => (
-                <tr key={`${r.kind}-${r.id}`} className="hover:bg-neutral-50">
+                <tr key={r.id} className="hover:bg-neutral-50">
                   <td>
                     <div className="flex items-center gap-2">
                       <button
@@ -342,23 +291,25 @@ export default function ReportFilesPanel() {
                       >
                         {r.file_name}
                       </button>
-                      <KindBadge kind={r.kind} />
+                      <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 ring-1 ring-blue-600/20 ring-inset">
+                        PDF
+                      </span>
                     </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-neutral-500">
-                      <span>{fmtSize(r.size_bytes)}</span>
-                      {(r.kind === "slip" || r.kind === "qr") && r.form_code && (
-                        <>
-                          <span className="text-neutral-300">·</span>
-                          <span>{r.form_code}</span>
-                        </>
-                      )}
-                    </div>
+                    <div className="mt-0.5 text-xs text-neutral-500">{fmtSize(r.size_bytes)}</div>
                   </td>
-                  <td>
+                  <td className="whitespace-nowrap">
                     {r.client_id ? (
-                      <Link href={`/clients/${r.client_id}`} className="text-blue-600 underline">
-                        {r.client_name ?? "—"}
-                      </Link>
+                      <span className="inline-flex items-center gap-2">
+                        <ClientAvatar
+                          name={r.client_name ?? ""}
+                          text={r.client_avatar_text}
+                          color={r.client_avatar_color}
+                          size="sm"
+                        />
+                        <Link href={`/clients/${r.client_id}`} className="text-blue-600 underline">
+                          {r.client_name ?? "—"}
+                        </Link>
+                      </span>
                     ) : (
                       <span className="text-neutral-400">—</span>
                     )}

@@ -20,10 +20,12 @@ import CredentialRow from "@/components/credential-row";
 import FileSection from "@/components/file-section";
 import CopyButton from "@/components/copy-button";
 import Badge from "@/components/badge";
+import ClientAvatar from "@/components/client-avatar";
 import EmptyState from "@/components/empty-state";
 import InlineConfirm from "@/components/inline-confirm";
 import PasswordValue from "@/components/password-value";
 import { ToastStack, useToasts } from "@/components/toast";
+import { AVATAR_PALETTE, clientInitials, normalizeHex } from "@/lib/client-avatar";
 
 type Client = {
   id: string;
@@ -34,6 +36,8 @@ type Client = {
   address: string | null;
   notes: string | null;
   status: string;
+  avatar_text: string | null;
+  avatar_color: string | null;
 };
 
 type TaskInstance = {
@@ -138,6 +142,8 @@ export default function ClientDetailPage() {
         phone: d.client.phone ?? "",
         address: d.client.address ?? "",
         notes: d.client.notes ?? "",
+        avatar_text: d.client.avatar_text ?? "",
+        avatar_color: d.client.avatar_color ?? "",
       });
     }
     setCredentials(d.credentials);
@@ -154,7 +160,12 @@ export default function ClientDetailPage() {
     if (savingClient) return;
     setSavingClient(true);
     try {
-      await updateClient(id, edit);
+      const payload = {
+        ...edit,
+        avatar_text: (edit.avatar_text ?? "").trim() || null,
+        avatar_color: edit.avatar_color ? edit.avatar_color : null,
+      };
+      await updateClient(id, payload);
       setShowEditForm(false);
       await load();
       push({ type: "success", message: "บันทึกข้อมูลลูกค้าแล้ว" });
@@ -274,11 +285,19 @@ export default function ClientDetailPage() {
           ← ลูกค้า
         </Link>
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="break-words text-xl font-semibold leading-snug">{client.name}</h1>
-            <p className="mt-1 text-sm text-neutral-500">
-              {client.tax_id ? `เลขภาษี ${client.tax_id}` : "ยังไม่มีเลขผู้เสียภาษี"}
-            </p>
+          <div className="flex min-w-0 items-start gap-3">
+            <ClientAvatar
+              name={client.name}
+              text={client.avatar_text}
+              color={client.avatar_color}
+              size="lg"
+            />
+            <div className="min-w-0">
+              <h1 className="break-words text-xl font-semibold leading-snug">{client.name}</h1>
+              <p className="mt-1 text-sm text-neutral-500">
+                {client.tax_id ? `เลขภาษี ${client.tax_id}` : "ยังไม่มีเลขผู้เสียภาษี"}
+              </p>
+            </div>
           </div>
           <Badge tone={client.status === "active" ? "success" : "neutral"}>
             {client.status === "active" ? "ใช้งาน" : "เก็บถาวร"}
@@ -334,6 +353,72 @@ export default function ClientDetailPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded border border-neutral-200 bg-neutral-50 p-3 sm:col-span-2">
+              <div className="mb-2 text-xs font-semibold text-neutral-500">ไอคอนลูกค้า</div>
+              <div className="flex items-start gap-3">
+                <ClientAvatar
+                  name={edit.name ?? client.name}
+                  text={edit.avatar_text}
+                  color={edit.avatar_color}
+                  size="lg"
+                />
+                <div className="flex-1 space-y-2">
+                  <div>
+                    <label className="label">ตัวย่อ (ไม่เกิน 4 ตัวอักษร)</label>
+                    <input
+                      className="input max-w-[9rem]"
+                      maxLength={4}
+                      placeholder={clientInitials(edit.name ?? client.name) || "DTN"}
+                      value={edit.avatar_text ?? ""}
+                      onChange={(e) =>
+                        setEdit({
+                          ...edit,
+                          avatar_text: e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase(),
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="label">สี</label>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        title="ไม่มีสี (เทา)"
+                        aria-label="ไม่มีสี (เทา)"
+                        className={`h-7 w-7 rounded-md border border-neutral-300 bg-neutral-100 ${
+                          !normalizeHex(edit.avatar_color) ? "ring-2 ring-neutral-900 ring-offset-1" : ""
+                        }`}
+                        onClick={() => setEdit({ ...edit, avatar_color: "" })}
+                      />
+                      {AVATAR_PALETTE.map((p) => (
+                        <button
+                          key={p.key}
+                          type="button"
+                          title={p.key}
+                          aria-label={`สี ${p.key}`}
+                          className={`h-7 w-7 rounded-md ${
+                            normalizeHex(edit.avatar_color) === p.hex
+                              ? "ring-2 ring-neutral-900 ring-offset-1"
+                              : ""
+                          }`}
+                          style={{ backgroundColor: p.hex }}
+                          onClick={() => setEdit({ ...edit, avatar_color: p.hex })}
+                        />
+                      ))}
+                      <label className="inline-flex items-center gap-1.5 text-xs text-neutral-500">
+                        <input
+                          type="color"
+                          className="h-7 w-9 cursor-pointer rounded border border-neutral-300 bg-white p-0.5"
+                          value={normalizeHex(edit.avatar_color) ?? "#475569"}
+                          onChange={(e) => setEdit({ ...edit, avatar_color: e.target.value.toUpperCase() })}
+                        />
+                        กำหนดเอง
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div>
               <label className="label">ชื่อบริษัท</label>
               <input className="input" value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
