@@ -22,22 +22,29 @@ function fmtMoney(n: number): string {
   });
 }
 
-const BANK_APPS: { test: RegExp; name: string; scheme: string }[] = [
-  { test: /กสิกร|kbank|k\s?plus/i, name: "เปิด K PLUS", scheme: "kplus://" },
-  { test: /ไทยพาณิชย์|scb/i, name: "เปิด SCB EASY", scheme: "scbeasy://" },
-  { test: /กรุงเทพ|bangkok|bbl/i, name: "เปิด Bualuang mBanking", scheme: "bualuangmbanking://" },
-  { test: /กรุงไทย|krungthai|ktb/i, name: "เปิด Krungthai NEXT", scheme: "ktbnext://" },
-  { test: /กรุงศรี|krungsri|kma/i, name: "เปิด KMA", scheme: "krungsri-kma://" },
-];
+function dataUriToBlob(uri: string): Blob | null {
+  const comma = uri.indexOf(",");
+  if (comma < 0) return null;
+  const meta = uri.slice(0, comma);
+  if (!meta.includes(";base64")) return null;
+  const mime = meta.match(/data:([^;]+)/)?.[1] || "image/png";
+  try {
+    const bin = atob(uri.slice(comma + 1));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  } catch {
+    return null;
+  }
+}
 
 type Group = {
   key: string;
   title: string;
-  lines: string[];
+  accountName: string | null;
   qr: string | null;
   accountNo: string | null;
   promptpay: string | null;
-  bankName: string;
   items: ReportModelFiling[];
 };
 
@@ -48,19 +55,13 @@ function groupFilings(model: ReportModel): Group[] {
     const key = f.bank?.id ?? `qr-${f.id}`;
     if (!map.has(key)) {
       const b = f.bank;
-      const lines: string[] = [];
-      if (b) {
-        if (b.bank_name) lines.push(b.bank_name);
-        if (b.account_name) lines.push(`ชื่อบัญชี ${b.account_name}`);
-      }
       map.set(key, {
         key,
         title: b?.bank_name || b?.label || f.form_code || "QR",
-        lines,
+        accountName: b?.account_name || null,
         qr: b?.qrDataUri ?? null,
         accountNo: b?.account_no ?? null,
         promptpay: b?.promptpay_id ?? null,
-        bankName: b?.bank_name ?? "",
         items: [],
       });
     }
@@ -71,24 +72,101 @@ function groupFilings(model: ReportModel): Group[] {
   return [...map.values()];
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-800">
+      <span className="h-4 w-1 rounded-full bg-neutral-900" />
+      {children}
+    </h2>
+  );
+}
+
+function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      type="button"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          // clipboard unavailable
-        }
-      }}
-      className="rounded border border-neutral-300 px-2 py-0.5 text-xs text-neutral-700"
-    >
-      {copied ? "คัดลอกแล้ว" : label}
-    </button>
+    <div className="flex items-center justify-between gap-3 py-2">
+      <div className="min-w-0">
+        <div className="text-[11px] uppercase tracking-wide text-neutral-400">
+          {label}
+        </div>
+        <div className="truncate font-mono text-sm text-neutral-800">{value}</div>
+      </div>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(value);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          } catch {
+            // clipboard unavailable
+          }
+        }}
+        className={`shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+          copied
+            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+            : "border-neutral-300 bg-white text-neutral-700 active:bg-neutral-100"
+        }`}
+      >
+        {copied ? "คัดลอกแล้ว" : "คัดลอก"}
+      </button>
+    </div>
+  );
+}
+
+function QrBlock({ dataUri, fileName }: { dataUri: string; fileName: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "error">("idle");
+
+  async function handleCopy() {
+    try {
+      const blob = dataUriToBlob(dataUri);
+      if (
+        blob &&
+        typeof ClipboardItem !== "undefined" &&
+        navigator.clipboard?.write
+      ) {
+        await navigator.clipboard.write([
+          new ClipboardItem({ [blob.type]: blob }),
+        ]);
+        setState("copied");
+        setTimeout(() => setState("idle"), 2000);
+        return;
+      }
+    } catch {
+      // fall through to the error hint (user can use "บันทึก QR")
+    }
+    setState("error");
+    setTimeout(() => setState("idle"), 3000);
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label="แตะเพื่อคัดลอกรูป QR"
+        className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm transition-transform active:scale-[0.98]"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={dataUri} alt="QR" className="h-56 w-56 object-contain" />
+      </button>
+      <div className="flex items-center gap-2 text-xs">
+        <a
+          href={dataUri}
+          download={fileName}
+          className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 font-medium text-neutral-700"
+        >
+          บันทึก QR
+        </a>
+        <span className="text-neutral-500">
+          {state === "copied"
+            ? "คัดลอกรูป QR แล้ว"
+            : state === "error"
+              ? "คัดลอกอัตโนมัติไม่ได้ — ใช้ “บันทึก QR”"
+              : "แตะที่ QR เพื่อคัดลอกรูป"}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -112,131 +190,185 @@ export default function ShareView({
   const settled = status.status === "paid";
 
   return (
-    <main className="mx-auto max-w-md space-y-5 p-4 pb-16">
-      <header className="space-y-1">
-        <div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+    <main className="mx-auto max-w-md space-y-6 p-4 pb-20">
+      {/* Header */}
+      <header className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
           {model.firmName}
         </div>
-        <h1 className="text-lg font-bold leading-tight">
+        <h1 className="mt-1 text-lg font-bold leading-tight text-neutral-900">
           รายงานภาษี {periodToThai(model.periodLabel)}
         </h1>
-        <div className="text-sm text-neutral-600">{model.client.name}</div>
+        <div className="mt-1 text-sm text-neutral-700">{model.client.name}</div>
         {model.reportNo && (
-          <div className="text-xs text-neutral-400">เลขที่รายงาน {model.reportNo}</div>
+          <div className="mt-0.5 text-xs text-neutral-400">
+            เลขที่รายงาน {model.reportNo}
+          </div>
+        )}
+        {status.status !== "unpaid" && (
+          <div
+            className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+              settled
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-amber-100 text-amber-800"
+            }`}
+          >
+            {settled
+              ? "ชำระครบถ้วนแล้ว"
+              : `ชำระแล้ว ${fmtMoney(status.paid)} · คงเหลือ ${fmtMoney(status.remaining)}`}
+          </div>
         )}
       </header>
 
+      {/* Download */}
       {hasPdf && (
         <a
           href={`/r/${token}/pdf`}
-          className="block rounded-lg bg-neutral-900 px-4 py-3 text-center text-sm font-medium text-white"
+          className="block rounded-xl bg-neutral-900 px-4 py-3 text-center text-sm font-semibold text-white shadow-sm active:bg-neutral-800"
         >
           ดาวน์โหลดรายงาน (PDF)
         </a>
       )}
 
-      {status.status !== "unpaid" && (
-        <div
-          className={`rounded-lg px-4 py-3 text-sm ${
-            settled
-              ? "bg-emerald-50 text-emerald-800"
-              : "bg-amber-50 text-amber-800"
-          }`}
-        >
-          {settled
-            ? "ชำระครบถ้วนแล้ว ขอบคุณ"
-            : `ชำระแล้ว ${fmtMoney(status.paid)} บาท · คงเหลือ ${fmtMoney(status.remaining)} บาท`}
+      {/* Summary */}
+      <section>
+        <SectionTitle>สรุปยอด</SectionTitle>
+        <div className="grid grid-cols-3 divide-x divide-neutral-100 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+          <div className="p-3">
+            <div className="text-[11px] text-neutral-400">ยอดที่ต้องชำระ</div>
+            <div className="mt-0.5 text-sm font-semibold text-neutral-900">
+              {fmtMoney(status.due)}
+            </div>
+          </div>
+          <div className="p-3">
+            <div className="text-[11px] text-neutral-400">รับชำระแล้ว</div>
+            <div className="mt-0.5 text-sm font-semibold text-emerald-700">
+              {fmtMoney(status.paid)}
+            </div>
+          </div>
+          <div className="p-3">
+            <div className="text-[11px] text-neutral-400">คงเหลือ</div>
+            <div className="mt-0.5 text-sm font-semibold text-red-600">
+              {fmtMoney(status.remaining)}
+            </div>
+          </div>
         </div>
-      )}
+      </section>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">ช่องทางการชำระเงิน</h2>
+      {/* Payment */}
+      <section>
+        <SectionTitle>ช่องทางการชำระเงิน</SectionTitle>
+
         {settled ? (
-          <p className="text-sm text-neutral-500">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 shadow-sm">
             รายการนี้ชำระครบถ้วนแล้ว ไม่ต้องชำระเพิ่ม
-          </p>
+          </div>
+        ) : groups.length === 0 ? (
+          <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-sm text-neutral-500 shadow-sm">
+            ไม่มีรายการที่ต้องชำระ
+          </div>
         ) : (
           <>
-            <p className="text-xs text-neutral-500">
-              สแกนด้วยแอปธนาคาร หรือบันทึกภาพแล้วเลือกสแกนจากอัลบั้ม
-            </p>
-
-        {groups.length === 0 && (
-          <p className="text-sm text-neutral-500">ไม่มีรายการที่ต้องชำระ</p>
-        )}
-
-        {groups.map((g) => {
-          const subtotal = g.items.reduce((s, f) => s + Number(f.amount ?? 0), 0);
-          const app = BANK_APPS.find((b) => b.test.test(g.bankName));
-          return (
-            <div key={g.key} className="rounded-lg border border-neutral-200 p-3">
-              <div className="text-sm font-bold">{g.title}</div>
-              {g.lines.slice(1).map((l, i) => (
-                <div key={i} className="text-sm text-neutral-700">
-                  {l}
-                </div>
-              ))}
-
-              {g.accountNo && (
-                <div className="mt-1 flex items-center gap-2 text-sm">
-                  <span>เลขที่บัญชี {g.accountNo}</span>
-                  <CopyButton value={g.accountNo} label="คัดลอก" />
-                </div>
-              )}
-              {g.promptpay && (
-                <div className="mt-1 flex items-center gap-2 text-sm">
-                  <span>พร้อมเพย์ {g.promptpay}</span>
-                  <CopyButton value={g.promptpay} label="คัดลอก" />
-                </div>
-              )}
-
-              {g.qr && (
-                <div className="mt-3 flex justify-center">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={g.qr}
-                    alt="QR"
-                    className="h-56 w-56 rounded border border-neutral-200 bg-white object-contain p-2"
-                  />
-                </div>
-              )}
-
-              <ul className="mt-3 divide-y divide-neutral-100 border-t border-neutral-100">
-                {g.items.map((f) => (
-                  <li key={f.id} className="flex justify-between py-1.5 text-sm">
-                    <span>{f.form_code || "-"}</span>
-                    <span className="text-neutral-600">{fmtMoney(f.amount)} บาท</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="flex justify-between pt-2 text-sm font-semibold">
-                <span>รวมบัญชีนี้</span>
-                <span>{fmtMoney(subtotal)} บาท</span>
-              </div>
-
-              {app && (
-                <a
-                  href={app.scheme}
-                  className="mt-3 block rounded border border-neutral-300 px-3 py-2 text-center text-sm font-medium"
-                >
-                  {app.name}
-                </a>
-              )}
+            <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
+              <div className="mb-1 font-medium text-neutral-700">วิธีชำระเงิน</div>
+              <ol className="list-inside list-decimal space-y-0.5">
+                <li>แตะที่รูป QR เพื่อคัดลอกรูป หรือกด “บันทึก QR”</li>
+                <li>เปิดแอปธนาคาร แล้วเลือกสแกน / อัปโหลด QR จากอัลบั้ม</li>
+                <li>หรือโอนเข้าบัญชี / พร้อมเพย์ ตามหมายเลขที่แสดง</li>
+              </ol>
             </div>
-          );
-        })}
 
-        {groups.length > 0 && (
-          <div className="flex justify-between border-t-2 border-neutral-900 pt-3 text-base font-bold">
-            <span>ยอดรวมทั้งสิ้น</span>
-            <span>{fmtMoney(grandTotal)} บาท</span>
-          </div>
-        )}
+            <div className="space-y-4">
+              {groups.map((g) => {
+                const subtotal = g.items.reduce(
+                  (s, f) => s + Number(f.amount ?? 0),
+                  0
+                );
+                return (
+                  <div
+                    key={g.key}
+                    className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm"
+                  >
+                    {/* card header */}
+                    <div className="border-b border-neutral-100 bg-neutral-50/70 px-4 py-3">
+                      <div className="text-sm font-bold text-neutral-900">
+                        {g.title}
+                      </div>
+                      {g.accountName && (
+                        <div className="text-xs text-neutral-500">
+                          ชื่อบัญชี {g.accountName}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* account details */}
+                    {(g.accountNo || g.promptpay) && (
+                      <div className="divide-y divide-neutral-100 px-4">
+                        {g.accountNo && (
+                          <CopyRow label="เลขที่บัญชี" value={g.accountNo} />
+                        )}
+                        {g.promptpay && (
+                          <CopyRow label="พร้อมเพย์" value={g.promptpay} />
+                        )}
+                      </div>
+                    )}
+
+                    {/* QR */}
+                    {g.qr && (
+                      <div className="border-t border-neutral-100 px-4 py-4">
+                        <QrBlock
+                          dataUri={g.qr}
+                          fileName={`qr-${g.title.replace(/\s+/g, "-")}.png`}
+                        />
+                      </div>
+                    )}
+
+                    {/* items */}
+                    <div className="border-t border-neutral-100 px-4 py-3">
+                      <ul className="divide-y divide-neutral-100">
+                        {g.items.map((f) => (
+                          <li
+                            key={f.id}
+                            className="flex items-center justify-between gap-3 py-1.5 text-sm"
+                          >
+                            <span className="min-w-0 truncate text-neutral-700">
+                              {f.form_code || "-"}
+                              {f.description ? (
+                                <span className="text-neutral-400">
+                                  {" · "}
+                                  {f.description}
+                                </span>
+                              ) : null}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-neutral-800">
+                              {fmtMoney(f.amount)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="mt-2 flex items-center justify-between border-t border-neutral-200 pt-2 text-sm font-semibold text-neutral-900">
+                        <span>รวมบัญชีนี้</span>
+                        <span className="tabular-nums">
+                          {fmtMoney(subtotal)} บาท
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {groups.length > 0 && (
+              <div className="mt-4 flex items-center justify-between rounded-2xl bg-neutral-900 px-4 py-3 text-base font-bold text-white shadow-sm">
+                <span>ยอดรวมทั้งสิ้น</span>
+                <span className="tabular-nums">{fmtMoney(grandTotal)} บาท</span>
+              </div>
+            )}
           </>
         )}
 
         {model.reportNo && (
-          <p className="text-xs text-neutral-400">
+          <p className="mt-3 text-center text-xs text-neutral-400">
             อ้างอิงการชำระเงิน: {model.reportNo}
           </p>
         )}
