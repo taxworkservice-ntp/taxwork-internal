@@ -56,6 +56,7 @@ type Section = {
   accountNo: string | null;
   promptpay: string | null;
   qr: string | null;
+  bankLogos: string[];
   slips: SectionSlip[];
 };
 
@@ -71,6 +72,9 @@ function buildSections(model: ReportModel): Section[] {
     accountNo: f.bank?.account_no || null,
     promptpay: f.bank?.promptpay_id || null,
     qr: f.qrDataUri ?? f.bank?.qrDataUri ?? null,
+    bankLogos: [f.bank?.logoDataUri, f.bank?.logoBottomDataUri].filter(
+      (v): v is string => Boolean(v)
+    ),
     slips: f.slips.map((s) => ({
       id: s.id,
       file_name: s.file_name,
@@ -363,8 +367,23 @@ export default function ShareView({
                     {hasBank && (
                       <div className="px-4 py-3">
                         {s.bankName && (
-                          <div className="text-sm font-medium text-neutral-800">
-                            {s.bankName}
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0 text-sm font-medium text-neutral-800">
+                              {s.bankName}
+                            </div>
+                            {s.bankLogos.length > 0 && (
+                              <div className="flex shrink-0 flex-col items-end gap-1">
+                                {s.bankLogos.map((logo, li) => (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    key={li}
+                                    src={logo}
+                                    alt=""
+                                    className="h-6 max-w-[110px] object-contain"
+                                  />
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )}
                         {s.accountName && (

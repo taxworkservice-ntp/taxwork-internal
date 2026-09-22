@@ -1014,7 +1014,7 @@ export default function ReportsPage() {
     const oldPath = slot === "bottom" ? bank?.logo_bottom_path : bank?.logo_path;
     if (
       !oldPath ||
-      !confirm(`ลบโลโก้${slot === "bottom" ? "ล่าง" : "บน"}ของบัญชีนี้?`)
+      !confirm(`ลบโลโก้ ${slot === "bottom" ? "2" : "1"} ของบัญชีนี้?`)
     )
       return;
     setLogoBusyId(`${bankId}:${slot}`);
@@ -1951,7 +1951,7 @@ export default function ReportsPage() {
                         <th>ชื่อบัญชี</th>
                         <th>PromptPay</th>
                         <th>QR สำหรับสแกนจ่าย</th>
-                        <th>โลโก้ บน/ล่าง</th>
+                        <th>โลโก้ 1 / 2</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -2002,7 +2002,7 @@ export default function ReportsPage() {
                                     ? b.logo_bottom_path
                                     : b.logo_path;
                                 const busy = logoBusyId === `${b.id}:${slot}`;
-                                const label = slot === "bottom" ? "ล่าง" : "บน";
+                                const label = slot === "bottom" ? "2" : "1";
                                 return path ? (
                                   <span
                                     key={slot}
