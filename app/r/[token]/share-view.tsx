@@ -239,10 +239,10 @@ export default function ShareView({
           <img
             src={model.logoDataUri}
             alt={model.firmName}
-            className="h-9 w-auto object-contain"
+            className="mx-auto mb-3 h-8 max-w-[60%] object-contain"
           />
         )}
-        <h1 className="mt-2 text-lg font-bold leading-tight text-neutral-900">
+        <h1 className="text-lg font-bold leading-tight text-neutral-900">
           รายงานภาษี {periodToThai(model.periodLabel)}
         </h1>
         <div className="mt-1 text-sm text-neutral-700">{model.client.name}</div>
