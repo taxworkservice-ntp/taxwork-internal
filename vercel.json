@@ -1,4 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["sin1"]
+  "regions": ["sin1"],
+  "functions": {
+    "app/api/reports/render/route.ts": {
+      "memory": 1536,
+      "maxDuration": 60
+    }
+  }
 }

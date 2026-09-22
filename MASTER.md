@@ -139,6 +139,8 @@ files.report_id → monthly_reports (SET NULL; set for monthly-report copies)
 - **Task status cycles** on click: รอทำ → กำลังทำ → เสร็จแล้ว → ข้าม.
 - **Monthly report flow** (Reports page): pick client + month → choose/create a **round (ครั้งที่ N)** — a client+month can have several (`monthly_reports`, unique per `seq`) → add filing rows (form code, amount, payment method) scoped to the round → attach documents in "ส่วนที่ 2" (ordered, appended after the cover) → optionally link a bank account for service-fee rows → **ดูตัวอย่างปก** previews the actual cover-only PDF in a modal → "ดาวน์โหลด PDF" builds the client-facing PDF entirely in-browser (Sarabun embedded), downloads it, and saves a copy to R2 + `files` (`category: 'monthly-report'`, with `report_id`). Report number is `TW-{YYMM พ.ศ.}-{public_id}` (see `buildReportNo`) — the random `public_id` so clients can't infer volume; the `seq` round is shown separately as ครั้งที่ N. A round can be **issued** (locked, no edits until reopened) or left as draft. Copying from a past month creates a new round here. PDFs are generated with `buildMonthlyReportPdf`; the cover design is switchable (`cover_style` = `modern` | `classic`, or `NEXT_PUBLIC_REPORT_COVER_STYLE`) so the legacy cover remains available.
 - **Unsupported image types** (webp/gif) in the report are skipped with a note in the PDF; PNG/JPG and PDF attachments are embedded.
+- **Report renderer switch** (`app_settings.report_renderer` = `legacy` | `server`): `legacy` (default) keeps the original in-browser `buildMonthlyReportPdf`. `server` calls `POST /api/reports/render` → `lib/report-pdf/server` which renders an HTML template through headless Chromium (`@sparticuz/chromium` + `puppeteer-core`) into a PDF with **real, selectable Thai text**, then merges Part 2 documents (`report_documents`) with pdf-lib. Flip back to `legacy` at runtime for instant rollback (no redeploy), mirroring `cover_style`. Part 2 documents are persisted to R2 + `report_documents` before a server render.
+- **Per-filing QR**: each round's filing can carry one QR (`filing_attachments.kind='qr'`), since the form-filling party regenerates it each filing. It takes precedence over the bank account's `qr_path` QR; a new round starts with none.
 - **Sort persistence**: list pages store sort state in `localStorage` (`clients.sort`, `contacts.sort`); Thai-aware `localeCompare(..., "th")`.
 - **Tables never overlap**: cells use flex + `min-w-0` + `truncate`; tables wrapped in `overflow-x-auto` with `min-w-[...]` under `table-fixed`.
 - **Mobile-first responsive**: fixed bottom tab bar (icons + labels) below `md:`; sidebar only on desktop; forms collapse to 1 column below `sm:`; content padded above/below fixed chrome; sign-out button fixed top-right on mobile.
@@ -179,8 +181,16 @@ npm install
 npm run dev          # http://localhost:3000
 npx tsc --noEmit     # typecheck before committing
 npx eslint .         # lint
+npm run test         # unit tests (integration test below is skipped by default)
 npm run build        # production build check
 ```
+
+### Server-rendered PDF (headless Chromium)
+
+- Unit tests run with Vitest (`tests/unit`). The integration test (`tests/integration/server-render.test.ts`) renders a real PDF and asserts selectable Thai text; it is **skipped unless** `CHROMIUM_EXECUTABLE_PATH` is set. Locally:
+  `CHROMIUM_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npx vitest run tests/integration`.
+- On Vercel the bundled `@sparticuz/chromium` binary is used automatically (no env needed); the render route is configured in `vercel.json` (1536 MB / 60s, region `sin1`).
+- The `report_renderer` switch stays `legacy` until the server renderer is signed off. Rollback = switch it back in Reports → settings.
 
 Local `.env.local` points at the `neondev` database (safe to write test data there). To apply schema changes, add a migration file under `db/migrations/` and run it against Neon directly (psql or the Neon SQL editor); keep the file as the record.
 

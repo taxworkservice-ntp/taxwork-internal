@@ -5,11 +5,13 @@ import {
   addAttachment,
   addBankAccount as addBankAccountAction,
   addFiling as addFilingAction,
+  addReportDocument,
   clearFilings,
   copyReportToNewIssue,
   createMonthlyReport,
   deleteMonthlyReport,
   deleteAttachment,
+  deleteReportDocument,
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
   getAppSettings,
@@ -21,6 +23,7 @@ import {
   listCustomPaymentMethods,
   listMonthlyReports,
   listReportFiles,
+  listReportDocuments,
   loadFilings as loadFilingsAction,
   patchFiling as patchFilingAction,
   recordReportFile,
@@ -158,6 +161,7 @@ export default function ReportsPage() {
   const [firmName, setFirmName] = useState("");
   const [preparedBy, setPreparedBy] = useState("");
   const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
+  const [reportRenderer, setReportRenderer] = useState<"legacy" | "server">("legacy");
   const [brandingBusy, setBrandingBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -402,6 +406,7 @@ export default function ReportsPage() {
         setFirmName(data?.firm_name ?? "");
         setPreparedBy(data?.prepared_by ?? "");
         setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
+        setReportRenderer(data?.report_renderer === "server" ? "server" : "legacy");
       } catch (error) {
         console.error("load settings failed:", error);
         setStatus(
@@ -422,6 +427,7 @@ export default function ReportsPage() {
         brandColor: null,
         coverStyle,
         preparedBy: preparedBy.trim() || null,
+        reportRenderer,
       });
       if (!res.ok) {
         alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
@@ -1014,12 +1020,61 @@ export default function ReportsPage() {
     };
   }
 
+  /**
+   * Persist the session's Part 2 documents (R2 + report_documents) so the
+   * server-side renderer can append them. Clears previous rows first to keep
+   * order deterministic and avoid orphaned objects. Only used when
+   * report_renderer = "server".
+   */
+  async function syncDocumentsToServer(reportId: string) {
+    const existing = await listReportDocuments(reportId);
+    for (const e of existing) {
+      await deleteR2Object(e.storage_path);
+      await deleteReportDocument(e.id);
+    }
+    for (let i = 0; i < docs.length; i++) {
+      const d = docs[i];
+      const path = await uploadObject(d.file.name, d.file);
+      await addReportDocument(reportId, {
+        storage_path: path,
+        file_name: d.file.name,
+        size_bytes: d.file.size,
+        mime_type: d.file.type || null,
+        sort_order: i + 1,
+      });
+    }
+  }
+
+  async function renderServerPdf(preview: boolean): Promise<Uint8Array> {
+    if (!activeReportId) throw new Error("ยังไม่ได้เลือกรอบรายงาน");
+    if (!preview) await syncDocumentsToServer(activeReportId);
+    const res = await fetch("/api/reports/render", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reportId: activeReportId, preview }),
+    });
+    if (!res.ok) {
+      let message = `สร้างไฟล์ไม่สำเร็จ (HTTP ${res.status})`;
+      try {
+        const j = await res.json();
+        if (j?.error) message = String(j.error);
+      } catch {
+        // keep default message
+      }
+      throw new Error(message);
+    }
+    return new Uint8Array(await res.arrayBuffer());
+  }
+
   async function previewCover() {
     if (!selectedClient || !activeReportId || !filings.length) return;
     setPreviewBusy(true);
     setStatus("");
     try {
-      const pdfBytes = await buildMonthlyReportPdf(await collectReportOptions(true));
+      const pdfBytes =
+        reportRenderer === "server"
+          ? await renderServerPdf(true)
+          : await buildMonthlyReportPdf(await collectReportOptions(true));
       const blob = new Blob([new Uint8Array(pdfBytes)], {
         type: "application/pdf",
       });
@@ -1073,9 +1128,10 @@ export default function ReportsPage() {
     setGenerating(true);
     setStatus("");
     try {
-      const pdfBytes = await buildMonthlyReportPdf(
-        await collectReportOptions(false)
-      );
+      const pdfBytes =
+        reportRenderer === "server"
+          ? await renderServerPdf(false)
+          : await buildMonthlyReportPdf(await collectReportOptions(false));
 
       const seq = activeReport?.seq ?? 1;
       const publicId = activeReport?.public_id ?? String(Date.now());
@@ -1914,6 +1970,22 @@ export default function ReportsPage() {
                 เลือก &quot;เดิม&quot; เพื่อย้อนกลับไปใช้ปกแบบก่อนหน้า (ใช้ได้ทันที
                 โดยไม่ต้อง deploy ใหม่)
               </p>
+              <div className="space-y-1">
+                <label className="label">ตัวสร้างไฟล์ PDF (ทดลอง)</label>
+                <select
+                  className="input"
+                  value={reportRenderer}
+                  onChange={(e) =>
+                    setReportRenderer(e.target.value === "server" ? "server" : "legacy")
+                  }
+                >
+                  <option value="legacy">เดิม (สร้างในเบราว์เซอร์)</option>
+                  <option value="server">ใหม่ (สร้างบนเซิร์ฟเวอร์ — ข้อความจริง คัดลอกได้)</option>
+                </select>
+                <p className="text-xs text-neutral-500">
+                  เลือก &quot;เดิม&quot; เพื่อย้อนกลับได้ทันทีโดยไม่ต้อง deploy ใหม่
+                </p>
+              </div>
             </div>
 
             <div className="flex justify-end">

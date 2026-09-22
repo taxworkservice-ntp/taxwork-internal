@@ -242,7 +242,14 @@ export type AppSettings = {
   brand_color: string | null;
   cover_style: string | null;
   prepared_by: string | null;
+  report_renderer: string | null;
 };
+
+export type ReportRenderer = "legacy" | "server";
+
+function normalizeRenderer(value: string | null | undefined): ReportRenderer {
+  return value === "server" ? "server" : "legacy";
+}
 
 export type AppSettingsResult =
   | { ok: true; settings: AppSettings | null }
@@ -251,7 +258,7 @@ export type AppSettingsResult =
 export async function getAppSettings(): Promise<AppSettingsResult> {
   try {
     await requireUser();
-    const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as AppSettings[];
+    const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer from app_settings where id=1`) as AppSettings[];
     return { ok: true, settings: rows[0] ?? null };
   } catch (error) {
     console.error("getAppSettings failed:", error);
@@ -277,13 +284,15 @@ export async function saveReportBranding(input: {
   brandColor: string | null;
   coverStyle: string;
   preparedBy?: string | null;
+  reportRenderer?: string;
 }): Promise<ActionResult> {
   try {
     await requireUser();
     const coverStyle = input.coverStyle === "classic" ? "classic" : "modern";
-    await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
-      values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${new Date().toISOString()})
-      on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${new Date().toISOString()}`;
+    const renderer = normalizeRenderer(input.reportRenderer);
+    await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, updated_at)
+      values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${new Date().toISOString()})
+      on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, updated_at=${new Date().toISOString()}`;
     return { ok: true };
   } catch (error) {
     console.error("saveReportBranding failed:", error);
@@ -630,4 +639,65 @@ export async function listReportFiles(reportId: string): Promise<ReportFile[]> {
     uploaded_at: str(r.uploaded_at),
     uploaded_by: r.uploaded_by == null ? null : String(r.uploaded_by),
   }));
+}
+
+export type ReportDocument = {
+  id: string;
+  file_name: string;
+  storage_path: string;
+  size_bytes: number;
+  mime_type: string | null;
+  sort_order: number;
+};
+
+/** Part 2 documents persisted for a report round, in append order. */
+export async function listReportDocuments(
+  reportId: string
+): Promise<ReportDocument[]> {
+  await requireUser();
+  const rows = (await sql`
+    select id, file_name, storage_path, size_bytes, mime_type, sort_order
+    from report_documents
+    where report_id=${reportId}
+    order by sort_order, created_at
+  `) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    id: String(r.id),
+    file_name: String(r.file_name),
+    storage_path: String(r.storage_path),
+    size_bytes: num(r.size_bytes),
+    mime_type: r.mime_type == null ? null : String(r.mime_type),
+    sort_order: num(r.sort_order),
+  }));
+}
+
+export async function addReportDocument(
+  reportId: string,
+  meta: {
+    storage_path: string;
+    file_name: string;
+    size_bytes: number;
+    mime_type: string | null;
+    sort_order: number;
+  }
+): Promise<void> {
+  await requireUser();
+  await assertReportEditable(reportId);
+  await sql`insert into report_documents (report_id, storage_path, file_name, size_bytes, mime_type, sort_order)
+    values (${reportId}, ${meta.storage_path}, ${meta.file_name}, ${meta.size_bytes}, ${meta.mime_type}, ${meta.sort_order})`;
+}
+
+export async function deleteReportDocument(id: string): Promise<void> {
+  await requireUser();
+  const rows = (await sql`select report_id from report_documents where id=${id}`) as {
+    report_id: string;
+  }[];
+  if (rows[0]) await assertReportEditable(rows[0].report_id);
+  await sql`delete from report_documents where id=${id}`;
+}
+
+export async function clearReportDocuments(reportId: string): Promise<void> {
+  await requireUser();
+  await assertReportEditable(reportId);
+  await sql`delete from report_documents where report_id=${reportId}`;
 }
