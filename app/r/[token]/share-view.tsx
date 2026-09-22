@@ -234,15 +234,10 @@ export default function ShareView({
     <main className="mx-auto max-w-md space-y-6 p-4 pb-20">
       {/* Header */}
       <header className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
-        {model.logoDataUri && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={model.logoDataUri}
-            alt={model.firmName}
-            className="mx-auto mb-3 h-8 max-w-[60%] object-contain"
-          />
-        )}
-        <h1 className="text-lg font-bold leading-tight text-neutral-900">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+          {model.firmName}
+        </div>
+        <h1 className="mt-1 text-lg font-bold leading-tight text-neutral-900">
           รายงานภาษี {periodToThai(model.periodLabel)}
         </h1>
         <div className="mt-1 text-sm text-neutral-700">{model.client.name}</div>
@@ -425,6 +420,20 @@ export default function ShareView({
           </p>
         )}
       </section>
+
+      <footer className="flex flex-col items-center gap-1 pt-4">
+        {model.logoDataUri && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={model.logoDataUri}
+            alt={model.firmName}
+            className="h-7 max-w-[50%] object-contain opacity-80"
+          />
+        )}
+        <p className="text-[11px] text-neutral-400">
+          {model.firmName} · เอกสารสร้างโดยระบบอัตโนมัติ
+        </p>
+      </footer>
     </main>
   );
 }
