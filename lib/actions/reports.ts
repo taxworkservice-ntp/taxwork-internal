@@ -840,3 +840,89 @@ export async function latestReportFile(
     ? { storage_path: String(rows[0].storage_path), file_name: String(rows[0].file_name) }
     : null;
 }
+
+// ---------------------------------------------------------------------------
+// Payment reconciliation
+// ---------------------------------------------------------------------------
+
+export type ReportPayment = {
+  id: string;
+  amount: number;
+  method: string | null;
+  note: string | null;
+  paid_at: string;
+  recorded_by: string | null;
+};
+
+function toPayment(r: Record<string, unknown>): ReportPayment {
+  return {
+    id: String(r.id),
+    amount: num(r.amount),
+    method: r.method == null ? null : String(r.method),
+    note: r.note == null ? null : String(r.note),
+    paid_at: str(r.paid_at),
+    recorded_by: r.recorded_by == null ? null : String(r.recorded_by),
+  };
+}
+
+export async function listReportPayments(reportId: string): Promise<ReportPayment[]> {
+  await requireUser();
+  const rows = (await sql`
+    select id, amount, method, note, paid_at, recorded_by
+    from report_payments where report_id=${reportId}
+    order by paid_at desc
+  `) as Record<string, unknown>[];
+  return rows.map(toPayment);
+}
+
+/** Sum of filing amounts for a round (what the client owes). */
+async function reportTotalDue(reportId: string): Promise<number> {
+  const rows = (await sql`
+    select coalesce(sum(amount), 0)::float8 as total
+    from monthly_filings where report_id=${reportId}
+  `) as { total: number }[];
+  return Number(rows[0]?.total ?? 0);
+}
+
+export async function addReportPayment(
+  reportId: string,
+  input: { amount: number; method?: string | null; note?: string | null }
+): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    const amount = Number(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0)
+      return { ok: false, error: "จำนวนเงินไม่ถูกต้อง" };
+    await sql`insert into report_payments (report_id, amount, method, note, recorded_by)
+      values (${reportId}, ${amount}, ${input.method?.trim() || null}, ${input.note?.trim() || null}, ${user.email})`;
+    return { ok: true };
+  } catch (error) {
+    console.error("addReportPayment failed:", error);
+    return fail(error);
+  }
+}
+
+export async function deleteReportPayment(id: string): Promise<ActionResult> {
+  try {
+    await requireUser();
+    await sql`delete from report_payments where id=${id}`;
+    return { ok: true };
+  } catch (error) {
+    console.error("deleteReportPayment failed:", error);
+    return fail(error);
+  }
+}
+
+export type ReportPaymentTotals = { due: number; paid: number };
+
+/** Public totals for the share page (report id comes from a valid token). */
+export async function getReportPaymentTotals(
+  reportId: string
+): Promise<ReportPaymentTotals> {
+  const due = await reportTotalDue(reportId);
+  const rows = (await sql`
+    select coalesce(sum(amount), 0)::float8 as paid
+    from report_payments where report_id=${reportId}
+  `) as { paid: number }[];
+  return { due, paid: Number(rows[0]?.paid ?? 0) };
+}

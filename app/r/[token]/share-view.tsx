@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ReportModel, ReportModelFiling } from "@/lib/report-model";
+import { paymentSummary } from "@/lib/payments";
 
 const THAI_MONTHS_FULL = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -95,16 +96,20 @@ export default function ShareView({
   model,
   hasPdf,
   token,
+  payment,
 }: {
   model: ReportModel;
   hasPdf: boolean;
   token: string;
+  payment: { due: number; paid: number };
 }) {
   const groups = groupFilings(model);
   const grandTotal = groups.reduce(
     (sum, g) => sum + g.items.reduce((s, f) => s + Number(f.amount ?? 0), 0),
     0
   );
+  const status = paymentSummary(payment.due, payment.paid);
+  const settled = status.status === "paid";
 
   return (
     <main className="mx-auto max-w-md space-y-5 p-4 pb-16">
@@ -130,11 +135,31 @@ export default function ShareView({
         </a>
       )}
 
+      {status.status !== "unpaid" && (
+        <div
+          className={`rounded-lg px-4 py-3 text-sm ${
+            settled
+              ? "bg-emerald-50 text-emerald-800"
+              : "bg-amber-50 text-amber-800"
+          }`}
+        >
+          {settled
+            ? "ชำระครบถ้วนแล้ว ขอบคุณ"
+            : `ชำระแล้ว ${fmtMoney(status.paid)} บาท · คงเหลือ ${fmtMoney(status.remaining)} บาท`}
+        </div>
+      )}
+
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">ช่องทางการชำระเงิน</h2>
-        <p className="text-xs text-neutral-500">
-          สแกนด้วยแอปธนาคาร หรือบันทึกภาพแล้วเลือกสแกนจากอัลบั้ม
-        </p>
+        {settled ? (
+          <p className="text-sm text-neutral-500">
+            รายการนี้ชำระครบถ้วนแล้ว ไม่ต้องชำระเพิ่ม
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-neutral-500">
+              สแกนด้วยแอปธนาคาร หรือบันทึกภาพแล้วเลือกสแกนจากอัลบั้ม
+            </p>
 
         {groups.length === 0 && (
           <p className="text-sm text-neutral-500">ไม่มีรายการที่ต้องชำระ</p>
@@ -206,6 +231,8 @@ export default function ShareView({
             <span>ยอดรวมทั้งสิ้น</span>
             <span>{fmtMoney(grandTotal)} บาท</span>
           </div>
+        )}
+          </>
         )}
 
         {model.reportNo && (
