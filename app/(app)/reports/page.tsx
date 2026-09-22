@@ -16,6 +16,7 @@ import {
   deleteReportDocument,
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
+  ensureDefaultRounds,
   getAppSettings,
   getReportShare,
   revokeReportShareLink,
@@ -173,6 +174,7 @@ export default function ReportsPage() {
   const [shareBusy, setShareBusy] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const loadSeq = useRef(0);
+  const ensuredRoundsRef = useRef<string | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
   const [logoPath, setLogoPath] = useState<string | null>(null);
@@ -394,7 +396,26 @@ export default function ReportsPage() {
     }
     setReportsLoading(true);
     try {
-      const rows = await listMonthlyReports(clientId, period);
+      let rows = await listMonthlyReports(clientId, period);
+      // A fresh month starts with the default rounds (1 & 2), each seeded from
+      // the nearest earlier month's same round (no amounts/files). Runs once
+      // per client+month and only while the month has no rounds yet.
+      if (!rows.length) {
+        const key = `${clientId}|${period}`;
+        if (ensuredRoundsRef.current !== key) {
+          ensuredRoundsRef.current = key;
+          try {
+            await ensureDefaultRounds(clientId, period);
+            rows = await listMonthlyReports(clientId, period);
+          } catch (error) {
+            ensuredRoundsRef.current = null; // allow a retry on the next load
+            console.error("ensureDefaultRounds failed:", error);
+            setStatus(
+              `สร้างรอบเริ่มต้นไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
+            );
+          }
+        }
+      }
       setReports(rows);
       setActiveReportId((prev) =>
         rows.some((r) => r.id === prev) ? prev : rows.length ? rows[rows.length - 1].id : ""

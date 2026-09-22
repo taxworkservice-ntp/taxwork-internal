@@ -84,6 +84,19 @@ function dateOnly(v: unknown): string | null {
   return s.slice(0, 10);
 }
 
+/** Advance a YYYY-MM-DD date by one calendar month (clamped to month end). */
+function shiftMonth(ymd: string): string | null {
+  const m = ymd.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const total = Number(m[1]) * 12 + (Number(m[2]) - 1) + 1;
+  const ny = Math.floor(total / 12);
+  const nm = (total % 12) + 1;
+  const dim = new Date(ny, nm, 0).getDate();
+  const nd = Math.min(Number(m[3]), dim);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${ny}-${pad(nm)}-${pad(nd)}`;
+}
+
 function toAttachment(r: Record<string, unknown>): Attachment {
   const a = r as unknown as Attachment;
   return {
@@ -454,17 +467,6 @@ export async function copyReportToNewIssue(
 
   const target = await insertMonthlyReport(targetClientId, targetPeriod);
 
-  const shiftMonth = (ymd: string): string | null => {
-    const m = ymd.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!m) return null;
-    const total = Number(m[1]) * 12 + (Number(m[2]) - 1) + 1;
-    const ny = Math.floor(total / 12);
-    const nm = (total % 12) + 1;
-    const dim = new Date(ny, nm, 0).getDate();
-    const nd = Math.min(Number(m[3]), dim);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${ny}-${pad(nm)}-${pad(nd)}`;
-  };
   // Insert one row at a time with the tagged template. A single multi-row
   // VALUES with all-parameter values can trip Postgres type inference
   // ("could not determine data type of parameter $1").
@@ -485,6 +487,68 @@ export async function copyReportToNewIssue(
     if (rows[0]) inserted.push(rows[0]);
   }
   return inserted.map((f) => toFiling(f, []));
+}
+
+/**
+ * Copy a round's items forward with amounts zeroed and no uploaded files, so
+ * the target round becomes a reusable template for the new month.
+ */
+async function carryFilingsAsTemplate(
+  sourceReportId: string,
+  targetClientId: string,
+  targetPeriod: string,
+  targetReportId: string
+): Promise<void> {
+  const prev = (await sql`select form_code, description, due_date, payment_method, bank_account_id, remark, sort_order
+    from monthly_filings where report_id=${sourceReportId}
+    order by sort_order, created_at`) as Record<string, unknown>[];
+  for (let i = 0; i < prev.length; i++) {
+    const r = prev[i] as {
+      form_code: string;
+      description: string | null;
+      due_date: unknown;
+      payment_method: string | null;
+      bank_account_id: string | null;
+      remark: string | null;
+    };
+    await sql`insert into monthly_filings (client_id, period_label, report_id, form_code, description, amount, due_date, payment_method, bank_account_id, remark, sort_order)
+      values (${targetClientId}, ${targetPeriod}, ${targetReportId}, ${r.form_code}, ${r.description}, 0, ${r.due_date == null ? null : shiftMonth(str(r.due_date))}, ${r.payment_method ?? null}, ${r.bank_account_id}, ${r.remark ?? null}, ${i + 1})`;
+  }
+}
+
+/**
+ * Seed a fresh month with the default rounds (ครั้งที่ 1 and 2). Each round is
+ * filled from the nearest earlier month that has the same round — carried
+ * forward without amounts, slips, QR images, or Part 2 documents — so each
+ * round acts as its own template. A no-op once the month has any round.
+ */
+export async function ensureDefaultRounds(
+  clientId: string,
+  period: string,
+  seqs: number[] = [1, 2]
+): Promise<MonthlyReport[]> {
+  await requireUser();
+  const existing = (await sql`select 1 from monthly_reports
+    where client_id=${clientId} and period_label=${period} limit 1`) as unknown[];
+  if (existing.length) return [];
+
+  const created: MonthlyReport[] = [];
+  for (const seq of seqs) {
+    const source = (await sql`select id from monthly_reports
+      where client_id=${clientId} and seq=${seq} and period_label < ${period}
+      order by period_label desc limit 1`) as { id: string }[];
+    let report: MonthlyReport;
+    try {
+      report = await insertMonthlyReport(clientId, period, seq);
+    } catch {
+      continue; // a concurrent call already created this round
+    }
+    if (source[0]) {
+      await carryFilingsAsTemplate(source[0].id, clientId, period, report.id);
+    }
+    created.push(report);
+  }
+  return created;
 }
 
 export async function addFiling(
