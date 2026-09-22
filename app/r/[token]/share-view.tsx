@@ -371,19 +371,26 @@ export default function ShareView({
                             <div className="min-w-0 text-sm font-medium text-neutral-800">
                               {s.bankName}
                             </div>
-                            {s.bankLogos.length > 0 && (
-                              <div className="flex shrink-0 flex-col items-end gap-1">
-                                {s.bankLogos.map((logo, li) => (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    key={li}
-                                    src={logo}
-                                    alt=""
-                                    className="h-6 max-w-[110px] object-contain"
-                                  />
-                                ))}
-                              </div>
-                            )}
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              {hasSlip && (
+                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                  ใบนำฝาก
+                                </span>
+                              )}
+                              {s.bankLogos.length > 0 && (
+                                <div className="flex flex-col items-end gap-1">
+                                  {s.bankLogos.map((logo, li) => (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      key={li}
+                                      src={logo}
+                                      alt=""
+                                      className="h-6 max-w-[110px] rounded object-contain"
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )}
                         {s.accountName && (
@@ -419,6 +426,13 @@ export default function ShareView({
                         {s.paymentMethod
                           ? `วิธีชำระ: ${s.paymentMethod}`
                           : "ชำระตามช่องทางที่เจ้าหน้าที่แจ้ง"}
+                      </div>
+                    )}
+                    {!hasBank && hasSlip && (
+                      <div className="flex justify-end border-t border-neutral-100 px-4 py-2">
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                          ใบนำฝาก
+                        </span>
                       </div>
                     )}
                   </div>
