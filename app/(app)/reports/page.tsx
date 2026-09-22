@@ -935,20 +935,53 @@ export default function ReportsPage() {
 
   async function toggleReportIssued(report: MonthlyReport) {
     if (!clientId) return;
+    const label = report.label ?? `ครั้งที่ ${report.seq}`;
+    if (report.status === "issued") {
+      if (!confirm(`เปิดแก้ไข ${label} อีกครั้ง?`)) return;
+      setReportBusy(true);
+      try {
+        await reopenMonthlyReport(report.id);
+        await loadReports();
+      } catch (err) {
+        alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      } finally {
+        setReportBusy(false);
+      }
+      return;
+    }
+
+    if (
+      !confirm(
+        `ออกรายงาน ${report.report_no ?? label} — จะล็อกไม่ให้แก้ไข และบันทึกไฟล์ PDF ลงประวัติ ใช่หรือไม่?`
+      )
+    )
+      return;
+
     setReportBusy(true);
     try {
-      if (report.status === "issued") {
-        if (!confirm(`เปิดแก้ไข ${report.label ?? `ครั้งที่ ${report.seq}`} อีกครั้ง?`)) return;
-        await reopenMonthlyReport(report.id);
-      } else {
-        if (!confirm(`ออกรายงาน ${report.report_no ?? report.label ?? ""} และล็อกไม่ให้แก้ไข?`)) return;
-        await issueMonthlyReport(report.id);
-      }
+      await issueMonthlyReport(report.id);
       await loadReports();
     } catch (err) {
       alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
-    } finally {
       setReportBusy(false);
+      return;
+    }
+    setReportBusy(false);
+
+    // Archive a PDF copy to history (no device download). Best-effort: the
+    // round stays issued even if generation fails.
+    if (selectedClient && report.id === activeReportId && filings.length) {
+      setGenerating(true);
+      try {
+        await buildAndArchiveReportPdf({ download: false });
+        setStatus("ออกรายงานแล้ว — บันทึกไฟล์ PDF ลงประวัติเรียบร้อย");
+      } catch (err) {
+        setStatus(
+          `ออกรายงานแล้ว แต่บันทึกไฟล์ PDF ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`
+        );
+      } finally {
+        setGenerating(false);
+      }
     }
   }
 
@@ -1329,6 +1362,66 @@ export default function ReportsPage() {
     }
   }
 
+  /**
+   * Build the report PDF and archive a copy to R2 + the files history.
+   * Optionally also download it to the device (used by "ดาวน์โหลด PDF").
+   * Assumes the active round already has its final report_no/status.
+   */
+  async function buildAndArchiveReportPdf({
+    download,
+  }: {
+    download: boolean;
+  }): Promise<void> {
+    if (!selectedClient || !activeReportId) throw new Error("ยังไม่ได้เลือกรอบรายงาน");
+    const pdfBytes =
+      reportRenderer === "server"
+        ? await renderServerPdf(false)
+        : await buildMonthlyReportPdf(await collectReportOptions(false));
+
+    const seq = activeReport?.seq ?? 1;
+    const publicId = activeReport?.public_id ?? String(Date.now());
+    const roundTag = `-ครั้งที่${seq}`;
+    const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
+
+    if (download) {
+      const dlUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = dlUrl;
+      a.download = `รายงานภาษี-${selectedClient.name}-${period}${roundTag}.pdf`;
+      a.click();
+      URL.revokeObjectURL(dlUrl);
+    }
+
+    const signRes = await fetch("/api/files/sign-upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId,
+        fileName: `monthly-report-${period}-${seq}-${publicId}.pdf`,
+      }),
+    });
+    if (!signRes.ok) throw new Error("ขอลิงก์อัปโหลดสำเนาไม่สำเร็จ");
+    const { url, path } = await signRes.json();
+    const putRes = await fetch(url, {
+      method: "PUT",
+      body: blob,
+      headers: { "Content-Type": "application/pdf" },
+    });
+    if (!putRes.ok) throw new Error("อัปโหลดสำเนาไป R2 ไม่สำเร็จ");
+
+    await recordReportFile(
+      clientId,
+      activeReportId,
+      path,
+      `รายงานภาษี ${periodToThai(period)} ${activeReport?.label ?? ""}.pdf`.trim(),
+      blob.size
+    );
+
+    listReportFiles(activeReportId)
+      .then(setReportFiles)
+      .catch(() => undefined);
+  }
+
   async function generatePdf() {
     if (!selectedClient || !activeReportId || !filings.length) return;
     if (
@@ -1340,52 +1433,7 @@ export default function ReportsPage() {
     setGenerating(true);
     setStatus("");
     try {
-      const pdfBytes =
-        reportRenderer === "server"
-          ? await renderServerPdf(false)
-          : await buildMonthlyReportPdf(await collectReportOptions(false));
-
-      const seq = activeReport?.seq ?? 1;
-      const publicId = activeReport?.public_id ?? String(Date.now());
-      const roundTag = `-ครั้งที่${seq}`;
-
-      const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
-      const dlUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = dlUrl;
-      a.download = `รายงานภาษี-${selectedClient.name}-${period}${roundTag}.pdf`;
-      a.click();
-      URL.revokeObjectURL(dlUrl);
-
-      const signRes = await fetch("/api/files/sign-upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clientId,
-          fileName: `monthly-report-${period}-${seq}-${publicId}.pdf`,
-        }),
-      });
-      if (!signRes.ok) throw new Error("ขอลิงก์อัปโหลดสำเนาไม่สำเร็จ");
-      const { url, path } = await signRes.json();
-      const putRes = await fetch(url, {
-        method: "PUT",
-        body: blob,
-        headers: { "Content-Type": "application/pdf" },
-      });
-      if (!putRes.ok) throw new Error("อัปโหลดสำเนาไป R2 ไม่สำเร็จ");
-
-      await recordReportFile(
-        clientId,
-        activeReportId,
-        path,
-        `รายงานภาษี ${periodToThai(period)} ${activeReport?.label ?? ""}.pdf`.trim(),
-        blob.size
-      );
-
-      listReportFiles(activeReportId)
-        .then(setReportFiles)
-        .catch(() => undefined);
-
+      await buildAndArchiveReportPdf({ download: true });
       setStatus("สร้างรายงานสำเร็จ — ดาวน์โหลดแล้ว และบันทึกสำเนาในประวัติไฟล์รายงานแล้ว");
     } catch (err) {
       alert(`สร้างรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
@@ -1442,6 +1490,7 @@ export default function ReportsPage() {
             disabled={!clientId || copyingFrom || !reports.length}
           >
             {copyingFrom ? <SpinnerIcon /> : <CopyLastIcon />}
+            <span className="ml-1 hidden sm:inline">คัดลอกรอบล่าสุด</span>
           </button>
           <button
             className="btn px-2.5"
