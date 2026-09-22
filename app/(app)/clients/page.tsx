@@ -88,7 +88,25 @@ export default function ClientsPage() {
   const [credLoading, setCredLoading] = useState<Record<string, boolean>>({});
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "name", dir: "asc" });
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("clients.favorites") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [onlyFav, setOnlyFav] = useState(false);
   const { toasts, push, dismiss } = useToasts();
+
+  useEffect(() => {
+    localStorage.setItem("clients.favorites", JSON.stringify(favorites));
+  }, [favorites]);
+
+  function toggleFav(id: string) {
+    setFavorites((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
 
   useEffect(() => {
     try {
@@ -177,6 +195,7 @@ export default function ClientsPage() {
   }
 
   const filtered = clients.filter((c) => {
+    if (onlyFav && !favorites.includes(c.id)) return false;
     const q = search.trim().toLowerCase();
     if (!q) return true;
     return [c.name, c.tax_id, c.email, c.phone, c.address].some((v) =>
@@ -185,6 +204,9 @@ export default function ClientsPage() {
   });
 
   const sorted = [...filtered].sort((a, b) => {
+    const fa = favorites.includes(a.id) ? 0 : 1;
+    const fb = favorites.includes(b.id) ? 0 : 1;
+    if (fa !== fb) return fa - fb;
     let cmp: number;
     if (sort.key === "created_at") {
       cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
@@ -313,6 +335,14 @@ export default function ClientsPage() {
         >
           {sort.dir === "asc" ? "↑" : "↓"}
         </button>
+        <button
+          type="button"
+          className={onlyFav ? "btn-primary px-2 py-1 text-xs" : "btn px-2 py-1 text-xs"}
+          onClick={() => setOnlyFav((v) => !v)}
+          title="แสดงเฉพาะลูกค้าที่ติดดาว"
+        >
+          ★ รายการโปรด
+        </button>
       </div>
 
       {!loading && (
@@ -326,6 +356,7 @@ export default function ClientsPage() {
           <thead>
             <tr>
               <th className="w-10"></th>
+              <th className="w-8"></th>
               <th>ลูกค้า</th>
               <th className="w-56">ติดต่อ</th>
               <th className="w-28">สถานะ</th>
@@ -335,7 +366,7 @@ export default function ClientsPage() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={5} className="py-14 text-center text-sm text-neutral-400">กำลังโหลด...</td>
+                <td colSpan={6} className="py-14 text-center text-sm text-neutral-400">กำลังโหลด...</td>
               </tr>
             )}
 
@@ -356,6 +387,29 @@ export default function ClientsPage() {
                           onClick={() => toggleExpand(c.id)}
                         >
                           <Chevron open={expanded} />
+                        </button>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className={
+                            favorites.includes(c.id)
+                              ? "text-lg leading-none text-yellow-500"
+                              : "text-lg leading-none text-neutral-300 hover:text-yellow-500"
+                          }
+                          onClick={() => toggleFav(c.id)}
+                          aria-label={
+                            favorites.includes(c.id)
+                              ? "เอาออกจากรายการโปรด"
+                              : "ติดดาวเป็นรายการโปรด"
+                          }
+                          title={
+                            favorites.includes(c.id)
+                              ? "เอาออกจากรายการโปรด"
+                              : "ติดดาวเป็นรายการโปรด"
+                          }
+                        >
+                          ★
                         </button>
                       </td>
                       <td>
@@ -408,7 +462,7 @@ export default function ClientsPage() {
                     {expanded && (
                       <tr className="bg-neutral-50/70">
                         <td></td>
-                        <td colSpan={4} className="pb-4">
+                        <td colSpan={5} className="pb-4">
                           <div className="mb-4 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
                             <div>
                               <div className="text-xs text-neutral-500">ชื่อ</div>
@@ -488,12 +542,24 @@ export default function ClientsPage() {
 
             {!loading && !sorted.length && (
               <tr>
-                <td colSpan={5}>
+                <td colSpan={6}>
                   <EmptyState
-                    title={search.trim() ? "ไม่พบลูกค้าที่ค้นหา" : "ยังไม่มีลูกค้า"}
-                    hint={search.trim() ? "ลองเปลี่ยนคำค้นหา" : "เริ่มจากเพิ่มลูกค้าด้านบน"}
+                    title={
+                      onlyFav && !search.trim()
+                        ? "ยังไม่มีรายการโปรด"
+                        : search.trim()
+                          ? "ไม่พบลูกค้าที่ค้นหา"
+                          : "ยังไม่มีลูกค้า"
+                    }
+                    hint={
+                      onlyFav && !search.trim()
+                        ? "กด ★ ที่ลูกค้าที่ใช้บ่อยเพื่อปักไว้ด้านบน"
+                        : search.trim()
+                          ? "ลองเปลี่ยนคำค้นหา"
+                          : "เริ่มจากเพิ่มลูกค้าด้านบน"
+                    }
                     action={
-                      !search.trim() ? (
+                      !search.trim() && !onlyFav ? (
                         <button className="btn-primary" onClick={() => setShowForm(true)}>
                           เพิ่มลูกค้า
                         </button>
