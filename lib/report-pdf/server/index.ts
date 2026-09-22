@@ -1,9 +1,7 @@
 import "server-only";
-import { PDFDocument } from "pdf-lib";
 import { buildReportModel, readObjectBytes } from "@/lib/report-model";
-import { renderCoverHtml, renderPaymentHtml } from "./template";
+import { renderCoverHtml } from "./template";
 import {
-  appendedPageCount,
   composeReportPdf,
   dataUriToBytes,
   htmlToPdf,
@@ -11,7 +9,7 @@ import {
 } from "./render";
 
 export type BuildServerReportOptions = {
-  /** Cover only (fast previews, no slips/payment/documents). */
+  /** Cover only (fast previews, no slips/documents). */
   preview?: boolean;
 };
 
@@ -22,9 +20,10 @@ export type ServerReportResult = {
 };
 
 /**
- * Full server-side pipeline: build the model, render the cover and payment
- * page with headless Chromium, insert pay-in slip pages right after the cover,
- * append Part 2 documents, and stamp page numbers.
+ * Full server-side pipeline: build the model, render the cover with headless
+ * Chromium, insert pay-in slip pages right after the cover, append Part 2
+ * documents, and stamp page numbers. Payment details live on the cover cards,
+ * so there is no separate payment page.
  */
 export async function buildServerReportPdf(
   reportId: string,
@@ -45,20 +44,6 @@ export async function buildServerReportPdf(
     if (bytes) slips.push({ id: s.id, bytes });
   }
 
-  // Compute slip page numbers (cover pages + preceding slips) so the payment
-  // page can reference them before we compose.
-  const coverDoc = await PDFDocument.load(coverPdf, { ignoreEncryption: true });
-  const slipPagesMap = new Map<string, number>();
-  let cursor = coverDoc.getPageCount();
-  for (const s of slips) {
-    cursor += 1;
-    slipPagesMap.set(s.id, cursor);
-    cursor += (await appendedPageCount(s.bytes)) - 1;
-  }
-
-  const paymentHtml = renderPaymentHtml(model, slipPagesMap);
-  const paymentPdf = paymentHtml ? await htmlToPdf(paymentHtml) : null;
-
   const documents: Uint8Array[] = [];
   for (const d of model.documents) {
     const bytes = dataUriToBytes(d.dataUri);
@@ -68,7 +53,7 @@ export async function buildServerReportPdf(
   const composed = await composeReportPdf({
     coverPdf,
     slips,
-    paymentPdf,
+    paymentPdf: null,
     documents,
   });
 
