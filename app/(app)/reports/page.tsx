@@ -706,6 +706,24 @@ export default function ReportsPage() {
       rememberPaymentMethod(patch.payment_method);
   }
 
+  async function moveFiling(id: string, delta: -1 | 1) {
+    if (reportLocked) return;
+    const i = filings.findIndex((f) => f.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= filings.length) return;
+    const next = [...filings];
+    [next[i], next[j]] = [next[j], next[i]];
+    setFilings(next);
+    try {
+      await Promise.all(
+        next.map((f, idx) => patchFilingAction(f.id, { sort_order: idx + 1 }))
+      );
+    } catch (error) {
+      alert(`จัดลำดับไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      loadFilings();
+    }
+  }
+
   async function deleteR2Object(storagePath: string) {
     if (storagePath.startsWith("/")) return; // bundled local asset, not in R2
     await fetch("/api/files/delete", {
@@ -1627,7 +1645,7 @@ export default function ReportsPage() {
                 ยังไม่มีรายการในเดือนนี้ — เพิ่มรายการแรกด้านบน
               </p>
             ) : (
-              filings.map((f) => (
+              filings.map((f, i) => (
                 <FilingCard
                   key={f.id}
                   filing={f}
@@ -1635,6 +1653,10 @@ export default function ReportsPage() {
                   locked={reportLocked}
                   qrBusy={qrFilingId === f.id}
                   slipBusy={slipFilingId === f.id}
+                  canMoveUp={i > 0}
+                  canMoveDown={i < filings.length - 1}
+                  onMoveUp={() => moveFiling(f.id, -1)}
+                  onMoveDown={() => moveFiling(f.id, 1)}
                   onPatch={patchFiling}
                   onDelete={() => deleteFiling(f)}
                   onUploadQr={(file) => uploadFilingQr(f, file)}
@@ -2298,6 +2320,10 @@ function FilingCard({
   locked,
   qrBusy,
   slipBusy,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
   onPatch,
   onDelete,
   onUploadQr,
@@ -2310,6 +2336,10 @@ function FilingCard({
   locked?: boolean;
   qrBusy?: boolean;
   slipBusy?: boolean;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   onPatch: (id: string, patch: Partial<Filing>) => void;
   onDelete: () => void;
   onUploadQr: (file: File) => void;
@@ -2437,13 +2467,37 @@ function FilingCard({
             ))}
           </select>
         </div>
-        <button
-          className="btn-danger order-6 justify-self-end self-end lg:order-none"
-          onClick={onDelete}
-          disabled={locked}
-        >
-          ลบ
-        </button>
+        <div className="order-6 flex items-end gap-1 justify-self-end self-end lg:order-none">
+          <span className="inline-flex overflow-hidden rounded-md border border-neutral-300">
+            <button
+              type="button"
+              className="px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-30"
+              onClick={onMoveUp}
+              disabled={locked || !canMoveUp}
+              aria-label="เลื่อนขึ้น"
+              title="เลื่อนขึ้น"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              className="border-l border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-30"
+              onClick={onMoveDown}
+              disabled={locked || !canMoveDown}
+              aria-label="เลื่อนลง"
+              title="เลื่อนลง"
+            >
+              ↓
+            </button>
+          </span>
+          <button
+            className="btn-danger"
+            onClick={onDelete}
+            disabled={locked}
+          >
+            ลบ
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2 border-t border-neutral-100 pt-2">
