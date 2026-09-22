@@ -1931,11 +1931,16 @@ export default function ReportsPage() {
               className="btn"
               onClick={() => setShowBankManager((v) => !v)}
             >
-              {showBankManager ? "ซ่อนบัญชีธนาคาร" : "บัญชีธนาคาร (สำหรับค่าบริการ)"}
+              {showBankManager
+                ? "ซ่อนบัญชีธนาคารของสำนักงาน"
+                : "บัญชีธนาคารของสำนักงาน (ใช้ร่วมทุกไคลเอนต์)"}
             </button>
 
             {showBankManager && (
               <div className="mt-3 space-y-3">
+                <p className="text-xs text-neutral-500">
+                  บัญชีธนาคารใช้ร่วมกันทุกไคลเอนต์ — เพิ่มครั้งเดียวแล้วเลือกใช้กับรายการของลูกค้าได้ทุกคน
+                </p>
                 <div className="overflow-x-auto">
                   <table className="table-base w-full min-w-[880px]">
                     <thead>
