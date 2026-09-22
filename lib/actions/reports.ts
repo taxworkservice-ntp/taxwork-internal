@@ -519,6 +519,7 @@ export async function addAttachment(
   covers: string[]
 ): Promise<void> {
   await requireUser();
+  await assertFilingEditable(filingId);
   const inserted = (await sql`insert into filing_attachments (filing_id, kind, storage_path, file_name, size_bytes, mime_type)
     values (${filingId}, ${kind}, ${meta.storage_path}, ${meta.file_name}, ${meta.size_bytes}, ${meta.mime_type})
     returning id`) as { id: string }[];
@@ -536,6 +537,10 @@ export async function addAttachment(
 
 export async function deleteAttachment(id: string): Promise<void> {
   await requireUser();
+  const rows = (await sql`select filing_id from filing_attachments where id=${id}`) as {
+    filing_id: string;
+  }[];
+  if (rows[0]) await assertFilingEditable(rows[0].filing_id);
   await sql`delete from filing_attachments where id=${id}`;
 }
 

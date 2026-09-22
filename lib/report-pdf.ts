@@ -838,8 +838,8 @@ async function drawCoverModern(
           ? await r.doc.embedJpg(opts.logo.bytes)
           : null;
       if (img) {
-        const maxLogoH = 57.6;
-        const maxLogoW = 176;
+        const maxLogoH = 46.08;
+        const maxLogoW = 140.8;
         let lw = maxLogoW;
         let lh = (img.height / img.width) * lw;
         if (lh > maxLogoH) {
@@ -1016,8 +1016,15 @@ async function drawCoverModern(
   const cPadY = 7;
   const fontSize = 9.5;
   const lh = fontSize * 1.5;
+  const payLineH = fontSize * 1.5;
   const metaLh = 8 * 1.5;
   const qrSize = 44;
+  // Distance from card top to the header baseline, and the clearance the
+  // divider needs above/below so it never touches the text canvas boxes
+  // (which extend ~0.6x below and ~1.3x above the baseline).
+  const headerBaselineOffset = cPadY + 8;
+  const divGapAbove = 12;
+  const divGapBelow = 16;
 
   const embedLogo = async (bytes?: ArrayBuffer | null) => {
     if (!bytes) return null;
@@ -1043,8 +1050,9 @@ async function drawCoverModern(
     const qrReserve = qrImg ? qrSize + 16 : 0;
     const rightW = innerW - qrReserve;
 
-    // Payment lines: structured, each rendered on its own line. Lines with a
-    // bank logo reserve room for it on the right so text never overlaps.
+    // Payment lines: structured. Bank details collapse to two lines — the
+    // bank name together with the account number, then the account holder
+    // (and PromptPay) — to use the available width instead of stacking.
     const payLines: {
       text: string;
       logo?: { img: PDFImage; w: number; h: number } | null;
@@ -1063,29 +1071,40 @@ async function drawCoverModern(
         payLines.push({ text: line, logo: idx === 0 ? logo : undefined })
       );
     };
-    if (pay.bankName) pushPay(pay.bankName, topLogo);
-    if (pay.accountNo) pushPay(`เลขที่ ${pay.accountNo}`, bottomLogo);
-    if (pay.accountName) pushPay(`ชื่อบัญชี ${pay.accountName}`);
-    if (pay.promptpay) pushPay(`พร้อมเพย์ ${pay.promptpay}`);
+    const bankLine = [pay.bankName, pay.accountNo ? `เลขที่ ${pay.accountNo}` : ""]
+      .filter(Boolean)
+      .join("  ·  ");
+    if (bankLine) pushPay(bankLine, topLogo ?? bottomLogo);
+    const nameLine = [
+      pay.accountName ? `ชื่อบัญชี ${pay.accountName}` : "",
+      pay.promptpay ? `พร้อมเพย์ ${pay.promptpay}` : "",
+    ]
+      .filter(Boolean)
+      .join("  ·  ");
+    if (nameLine) pushPay(nameLine);
     if (pay.customText) pushPay(pay.customText);
 
     const descLines = descText
       ? wrapText(descText, (s) => r.measureText(s, fontSize, false), innerW)
       : [];
-    const payLineH = fontSize * 1.5;
     const payH = payLines.length ? payLines.length * payLineH + 2 : 0;
-    const qrBlockH = qrImg ? qrSize : 0;
-    const bodyH = Math.max(payH, qrBlockH);
+    const bodyH = Math.max(payH, qrImg ? qrSize : 0);
     const hasBody = payLines.length > 0 || Boolean(qrImg);
 
-    const cardInnerH =
-      cPadY * 2 +
-      metaLh + // index + form + amount row
-      1 +
-      descLines.length * lh +
-      (descLines.length && hasBody ? 4 : 0) +
-      (hasBody ? 1 + 4 + bodyH : 0);
-    const cardH = Math.max(cardInnerH, 40);
+    // Reference baseline: the last description line, or the header row when
+    // there is no description.
+    const firstDescOffset = headerBaselineOffset + metaLh + 1;
+    const refOffset = descLines.length
+      ? firstDescOffset + (descLines.length - 1) * lh
+      : headerBaselineOffset;
+
+    let contentH: number;
+    if (hasBody) {
+      contentH = refOffset + divGapAbove + divGapBelow + bodyH + cPadY;
+    } else {
+      contentH = refOffset + fontSize * 0.6 + cPadY;
+    }
+    const cardH = Math.max(contentH, cPadY * 2 + metaLh, 40);
 
     // Cards must never split across pages.
     r.ensureSpace(cardH + 10);
@@ -1111,16 +1130,16 @@ async function drawCoverModern(
       });
     }
 
-    let cy = top - cPadY - 8;
+    const headerBaseline = top - headerBaselineOffset;
     // Index + form code (left) and amount (right, bold) — the eye anchor.
-    const idxBaseline = cy;
-    const formX = M + cPadX + r.measureText(`${i + 1}.  `, fontSize, true);
-    await r.drawTextCanvas(String(i + 1) + ".", M + cPadX, idxBaseline, {
+    const formX =
+      M + cPadX + r.measureText(`${i + 1}.  `, fontSize, true);
+    await r.drawTextCanvas(String(i + 1) + ".", M + cPadX, headerBaseline, {
       size: fontSize,
       bold: true,
       color: COLOR_MUTED,
     });
-    await r.drawTextCanvas(formText, formX, idxBaseline, {
+    await r.drawTextCanvas(formText, formX, headerBaseline, {
       size: fontSize,
       bold: true,
     });
@@ -1128,33 +1147,33 @@ async function drawCoverModern(
     await r.drawTextCanvas(
       amountText,
       M + CONTENT_W - cPadX - amtW,
-      idxBaseline,
+      headerBaseline,
       { size: fontSize, bold: true }
     );
-    cy -= metaLh + 1;
 
+    let cursor = headerBaseline - (metaLh + 1);
     for (const line of descLines) {
-      await r.drawTextCanvas(line, M + cPadX, cy, {
+      await r.drawTextCanvas(line, M + cPadX, cursor, {
         size: fontSize,
         color: COLOR_MUTED,
       });
-      cy -= lh;
+      cursor -= lh;
     }
 
     if (hasBody) {
-      if (descLines.length) cy -= 4;
+      const refBaseline = descLines.length ? cursor + lh : headerBaseline;
+      const dividerY = refBaseline - divGapAbove;
       if (!r.sim)
         r.page.drawLine({
-          start: { x: M + cPadX, y: cy + 3 },
-          end: { x: M + CONTENT_W - cPadX, y: cy + 3 },
+          start: { x: M + cPadX, y: dividerY },
+          end: { x: M + CONTENT_W - cPadX, y: dividerY },
           thickness: 0.5,
           color: COLOR_BORDER,
         });
-      cy -= 4;
 
       // Payment lines on the left, QR on the right — both anchored to the
       // top of the payment block so they stay aligned.
-      const bodyTop = cy;
+      const bodyTop = dividerY - divGapBelow;
       let py = bodyTop;
       for (const line of payLines) {
         await r.drawTextCanvas(line.text, M + cPadX, py, {
@@ -1455,9 +1474,11 @@ function resolvePayment(
     }
   }
 
-  const hasQr =
-    f.attachments.some((a) => a.kind === "qr") || Boolean(ba?.qr_bytes);
-  const qr = hasQr && ba?.qr_bytes ? ba.qr_bytes : null;
+  // A freshly generated per-filing QR (uploaded on the report round) wins;
+  // the bank account's static QR is only the fallback.
+  const qrAttachment = f.attachments.find((a) => a.kind === "qr" && a.bytes);
+  const qr = qrAttachment?.bytes ?? ba?.qr_bytes ?? null;
+  const hasQr = Boolean(qr);
 
   // Bank transfer: show the account block, optionally with QR.
   if (ba && transferLike) {

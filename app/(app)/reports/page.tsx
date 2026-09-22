@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  addAttachment,
   addBankAccount as addBankAccountAction,
   addFiling as addFilingAction,
   clearFilings,
   copyReportToNewIssue,
   createMonthlyReport,
   deleteMonthlyReport,
+  deleteAttachment,
   deleteBankAccount as deleteBankAccountAction,
   deleteFiling as deleteFilingAction,
   getAppSettings,
@@ -29,6 +31,7 @@ import {
   saveReportBranding,
   setBankLogo,
   setBankQr,
+  type Attachment,
   type BankAccount,
   type ClientRow,
   type Filing,
@@ -38,6 +41,7 @@ import {
 import {
   buildMonthlyReportPdf,
   fetchAttachmentBytes,
+  type ReportAttachment,
   type ReportDocument,
   type ReportFiling,
 } from "@/lib/report-pdf";
@@ -150,6 +154,7 @@ export default function ReportsPage() {
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
   const [qrBusyId, setQrBusyId] = useState<string | null>(null);
   const [logoBusyId, setLogoBusyId] = useState<string | null>(null);
+  const [qrFilingId, setQrFilingId] = useState<string | null>(null);
   const [firmName, setFirmName] = useState("");
   const [preparedBy, setPreparedBy] = useState("");
   const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
@@ -620,6 +625,48 @@ export default function ReportsPage() {
     return path as string;
   }
 
+  async function uploadFilingQr(filing: Filing, file: File) {
+    if (reportLocked) return;
+    setQrFilingId(filing.id);
+    try {
+      const path = await uploadObject(file.name, file);
+      // One QR per filing: drop any existing QR (R2 + DB) before adding.
+      for (const att of filing.filing_attachments) {
+        if (att.kind !== "qr") continue;
+        await deleteR2Object(att.storage_path);
+        await deleteAttachment(att.id);
+      }
+      await addAttachment(
+        filing.id,
+        "qr",
+        {
+          storage_path: path,
+          file_name: file.name,
+          size_bytes: file.size,
+          mime_type: file.type || null,
+        },
+        [filing.id]
+      );
+      await loadFilings();
+    } catch (err) {
+      alert(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setQrFilingId(null);
+    }
+  }
+
+  async function removeFilingQr(att: Attachment) {
+    if (reportLocked) return;
+    if (!confirm("ลบ QR ของรายการนี้?")) return;
+    try {
+      await deleteAttachment(att.id);
+      await deleteR2Object(att.storage_path);
+      await loadFilings();
+    } catch (err) {
+      alert(`ลบ QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   async function deleteFiling(filing: Filing) {
     if (!confirm(`ลบรายการ "${filing.form_code}" ?`)) return;
     await deleteFilingAction(filing.id);
@@ -881,32 +928,49 @@ export default function ReportsPage() {
       }
     }
 
-    const enriched: ReportFiling[] = filings.map((f) => {
-      const ba = bankAccounts.find((b) => b.id === f.bank_account_id);
-      return {
-        id: f.id,
-        form_code: f.form_code,
-        description: f.description,
-        amount: Number(f.amount ?? 0),
-        due_date: f.due_date,
-        remark: f.remark ?? null,
-        payment_method: f.payment_method ?? null,
-        bank_account: ba
-          ? {
-              id: ba.id,
-              label: ba.label,
-              bank_name: ba.bank_name,
-              account_no: ba.account_no,
-              account_name: ba.account_name,
-              promptpay_id: ba.promptpay_id,
-              qr_bytes: bankQrCache.get(ba.id) ?? null,
-              logo_bytes: bankLogoCache.get(ba.id) ?? null,
-              logo_bottom_bytes: bankLogoBottomCache.get(ba.id) ?? null,
-            }
-          : null,
-        attachments: [],
-      };
-    });
+    const enriched: ReportFiling[] = await Promise.all(
+      filings.map(async (f) => {
+        const ba = bankAccounts.find((b) => b.id === f.bank_account_id);
+        // Per-filing QR uploaded for this round; the bank QR is only fallback.
+        const attachments: ReportAttachment[] = [];
+        for (const att of f.filing_attachments) {
+          if (att.kind !== "qr") continue;
+          try {
+            attachments.push({
+              kind: "qr",
+              file_name: att.file_name,
+              mime_type: att.mime_type,
+              bytes: await fetchAttachmentBytes(att.storage_path),
+            });
+          } catch {
+            // ignore unreadable QR — fall back to the bank QR, if any
+          }
+        }
+        return {
+          id: f.id,
+          form_code: f.form_code,
+          description: f.description,
+          amount: Number(f.amount ?? 0),
+          due_date: f.due_date,
+          remark: f.remark ?? null,
+          payment_method: f.payment_method ?? null,
+          bank_account: ba
+            ? {
+                id: ba.id,
+                label: ba.label,
+                bank_name: ba.bank_name,
+                account_no: ba.account_no,
+                account_name: ba.account_name,
+                promptpay_id: ba.promptpay_id,
+                qr_bytes: bankQrCache.get(ba.id) ?? null,
+                logo_bytes: bankLogoCache.get(ba.id) ?? null,
+                logo_bottom_bytes: bankLogoBottomCache.get(ba.id) ?? null,
+              }
+            : null,
+          attachments,
+        };
+      })
+    );
 
     // Part 2: ordered documents, upload order = PDF order
     const documents: ReportDocument[] = [];
@@ -1355,8 +1419,11 @@ export default function ReportsPage() {
                   filing={f}
                   bankAccounts={bankAccounts}
                   locked={reportLocked}
+                  qrBusy={qrFilingId === f.id}
                   onPatch={patchFiling}
                   onDelete={() => deleteFiling(f)}
+                  onUploadQr={(file) => uploadFilingQr(f, file)}
+                  onRemoveQr={removeFilingQr}
                 />
               ))
             )}
@@ -1915,16 +1982,23 @@ function FilingCard({
   filing,
   bankAccounts,
   locked,
+  qrBusy,
   onPatch,
   onDelete,
+  onUploadQr,
+  onRemoveQr,
 }: {
   filing: Filing;
   bankAccounts: BankAccount[];
   locked?: boolean;
+  qrBusy?: boolean;
   onPatch: (id: string, patch: Partial<Filing>) => void;
   onDelete: () => void;
+  onUploadQr: (file: File) => void;
+  onRemoveQr: (att: Attachment) => void;
 }) {
   const editingRef = useRef<string | null>(null);
+  const qrAtt = filing.filing_attachments.find((a) => a.kind === "qr") ?? null;
   const [draft, setDraft] = useState({
     form_code: filing.form_code,
     description: filing.description ?? "",
@@ -2050,7 +2124,87 @@ function FilingCard({
           ลบ
         </button>
       </div>
+
+      <div className="flex items-center gap-2 border-t border-neutral-100 pt-2">
+        <span className="text-xs text-neutral-500">QR ชำระเงิน</span>
+        {qrAtt ? (
+          <>
+            <QrThumb storagePath={qrAtt.storage_path} />
+            <span className="min-w-0 flex-1 truncate text-xs text-neutral-600" title={qrAtt.file_name}>
+              {qrAtt.file_name}
+            </span>
+            <button
+              type="button"
+              className="text-xs text-red-600 hover:underline disabled:opacity-50"
+              onClick={() => onRemoveQr(qrAtt)}
+              disabled={locked}
+            >
+              ลบ QR
+            </button>
+          </>
+        ) : (
+          <label
+            className={`btn text-xs ${locked || qrBusy ? "pointer-events-none opacity-50" : "cursor-pointer"}`}
+          >
+            {qrBusy ? "กำลังอัปโหลด..." : "+ แนบ QR"}
+            <input
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              disabled={locked || qrBusy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onUploadQr(file);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
+        <span className="text-[11px] text-neutral-400">
+          QR สร้างใหม่ต่อการยื่นแต่ละครั้ง
+        </span>
+      </div>
     </div>
+  );
+}
+
+function QrThumb({ storagePath }: { storagePath: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let revoked: string | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const bytes = await fetchAttachmentBytes(storagePath);
+        const u = URL.createObjectURL(
+          new Blob([bytes], { type: sniffImageMime(bytes) })
+        );
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        revoked = u;
+        setUrl(u);
+      } catch {
+        setUrl(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [storagePath]);
+  if (!url)
+    return (
+      <span className="inline-block h-9 w-9 shrink-0 animate-pulse rounded border border-neutral-200 bg-neutral-100" />
+    );
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt="QR"
+      className="h-9 w-9 shrink-0 rounded border border-neutral-200 object-contain"
+    />
   );
 }
 
