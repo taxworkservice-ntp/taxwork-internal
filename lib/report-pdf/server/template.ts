@@ -120,6 +120,7 @@ function renderCard(f: ReportModelFiling, index: number): string {
   const bodyCol = `
     <div class="col">
       ${desc ? `<div class="desc"><span class="lbl">รายละเอียด</span> ${escapeHtml(desc)}</div>` : ""}
+      ${f.due_date ? `<div class="desc"><span class="lbl">กำหนดชำระ</span> ${escapeHtml(dateToThai(f.due_date))}</div>` : ""}
       ${
         hasPay || qr
           ? `<div class="divider"></div>
@@ -184,6 +185,7 @@ function renderPaymentPage(model: ReportModel): string {
   const blocks = groups
     .map((g) => {
       const logo = g.logo ? `<img class="banklogo" src="${g.logo}" alt="" />` : "";
+      const subtotal = g.items.reduce((sum, f) => sum + Number(f.amount ?? 0), 0);
       const filenames = g.items
         .map(
           (f) =>
@@ -199,16 +201,22 @@ function renderPaymentPage(model: ReportModel): string {
             <div class="paycard-title">${logo}${escapeHtml(g.lines[0] ?? g.label)}</div>
             ${g.lines.slice(1).map((l) => `<div class="paycard-line">${escapeHtml(l)}</div>`).join("")}
             <ul class="paycard-items">${filenames}</ul>
+            <div class="paycard-subtotal"><span>รวมบัญชีนี้</span><span>${escapeHtml(fmtMoney(subtotal))} บาท</span></div>
           </div>
           ${qr}
         </div>`;
     })
     .join("");
+  const grandTotal = groups.reduce(
+    (sum, g) => sum + g.items.reduce((s, f) => s + Number(f.amount ?? 0), 0),
+    0
+  );
   return `
     <section class="page">
       <h2 class="section-title">ช่องทางการชำระเงิน</h2>
       <p class="muted">สแกนด้วยแอปธนาคาร หรือบันทึกภาพแล้วเลือกสแกนจากอัลบั้ม</p>
       ${blocks}
+      <div class="grand-total"><span>ยอดรวมทั้งสิ้น</span><span>${escapeHtml(fmtMoney(grandTotal))} บาท</span></div>
       <div class="ref">อ้างอิงการชำระเงิน: ${escapeHtml(paymentRef(model))}</div>
     </section>`;
 }
@@ -303,6 +311,8 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .paycard-line { margin-top: 2pt; }
 .paycard-items { list-style: none; padding: 0; margin: 8pt 0 0; border-top: 0.5pt solid #d1d1da; }
 .paycard-items li { display: flex; justify-content: space-between; padding: 3pt 0; }
+.paycard-subtotal { display: flex; justify-content: space-between; padding-top: 4pt; border-top: 0.5pt solid #d1d1da; font-weight: 700; }
+.grand-total { display: flex; justify-content: space-between; font-size: 11pt; font-weight: 700; border-top: 1pt solid #242428; padding-top: 6pt; margin-top: 6pt; }
 .qrbig { width: 150pt; height: 150pt; border: 0.5pt solid #d1d1da; padding: 6pt; background: #fff; display: flex; align-items: center; justify-content: center; }
 .qrbig img { width: 100%; height: 100%; object-fit: contain; }
 .qr-empty { color: #a1a1aa; font-size: 9pt; }

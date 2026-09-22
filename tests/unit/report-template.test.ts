@@ -34,6 +34,15 @@ describe("report template (server renderer)", () => {
     expect(renderReportHtml(baseModel(), { preview: true })).not.toContain(instruction);
   });
 
+  it("shows due dates and payment totals", () => {
+    const html = renderReportHtml(baseModel());
+    expect(html).toContain("กำหนดชำระ");
+    expect(html).toContain("15 ก.ย. 2569");
+    expect(html).toContain("ยอดรวมทั้งสิ้น");
+    // 5,000.00 appears as the filing amount, account subtotal and grand total.
+    expect(html.match(/5,000\.00/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+  });
+
   it("falls back to รอบระยะเวลาภาษี when there is no round label", () => {
     const html = renderReportHtml(baseModel({ reportLabel: null }));
     expect(html).toContain("รอบระยะเวลาภาษี");

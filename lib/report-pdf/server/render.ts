@@ -1,7 +1,7 @@
 import "server-only";
 import chromium from "@sparticuz/chromium";
 import puppeteer, { type Browser } from "puppeteer-core";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { ReportModelDocument } from "@/lib/report-model";
 
 /**
@@ -128,4 +128,29 @@ export async function appendDocuments(
     }
   }
   return out.save();
+}
+
+/**
+ * Stamp "X / Y" page numbers at the bottom center of every page. Uses a
+ * standard Latin font because Thai combining marks are not shaped by pdf-lib's
+ * drawText.
+ */
+export async function stampPageNumbers(pdf: Uint8Array): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(pdf);
+  const pages = doc.getPages();
+  if (pages.length < 2) return pdf;
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const size = 9;
+  pages.forEach((page, i) => {
+    const label = `${i + 1} / ${pages.length}`;
+    const w = font.widthOfTextAtSize(label, size);
+    page.drawText(label, {
+      x: page.getWidth() / 2 - w / 2,
+      y: 22,
+      size,
+      font,
+      color: rgb(0.45, 0.45, 0.5),
+    });
+  });
+  return doc.save();
 }

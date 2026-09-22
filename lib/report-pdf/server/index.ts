@@ -1,7 +1,7 @@
 import "server-only";
 import { buildReportModel } from "@/lib/report-model";
 import { renderReportHtml } from "./template";
-import { appendDocuments, htmlToPdf } from "./render";
+import { appendDocuments, htmlToPdf, stampPageNumbers } from "./render";
 
 export type BuildServerReportOptions = {
   /** Cover + payment only (fast previews, no attached documents). */
@@ -19,6 +19,8 @@ export async function buildServerReportPdf(
   const model = await buildReportModel(reportId);
   const html = renderReportHtml(model, { preview: opts.preview });
   const base = await htmlToPdf(html);
-  if (opts.preview) return base;
-  return appendDocuments(base, model.documents);
+  const withDocs = opts.preview
+    ? base
+    : await appendDocuments(base, model.documents);
+  return stampPageNumbers(withDocs);
 }
