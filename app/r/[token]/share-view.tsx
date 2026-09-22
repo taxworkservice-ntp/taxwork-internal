@@ -339,14 +339,6 @@ export default function ShareView({
                             <span className="truncate text-sm font-bold text-neutral-900">
                               {s.title}
                             </span>
-                            {s.bankLogos[0] && (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={s.bankLogos[0]}
-                                alt=""
-                                className="h-4 max-w-[56px] shrink-0 rounded object-contain"
-                              />
-                            )}
                           </div>
                           {s.description && (
                             <div className="truncate text-xs text-neutral-500">
