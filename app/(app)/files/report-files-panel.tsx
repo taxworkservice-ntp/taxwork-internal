@@ -6,6 +6,7 @@ import { listMonthlyReportFiles, type MonthlyReportFileRow } from "@/lib/actions
 import SearchInput from "@/components/search-input";
 import EmptyState from "@/components/empty-state";
 import ClientAvatar from "@/components/client-avatar";
+import { downloadStoredFile } from "@/lib/download";
 import { ToastStack, useToasts } from "@/components/toast";
 
 const THAI_MONTHS = [
@@ -136,14 +137,10 @@ export default function ReportFilesPanel() {
 
   async function download(row: MonthlyReportFileRow) {
     try {
-      const res = await fetch("/api/files/sign-download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storagePath: row.storage_path }),
+      await downloadStoredFile({
+        storagePath: row.storage_path,
+        fileName: row.file_name,
       });
-      if (!res.ok) throw new Error("sign");
-      const { url } = await res.json();
-      window.open(url, "_blank");
     } catch {
       push({ type: "error", message: "เปิดไฟล์ไม่สำเร็จ" });
     }
@@ -282,7 +279,7 @@ export default function ReportFilesPanel() {
             {!loading &&
               filtered.map((r) => (
                 <tr key={r.id} className="hover:bg-neutral-50">
-                  <td>
+                  <td className="whitespace-nowrap">
                     <div className="flex items-center gap-2">
                       <button
                         type="button"

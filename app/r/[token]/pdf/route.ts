@@ -8,17 +8,9 @@ import {
   verifyShareAccess,
 } from "@/lib/share-access";
 import { r2, R2_BUCKET } from "@/lib/r2";
+import { asciiFileName } from "@/lib/download";
 
 export const runtime = "nodejs";
-
-/** ASCII-safe fallback filename for the Content-Disposition header. */
-function asciiFileName(name: string): string {
-  const cleaned = name
-    .replace(/[^\x20-\x7E]/g, "_")
-    .replace(/["\\]/g, "_")
-    .trim();
-  return cleaned || "report.pdf";
-}
 
 /**
  * Public, tokenized download of the latest stored report PDF. The R2 object

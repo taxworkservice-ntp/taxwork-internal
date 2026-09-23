@@ -5,6 +5,7 @@ import Link from "next/link";
 import { deleteFileRecord, listFiles, recordFile, updateFileNote } from "@/lib/actions/files";
 import CopyButton from "@/components/copy-button";
 import CreatableSelect from "@/components/creatable-select";
+import { downloadStoredFile } from "@/lib/download";
 import PageHeader from "@/components/page-header";
 import SearchInput from "@/components/search-input";
 import EmptyState from "@/components/empty-state";
@@ -226,14 +227,10 @@ export default function FilesPage() {
 
   async function download(file: FileRow) {
     try {
-      const res = await fetch("/api/files/sign-download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storagePath: file.storage_path }),
+      await downloadStoredFile({
+        storagePath: file.storage_path,
+        fileName: file.file_name,
       });
-      if (!res.ok) throw new Error("sign");
-      const { url } = await res.json();
-      window.open(url, "_blank");
     } catch {
       push({ type: "error", message: "เปิดไฟล์ไม่สำเร็จ" });
     }
@@ -593,7 +590,7 @@ export default function FilesPage() {
                                   <Chevron open={expanded} />
                                 </button>
                               </td>
-                              <td>
+                              <td className="whitespace-nowrap">
                                 <button
                                   type="button"
                                   className="text-left font-medium text-blue-700 hover:underline"

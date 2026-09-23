@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteFileRecord, listClientFiles, recordFile } from "@/lib/actions/files";
+import { downloadStoredFile } from "@/lib/download";
 
 type FileRow = {
   id: string;
@@ -87,14 +88,14 @@ export default function FileSection({
   }
 
   async function download(file: FileRow) {
-    const res = await fetch("/api/files/sign-download", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ storagePath: file.storage_path }),
-    });
-    if (!res.ok) return;
-    const { url } = await res.json();
-    window.open(url, "_blank");
+    try {
+      await downloadStoredFile({
+        storagePath: file.storage_path,
+        fileName: file.file_name,
+      });
+    } catch {
+      // surface nothing extra; existing UI has no toast here
+    }
   }
 
   return (

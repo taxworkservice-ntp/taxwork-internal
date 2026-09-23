@@ -8,16 +8,9 @@ import {
   verifyShareAccess,
 } from "@/lib/share-access";
 import { r2, R2_BUCKET } from "@/lib/r2";
+import { asciiFileName } from "@/lib/download";
 
 export const runtime = "nodejs";
-
-function asciiFileName(name: string): string {
-  const cleaned = name
-    .replace(/[^\x20-\x7E]/g, "_")
-    .replace(/["\\]/g, "_")
-    .trim();
-  return cleaned || "slip";
-}
 
 /**
  * Public, tokenized access to a filing's pay-in slip (image or PDF). The R2

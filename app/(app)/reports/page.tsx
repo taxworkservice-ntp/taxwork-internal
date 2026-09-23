@@ -57,6 +57,7 @@ import {
   type ReportFiling,
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
+import { downloadStoredFile } from "@/lib/download";
 import ClientAvatar from "@/components/client-avatar";
 import ClientSelect from "@/components/client-select";
 import { contrastText, normalizeHex } from "@/lib/client-avatar";
@@ -1351,14 +1352,10 @@ export default function ReportsPage() {
   async function downloadReportFile(file: ReportFile) {
     setDownloadingId(file.id);
     try {
-      const res = await fetch("/api/files/sign-download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storagePath: file.storage_path }),
+      await downloadStoredFile({
+        storagePath: file.storage_path,
+        fileName: file.file_name,
       });
-      if (!res.ok) throw new Error("ขอลิงก์ดาวน์โหลดไม่สำเร็จ");
-      const { url } = await res.json();
-      window.open(url, "_blank");
     } catch (err) {
       alert(`ดาวน์โหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
