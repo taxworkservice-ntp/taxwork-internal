@@ -69,34 +69,14 @@ async function fileToDataUri(file: File): Promise<string> {
   return `data:${mime};base64,${b64}`;
 }
 
-// Typed signature: drawn at the box's exact aspect (2x) with NO cropping,
-// displayed at 100%x100% — so canvas pixels map 1:1 to the box and the
-// chosen font size is exact on paper.
-function renderTypedSignature(text: string, templatePx: number): string | null {
-  const t = text.trim();
-  if (!t) return null;
-  // 2x of the 186x70 signature box — identical aspect, exact mapping.
-  const W = 372;
-  const H = 140;
-  const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  const family = `"Cordia New","Sarabun",sans-serif`;
-  // Payer-name style baseline: regular black; size is user-chosen.
-  ctx.fillStyle = "#000";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  const size = templatePx * 2;
-  ctx.font = `400 ${size}px ${family}`;
-  ctx.fillText(t, W / 2, H / 2);
-  return canvas.toDataURL("image/png");
-}
+// Typed signature font (preview + PDF share these values).
+const SIG_TEXT_FONT = "'Cordia New','Sarabun',sans-serif";
 
 function WhtPreview({
   values,
   signature,
+  sigText,
+  sigFontSize,
   sigOffsetY,
   stamp,
   showSig,
@@ -104,6 +84,8 @@ function WhtPreview({
 }: {
   values: WhtFormValues;
   signature: string | null;
+  sigText: string;
+  sigFontSize: number;
   sigOffsetY: number;
   stamp: string | null;
   showSig: boolean;
@@ -169,6 +151,28 @@ function WhtPreview({
               }}
               draggable={false}
             />
+          )}
+          {showSig && !signature && sigText.trim() && (
+            <div
+              style={{
+                position: "absolute",
+                top: WHT_SIGNATURE_BOX.top + sigOffsetY,
+                left: WHT_SIGNATURE_BOX.left,
+                width: WHT_SIGNATURE_BOX.width,
+                height: WHT_SIGNATURE_BOX.height,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                fontFamily: SIG_TEXT_FONT,
+                fontSize: sigFontSize,
+                lineHeight: 1.2,
+                color: "#000",
+                overflow: "hidden",
+              }}
+            >
+              {sigText.trim()}
+            </div>
           )}
           {showStamp && stamp && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -255,12 +259,7 @@ export default function WhtPage() {
   const [signature, setSignature] = useState<string | null>(null);
   const [stamp, setStamp] = useState<string | null>(null);
   const [sigText, setSigText] = useState("");
-  const [typedSig, setTypedSig] = useState<string | null>(null);
-  const sigTextRef = useRef("");
-  sigTextRef.current = sigText;
   const [sigFontSize, setSigFontSize] = useState(WHT_SIG_FONT_DEFAULT);
-  const sigFontSizeRef = useRef(WHT_SIG_FONT_DEFAULT);
-  sigFontSizeRef.current = sigFontSize;
 
   useEffect(() => {
     setSigFontSize(loadSigFontSize());
@@ -494,29 +493,9 @@ export default function WhtPage() {
           ? values.description
           : "__custom";
 
-  useEffect(() => {
-    setTypedSig(renderTypedSignature(sigText, sigFontSize));
-  }, [sigText, sigFontSize]);
-
-  // Re-render once the Cordia webfont arrives so canvas uses the right metrics.
-  useEffect(() => {
-    let live = true;
-    const p = document.fonts?.ready;
-    if (p) {
-      p.then(() => {
-        if (live) setTypedSig(renderTypedSignature(sigTextRef.current, sigFontSizeRef.current));
-      }).catch(() => {
-        /* keep fallback rendering */
-      });
-    }
-    return () => {
-      live = false;
-    };
-     
-  }, []);
-
   // Image priority: an uploaded image always wins over typed text.
-  const effectiveSignature = signature ?? typedSig;
+  const typedText = sigText.trim();
+  const effectiveSignature = signature;
 
   async function onImage(
     file: File | undefined,
@@ -555,6 +534,8 @@ export default function WhtPage() {
           // Sign date always follows the payment date (single date field).
           signDate: values.issueDate,
           signatureDataUri: showSig ? effectiveSignature : null,
+          signatureText: showSig && !effectiveSignature ? typedText.slice(0, 200) : "",
+          signatureFontSize: sigFontSize,
           signatureOffsetY: sigOffsetY,
           stampDataUri: showStamp ? stamp : null,
           hideSignature: !showSig,
@@ -1048,16 +1029,20 @@ export default function WhtPage() {
                     </button>
                   )}
                 </div>
-                {typedSig && !signature && (
+                {typedText && !signature && (
                   <div className="mt-2 flex items-center gap-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={typedSig} alt="ตัวอย่างลายเซ็นแบบพิมพ์" className="h-12 border border-neutral-200 bg-white object-contain" />
+                    <div
+                      className="flex h-12 flex-1 items-center justify-center overflow-hidden border border-neutral-200 bg-white px-2 text-center"
+                      style={{ fontFamily: SIG_TEXT_FONT, fontSize: 20, lineHeight: 1.2 }}
+                    >
+                      <span className="truncate">{typedText}</span>
+                    </div>
                     <button type="button" className="btn !px-2 !py-1 text-xs" onClick={() => setSigText("")}>
                       เอาออก
                     </button>
                   </div>
                 )}
-                {typedSig && signature && (
+                {typedText && signature && (
                   <p className="mt-1 text-xs text-neutral-500">
                     กำลังใช้รูปที่อัปโหลด (รูปชนะข้อความเสมอ)
                   </p>
@@ -1117,6 +1102,8 @@ export default function WhtPage() {
             <WhtPreview
               values={{ ...values, signDate: values.issueDate }}
               signature={effectiveSignature}
+              sigText={showSig && !effectiveSignature ? typedText : ""}
+              sigFontSize={sigFontSize}
               sigOffsetY={sigOffsetY}
               stamp={stamp}
               showSig={showSig}

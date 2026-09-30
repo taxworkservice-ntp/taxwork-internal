@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireUserApi } from "@/lib/session";
 import {
   WHT_FORM_TYPES,
+  clampSigFontSize,
   clampSigOffset,
   validateWhtForm,
   type WhtFormType,
@@ -85,6 +86,8 @@ export async function POST(request: NextRequest) {
       hideSignature: body.hideSignature === true,
       hideStamp: body.hideStamp === true,
       signatureOffsetY: clampSigOffset(body.signatureOffsetY),
+      signatureText: str(body.signatureText, 200),
+      signatureFontSize: clampSigFontSize(body.signatureFontSize),
     });
     const bytes = await whtHtmlToPdf(html);
     return new NextResponse(new Uint8Array(bytes), {

@@ -8,6 +8,7 @@ import {
   WHT_SIGNATURE_BOX,
   WHT_STAMP_BOX,
   buildWhtOverlay,
+  clampSigFontSize,
   clampSigOffset,
   type WhtFormValues,
 } from "./fields";
@@ -20,6 +21,9 @@ export type WhtRenderInput = {
   hideStamp: boolean;
   /** Vertical nudge (template px) for the signature box. */
   signatureOffsetY?: number;
+  /** Plain typed signature text (used when no image is provided). */
+  signatureText?: string;
+  signatureFontSize?: number;
 };
 
 const FONT_STACK = "'Cordia New','Sarabun','Noto Sans Thai',sans-serif";
@@ -133,9 +137,13 @@ export function buildWhtHtml(input: WhtRenderInput): string {
     !input.hideStamp && isSafeDataUri(input.stampDataUri);
 
   const sigTop = WHT_SIGNATURE_BOX.top + clampSigOffset(input.signatureOffsetY);
+  const sigText = (input.signatureText ?? "").trim().slice(0, 200);
+  const sigFontSize = clampSigFontSize(input.signatureFontSize);
   const sigDiv = showSig
     ? `<div style="position:absolute;top:${sigTop}px;left:${WHT_SIGNATURE_BOX.left}px;width:${WHT_SIGNATURE_BOX.width}px;height:${WHT_SIGNATURE_BOX.height}px;"><img src="${input.signatureDataUri}" style="width:100%;height:100%;object-fit:contain;object-position:center center;" /></div>`
-    : "";
+    : !input.hideSignature && sigText
+      ? `<div style="position:absolute;top:${sigTop}px;left:${WHT_SIGNATURE_BOX.left}px;width:${WHT_SIGNATURE_BOX.width}px;height:${WHT_SIGNATURE_BOX.height}px;display:flex;align-items:center;justify-content:center;text-align:center;font-family:${FONT_STACK};font-size:${sigFontSize}px;line-height:1.2;color:#000;overflow:hidden;">${escapeHtml(sigText)}</div>`
+      : "";
   const stampDiv = showStamp
     ? `<div style="position:absolute;top:${WHT_STAMP_BOX.top}px;left:${WHT_STAMP_BOX.left}px;width:${WHT_STAMP_BOX.width}px;height:${WHT_STAMP_BOX.height}px;"><img src="${input.stampDataUri}" style="width:100%;height:100%;object-fit:contain;object-position:center center;" /></div>`
     : "";
