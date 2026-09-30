@@ -461,6 +461,8 @@ export default function WhtPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...values,
+          // Sign date always follows the payment date (single date field).
+          signDate: values.issueDate,
           signatureDataUri: showSig ? effectiveSignature : null,
           stampDataUri: showStamp ? stamp : null,
           hideSignature: !showSig,
@@ -698,30 +700,18 @@ export default function WhtPage() {
                   <p className="mt-1 text-xs text-red-600">{fieldError(errors, "description")}</p>
                 )}
               </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="label" htmlFor="wht-issue">วันที่จ่าย *</label>
-                  <input
-                    id="wht-issue"
-                    type="date"
-                    className="input"
-                    value={values.issueDate}
-                    onChange={(e) => set("issueDate", e.target.value)}
-                  />
-                  {fieldError(errors, "issueDate") && (
-                    <p className="mt-1 text-xs text-red-600">{fieldError(errors, "issueDate")}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="label" htmlFor="wht-sign">วันที่ลงนาม (ว่าง = ใช้วันที่จ่าย)</label>
-                  <input
-                    id="wht-sign"
-                    type="date"
-                    className="input"
-                    value={values.signDate}
-                    onChange={(e) => set("signDate", e.target.value)}
-                  />
-                </div>
+              <div>
+                <label className="label" htmlFor="wht-issue">วันที่จ่าย * (ใช้เป็นวันที่ลงนามด้วย)</label>
+                <input
+                  id="wht-issue"
+                  type="date"
+                  className="input"
+                  value={values.issueDate}
+                  onChange={(e) => set("issueDate", e.target.value)}
+                />
+                {fieldError(errors, "issueDate") && (
+                  <p className="mt-1 text-xs text-red-600">{fieldError(errors, "issueDate")}</p>
+                )}
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -865,7 +855,7 @@ export default function WhtPage() {
           <div className="xl:sticky xl:top-6">
             <h2 className="mb-3 font-medium">ตัวอย่างก่อนพิมพ์</h2>
             <WhtPreview
-              values={values}
+              values={{ ...values, signDate: values.issueDate }}
               signature={effectiveSignature}
               stamp={stamp}
               showSig={showSig}
