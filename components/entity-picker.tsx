@@ -202,7 +202,16 @@ export default function EntityPicker({
           )}
         </div>
         {open && !loading && (
-          <div className="absolute inset-x-0 top-full z-10 mt-1 max-h-[50vh] overflow-y-auto overscroll-contain rounded border border-neutral-200 bg-white shadow-lg">
+          <div
+            className="absolute inset-x-0 top-full z-10 mt-1 overflow-y-auto overscroll-contain rounded border border-neutral-200 bg-white shadow-lg"
+            style={{
+              // Inline (not Tailwind) so the cap always applies, even if the
+              // production CSS was built before this class existed.
+              maxHeight: "min(320px, 50vh)",
+              WebkitOverflowScrolling: "touch",
+              touchAction: "pan-y",
+            }}
+          >
             {suggestions.length === 0 ? (
               <div className="px-3 py-2 text-sm text-neutral-500">{emptyText}</div>
             ) : (
