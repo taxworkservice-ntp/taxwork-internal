@@ -207,6 +207,10 @@ export default function WhtPage() {
   const [descMode, setDescMode] = useState<"preset" | "custom">("preset");
   const [signature, setSignature] = useState<string | null>(null);
   const [stamp, setStamp] = useState<string | null>(null);
+  const [sigText, setSigText] = useState("");
+  const [typedSig, setTypedSig] = useState<string | null>(null);
+  const sigTextRef = useRef("");
+  sigTextRef.current = sigText;
   const [showSig, setShowSig] = useState(true);
   const [showStamp, setShowStamp] = useState(true);
   const [errors, setErrors] = useState<{ field: string; message: string }[]>([]);
@@ -371,6 +375,58 @@ export default function WhtPage() {
     }));
   }
 
+  // Typed signature: rendered to a PNG on canvas so it flows through the
+  // exact same image pipeline (preview + server PDF) as an upload.
+  function renderTypedSignature(text: string): string | null {
+    const t = text.trim();
+    if (!t) return null;
+    const W = 516;
+    const H = 194;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const family = `"Cordia New","Sarabun",sans-serif`;
+    ctx.fillStyle = "#1e3a8c";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    let size = 120;
+    while (size > 28) {
+      ctx.font = `700 ${size}px ${family}`;
+      if (ctx.measureText(t).width <= W - 36) break;
+      size -= 4;
+    }
+    ctx.font = `700 ${size}px ${family}`;
+    ctx.fillText(t, W / 2, H / 2 + 4);
+    return canvas.toDataURL("image/png");
+  }
+
+  useEffect(() => {
+    setTypedSig(renderTypedSignature(sigText));
+     
+  }, [sigText]);
+
+  // Re-render once the Cordia webfont arrives so canvas uses the right metrics.
+  useEffect(() => {
+    let live = true;
+    const p = document.fonts?.ready;
+    if (p) {
+      p.then(() => {
+        if (live) setTypedSig(renderTypedSignature(sigTextRef.current));
+      }).catch(() => {
+        /* keep fallback rendering */
+      });
+    }
+    return () => {
+      live = false;
+    };
+     
+  }, []);
+
+  // Image priority: an uploaded image always wins over typed text.
+  const effectiveSignature = signature ?? typedSig;
+
   async function onImage(
     file: File | undefined,
     kind: "signature" | "stamp"
@@ -405,7 +461,7 @@ export default function WhtPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...values,
-          signatureDataUri: showSig ? signature : null,
+          signatureDataUri: showSig ? effectiveSignature : null,
           stampDataUri: showStamp ? stamp : null,
           hideSignature: !showSig,
           hideStamp: !showStamp,
@@ -729,11 +785,11 @@ export default function WhtPage() {
           <section className="card">
             <h2 className="mb-1 font-medium">ลายเซ็น / ตราประทับ</h2>
             <p className="mb-3 text-xs text-neutral-500">
-              อัปโหลด PNG/JPG (ไม่เกิน 4 MB) — ไฟล์อยู่แค่ในเบราว์เซอร์ ไม่ถูกบันทึก
+              อัปโหลดรูป หรือพิมพ์ชื่อก็ได้ — ถ้ามีรูปจะใช้รูปก่อนเสมอ ไฟล์อยู่แค่ในเบราว์เซอร์ ไม่ถูกบันทึก
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="label" htmlFor="wht-sig">ลายเซ็น</label>
+                <label className="label" htmlFor="wht-sig">ลายเซ็น (รูปมี priority สูงสุด)</label>
                 <input
                   id="wht-sig"
                   type="file"
@@ -749,6 +805,29 @@ export default function WhtPage() {
                       เอาออก
                     </button>
                   </div>
+                )}
+                <div className="my-2 text-xs text-neutral-400">— หรือพิมพ์ชื่อ —</div>
+                <input
+                  id="wht-sig-text"
+                  className="input"
+                  placeholder="พิมพ์ชื่อ-นามสกุล"
+                  autoComplete="off"
+                  value={sigText}
+                  onChange={(e) => setSigText(e.target.value)}
+                />
+                {typedSig && !signature && (
+                  <div className="mt-2 flex items-center gap-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={typedSig} alt="ตัวอย่างลายเซ็นแบบพิมพ์" className="h-12 border border-neutral-200 bg-white object-contain" />
+                    <button type="button" className="btn !px-2 !py-1 text-xs" onClick={() => setSigText("")}>
+                      เอาออก
+                    </button>
+                  </div>
+                )}
+                {typedSig && signature && (
+                  <p className="mt-1 text-xs text-neutral-500">
+                    กำลังใช้รูปที่อัปโหลด (รูปชนะข้อความเสมอ)
+                  </p>
                 )}
                 <label className="mt-2 flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={showSig} onChange={(e) => setShowSig(e.target.checked)} />
@@ -787,7 +866,7 @@ export default function WhtPage() {
             <h2 className="mb-3 font-medium">ตัวอย่างก่อนพิมพ์</h2>
             <WhtPreview
               values={values}
-              signature={signature}
+              signature={effectiveSignature}
               stamp={stamp}
               showSig={showSig}
               showStamp={showStamp}
