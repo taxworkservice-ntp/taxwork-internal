@@ -62,11 +62,13 @@ export async function listWhtFiles(): Promise<FileRow[]> {
   return rows.map(toRow);
 }
 
-export async function recordFile(meta: FileMeta): Promise<void> {
+export async function recordFile(meta: FileMeta): Promise<string> {
   const user = await requireUser();
   const note = meta.note?.trim() ? meta.note.trim() : null;
-  await sql`insert into files (client_id, storage_path, file_name, size_bytes, mime_type, category, note, uploaded_by)
-    values (${meta.client_id}, ${meta.storage_path}, ${meta.file_name}, ${meta.size_bytes}, ${meta.mime_type}, ${meta.category ?? null}, ${note}, ${user.email})`;
+  const rows = (await sql`insert into files (client_id, storage_path, file_name, size_bytes, mime_type, category, note, uploaded_by)
+    values (${meta.client_id}, ${meta.storage_path}, ${meta.file_name}, ${meta.size_bytes}, ${meta.mime_type}, ${meta.category ?? null}, ${note}, ${user.email})
+    returning id`) as { id: string }[];
+  return String(rows[0].id);
 }
 
 export async function updateFileNote(id: string, note: string): Promise<void> {

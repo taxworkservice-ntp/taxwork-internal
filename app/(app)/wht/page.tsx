@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { listClients, type Client } from "@/lib/actions/clients";
 import { listContacts, type Contact } from "@/lib/actions/contacts";
 import { deleteFileRecord, listWhtFiles, recordFile } from "@/lib/actions/files";
+import {
+  deleteWhtHistory,
+  listWhtHistory,
+  saveWhtHistory,
+  type WhtHistoryRow,
+} from "@/lib/actions/wht-history";
 import { whtExportFileName } from "@/lib/file-names";
+import { downloadStoredFile } from "@/lib/download";
 import { useClientFavorites } from "@/lib/use-client-favorites";
 import EntityPicker, { type EntityItem } from "@/components/entity-picker";
 import {
@@ -42,6 +49,22 @@ import {
   type WhtFormType,
   type WhtFormValues,
 } from "@/lib/wht/fields";
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      className={`transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+    >
+      <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 function todayIso(): string {
   const d = new Date();
@@ -275,6 +298,21 @@ export default function WhtPage() {
   const [showSig, setShowSig] = useState(true);
   const [showStamp, setShowStamp] = useState(true);
   const [sigOffsetY, setSigOffsetY] = useState(0);
+
+  // Export history (latest 15). Expandable rows + paging.
+  const [history, setHistory] = useState<WhtHistoryRow[]>([]);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyExpanded, setHistoryExpanded] = useState<string | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [editingFromHistory, setEditingFromHistory] = useState<string | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
+  const HISTORY_PER_PAGE = 5;
+
+  useEffect(() => {
+    listWhtHistory()
+      .then(setHistory)
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     setSigOffsetY(loadSigOffset());
@@ -620,6 +658,34 @@ export default function WhtPage() {
           }
         }
         archiveState = stale.length ? "replaced" : "created";
+
+        // Snapshot the form values so this certificate can be edited or
+        // copied into a new one from the history section. Non-fatal: the
+        // download and file archive already succeeded.
+        try {
+          const currentFile = (await listWhtFiles()).find(
+            (f) => f.file_name === fileName && f.storage_path === path
+          );
+          await saveWhtHistory({
+            formType: values.formType,
+            certificateNo: values.certificateNo,
+            payerName: values.payerName,
+            payerTaxId: values.payerTaxId,
+            payerAddress: values.payerAddress,
+            payeeName: values.payeeName,
+            payeeTaxId: values.payeeTaxId,
+            payeeAddress: values.payeeAddress,
+            description: values.description,
+            issueDate: values.issueDate,
+            amount: values.amount,
+            whtRate: values.whtRate,
+            signatureText: typedText,
+            fileId: currentFile?.id ?? null,
+          });
+          listWhtHistory().then(setHistory).catch(() => undefined);
+        } catch {
+          /* history table missing or write failed — archive still valid */
+        }
       } catch {
         archiveState = "failed";
       }
@@ -637,6 +703,85 @@ export default function WhtPage() {
     }
   }
 
+  function loadHistoryIntoForm(row: WhtHistoryRow, mode: "edit" | "copy") {
+    setValues({
+      formType: (WHT_FORM_TYPES as string[]).includes(row.form_type)
+        ? (row.form_type as WhtFormType)
+        : "pnd3",
+      certificateNo: mode === "copy" ? "" : row.certificate_no,
+      payerName: row.payer_name,
+      payerTaxId: row.payer_tax_id,
+      payerAddress: row.payer_address,
+      payeeName: row.payee_name,
+      payeeTaxId: row.payee_tax_id,
+      payeeAddress: row.payee_address,
+      description: row.description,
+      issueDate: row.issue_date,
+      signDate: row.issue_date,
+      amount: row.amount,
+      whtRate: row.wht_rate,
+    });
+    setSigText(row.signature_text);
+    setSignature(null);
+    setErrors([]);
+    setSubmitMsg(null);
+    setEditingFromHistory(row.id);
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  async function downloadHistory(row: WhtHistoryRow) {
+    if (!row.storage_path) return;
+    setHistoryBusy(true);
+    try {
+      await downloadStoredFile({
+        storagePath: row.storage_path,
+        fileName: row.file_name ?? undefined,
+      });
+    } catch {
+      setSubmitMsg("เปิดไฟล์จากประวัติไม่สำเร็จ");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function removeHistory(row: WhtHistoryRow) {
+    setHistoryBusy(true);
+    try {
+      if (row.storage_path) {
+        try {
+          await fetch("/api/files/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ storagePath: row.storage_path }),
+          });
+        } catch {
+          /* best effort */
+        }
+      }
+      if (row.file_id) {
+        try {
+          await deleteFileRecord(row.file_id);
+        } catch {
+          /* already gone */
+        }
+      }
+      await deleteWhtHistory(row.id);
+      setHistory(await listWhtHistory());
+      setHistoryExpanded(null);
+    } catch {
+      setSubmitMsg("ลบประวัติไม่สำเร็จ");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  const historyPageCount = Math.max(1, Math.ceil(history.length / HISTORY_PER_PAGE));
+  const safeHistoryPage = Math.min(historyPage, historyPageCount - 1);
+  const historySlice = history.slice(
+    safeHistoryPage * HISTORY_PER_PAGE,
+    safeHistoryPage * HISTORY_PER_PAGE + HISTORY_PER_PAGE
+  );
+
   const payerCheck = values.payerTaxId.trim()
     ? checkTaxId(values.payerTaxId)
     : null;
@@ -653,7 +798,19 @@ export default function WhtPage() {
       </p>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <div className="min-w-0 space-y-4">
+        <div ref={formRef} className="min-w-0 space-y-4">
+          {editingFromHistory && (
+            <div className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <span>กำลังดึงข้อมูลจากประวัติ — ตรวจสอบก่อนดาวน์โหลด</span>
+              <button
+                type="button"
+                className="underline"
+                onClick={() => setEditingFromHistory(null)}
+              >
+                ปิด
+              </button>
+            </div>
+          )}
           <section className="card">
             <h2 className="mb-3 font-medium">แบบฟอร์ม</h2>
             <div className="flex flex-wrap gap-2">
@@ -1157,6 +1314,176 @@ export default function WhtPage() {
           </div>
         </div>
       </div>
+
+      {/* Export history — latest 15, expandable + paged. */}
+      <section className="card mt-6">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-medium">ประวัติที่ออกแล้ว</h2>
+          <span className="text-xs text-neutral-500">
+            {history.length ? `${history.length} รายการ (ล่าสุด 15)` : ""}
+          </span>
+        </div>
+
+        {history.length === 0 ? (
+          <p className="py-6 text-center text-sm text-neutral-400">
+            ยังไม่มีประวัติ — เมื่อดาวน์โหลด PDF รายการจะปรากฏที่นี่
+          </p>
+        ) : (
+          <>
+            <div className="overflow-x-auto rounded border border-neutral-200">
+              <table className="table-base w-full min-w-[640px]">
+                <thead>
+                  <tr>
+                    <th className="w-10"></th>
+                    <th>วันที่</th>
+                    <th>ผู้จ่าย → ผู้รับ</th>
+                    <th>แบบ</th>
+                    <th className="text-right">ยอดหัก</th>
+                    <th className="w-56"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historySlice.map((h) => {
+                    const open = historyExpanded === h.id;
+                    const d = new Date(h.created_at);
+                    const pad = (n: number) => String(n).padStart(2, "0");
+                    const dateStr = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                    return (
+                      <Fragment key={h.id}>
+                        <tr className={open ? "bg-blue-50/40" : "hover:bg-neutral-50"}>
+                          <td>
+                            <button
+                              type="button"
+                              aria-label="รายละเอียด"
+                              aria-expanded={open}
+                              className="rounded p-1 text-neutral-400 hover:text-neutral-700"
+                              onClick={() => setHistoryExpanded(open ? null : h.id)}
+                            >
+                              <Chevron open={open} />
+                            </button>
+                          </td>
+                          <td className="whitespace-nowrap text-neutral-700">{dateStr}</td>
+                          <td className="max-w-64 truncate" title={`${h.payer_name} → ${h.payee_name}`}>
+                            {h.payer_name} <span className="text-neutral-400">→</span> {h.payee_name}
+                          </td>
+                          <td className="whitespace-nowrap">
+                            {WHT_FORM_TYPE_LABELS[h.form_type as WhtFormType] ?? h.form_type}
+                          </td>
+                          <td className="whitespace-nowrap text-right font-mono">
+                            {fmtNum(calcWht(h.amount, h.wht_rate)) || "0.00"}
+                          </td>
+                          <td className="text-right">
+                            <span className="inline-flex items-center gap-1.5">
+                              {h.storage_path ? (
+                                <button
+                                  type="button"
+                                  className="btn px-2 py-1 text-xs"
+                                  disabled={historyBusy}
+                                  onClick={() => downloadHistory(h)}
+                                >
+                                  ดาวน์โหลด
+                                </button>
+                              ) : (
+                                <span className="text-xs text-neutral-400">ไฟล์ถูกลบ</span>
+                              )}
+                              <button
+                                type="button"
+                                className="btn px-2 py-1 text-xs"
+                                disabled={historyBusy}
+                                onClick={() => loadHistoryIntoForm(h, "edit")}
+                              >
+                                แก้ไข
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-primary px-2 py-1 text-xs"
+                                disabled={historyBusy}
+                                onClick={() => loadHistoryIntoForm(h, "copy")}
+                              >
+                                ออกใหม่
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-danger px-2 py-1 text-xs"
+                                disabled={historyBusy}
+                                onClick={() => removeHistory(h)}
+                              >
+                                ลบ
+                              </button>
+                            </span>
+                          </td>
+                        </tr>
+                        {open && (
+                          <tr className="bg-neutral-50/70">
+                            <td></td>
+                            <td colSpan={5} className="pb-4">
+                              <div className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+                                <div>
+                                  <span className="text-xs text-neutral-500">ผู้จ่าย</span>
+                                  <div className="text-neutral-800">{h.payer_name || "—"}</div>
+                                  <div className="font-mono text-xs text-neutral-500">{h.payer_tax_id || "—"}</div>
+                                  <div className="text-xs text-neutral-500">{h.payer_address || "—"}</div>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-neutral-500">ผู้รับ</span>
+                                  <div className="text-neutral-800">{h.payee_name || "—"}</div>
+                                  <div className="font-mono text-xs text-neutral-500">{h.payee_tax_id || "—"}</div>
+                                  <div className="text-xs text-neutral-500">{h.payee_address || "—"}</div>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-neutral-500">รายการ</span>
+                                  <div className="text-neutral-800">{h.description || "—"}</div>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-neutral-500">วันที่จ่าย / อัตรา / จำนวนเงิน</span>
+                                  <div className="text-neutral-800">
+                                    {h.issue_date || "—"} · {h.wht_rate || "0"}% · {fmtNum(parseFloat(h.amount)) || "0.00"} บาท
+                                  </div>
+                                </div>
+                                <div className="sm:col-span-2">
+                                  <span className="text-xs text-neutral-500">เลขที่ใบรับรอง / ไฟล์</span>
+                                  <div className="text-neutral-800">
+                                    {h.certificate_no || "—"}
+                                    {h.file_name ? ` · ${h.file_name}` : h.file_id ? "" : " · ไม่มีไฟล์"}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {historyPageCount > 1 && (
+              <div className="mt-3 flex items-center justify-end gap-2 text-xs">
+                <button
+                  type="button"
+                  className="btn px-2 py-1"
+                  disabled={safeHistoryPage === 0}
+                  onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
+                >
+                  ก่อนหน้า
+                </button>
+                <span className="text-neutral-500">
+                  หน้า {safeHistoryPage + 1} / {historyPageCount}
+                </span>
+                <button
+                  type="button"
+                  className="btn px-2 py-1"
+                  disabled={safeHistoryPage >= historyPageCount - 1}
+                  onClick={() => setHistoryPage((p) => Math.min(historyPageCount - 1, p + 1))}
+                >
+                  ถัดไป
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </section>
     </>
   );
 }
