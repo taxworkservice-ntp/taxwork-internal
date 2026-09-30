@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listClients, type Client } from "@/lib/actions/clients";
+import { listContacts, type Contact } from "@/lib/actions/contacts";
 import { useClientFavorites } from "@/lib/use-client-favorites";
+import EntityPicker, { type EntityItem } from "@/components/entity-picker";
 import {
   WHT_CHECKMARK_POS,
   WHT_DESCRIPTION_PRESETS,
@@ -211,77 +213,83 @@ export default function WhtPage() {
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Payer picker: pull name/tax ID/address from the clients database.
-  // Favorites reuse the shared clients.favorites store (same stars as Clients page).
+  // Payer/payee pickers: pull name/tax ID/address from the clients and
+  // contacts databases. Favorites reuse the shared clients.favorites store
+  // (same stars as the Clients page).
+  const CONTACT_TYPE_LABELS: Record<Contact["type"], string> = {
+    auditor: "ผู้สอบบัญชี",
+    accountant: "นักบัญชี",
+    both: "ผู้สอบบัญชี + นักบัญชี",
+  };
+
   const { favorites, toggleFav } = useClientFavorites();
-  const [payerClients, setPayerClients] = useState<Client[]>([]);
-  const [payerClientsLoading, setPayerClientsLoading] = useState(true);
-  const [payerClientId, setPayerClientId] = useState("");
+  const [dbClients, setDbClients] = useState<Client[]>([]);
+  const [dbContacts, setDbContacts] = useState<Contact[]>([]);
+  const [dbLoading, setDbLoading] = useState(true);
+  const [payerSel, setPayerSel] = useState("");
+  const [payeeSel, setPayeeSel] = useState("");
+  const [pickerResetKey, setPickerResetKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    listClients()
-      .then((rows) => {
-        if (!cancelled) setPayerClients(rows.filter((c) => c.status === "active"));
+    Promise.all([listClients(), listContacts()])
+      .then(([clients, contacts]) => {
+        if (cancelled) return;
+        setDbClients(clients.filter((c) => c.status === "active"));
+        setDbContacts(
+          [...contacts].sort((a, b) => a.name.localeCompare(b.name, "th"))
+        );
       })
       .catch(() => {
-        if (!cancelled) setPayerClients([]);
+        if (cancelled) return;
+        setDbClients([]);
+        setDbContacts([]);
       })
       .finally(() => {
-        if (!cancelled) setPayerClientsLoading(false);
+        if (!cancelled) setDbLoading(false);
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const payerBoxRef = useRef<HTMLDivElement>(null);
-  const [payerSearch, setPayerSearch] = useState("");
-  const [payerOpen, setPayerOpen] = useState(false);
-  const [payerHi, setPayerHi] = useState(0);
+  const payerItems: EntityItem[] = useMemo(
+    () =>
+      dbClients.map((c) => ({
+        key: `client:${c.id}`,
+        rawId: c.id,
+        kind: "client" as const,
+        name: c.name,
+        detail: null,
+        taxId: c.tax_id,
+      })),
+    [dbClients]
+  );
 
-  // Suggestions: favorites first, then Thai-sorted matches. Empty query shows
-  // favorites for one-tap pick; typing filters by name or tax ID.
-  const payerSuggestions = useMemo(() => {
-    const q = payerSearch.trim().toLowerCase();
-    const qDigits = payerSearch.replace(/\D/g, "");
-    const pool = q
-      ? payerClients.filter(
-          (c) =>
-            c.name.toLowerCase().includes(q) ||
-            (qDigits && (c.tax_id ?? "").replace(/\D/g, "").includes(qDigits))
-        )
-      : payerClients;
-    const favIds = new Set(favorites);
-    const favs = pool
-      .filter((c) => favIds.has(c.id))
-      .sort((a, b) => a.name.localeCompare(b.name, "th"));
-    const rest = pool
-      .filter((c) => !favIds.has(c.id))
-      .sort((a, b) => a.name.localeCompare(b.name, "th"));
-    return [...favs, ...rest].slice(0, 8);
-  }, [payerClients, payerSearch, favorites]);
+  const payeeItems: EntityItem[] = useMemo(
+    () => [
+      ...dbClients.map((c) => ({
+        key: `client:${c.id}`,
+        rawId: c.id,
+        kind: "client" as const,
+        name: c.name,
+        detail: null,
+        taxId: c.tax_id,
+      })),
+      ...dbContacts.map((c) => ({
+        key: `contact:${c.id}`,
+        rawId: c.id,
+        kind: "contact" as const,
+        name: c.name,
+        detail: [c.firm, CONTACT_TYPE_LABELS[c.type]].filter(Boolean).join(" · ") || null,
+        taxId: c.tax_id,
+      })),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dbClients, dbContacts]
+  );
 
-  // Close suggestions on outside click.
-  useEffect(() => {
-    if (!payerOpen) return;
-    function onDown(e: MouseEvent) {
-      if (!payerBoxRef.current?.contains(e.target as Node)) setPayerOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [payerOpen]);
-
-  function pickPayerClient(c: Client) {
-    setPayerClientId(c.id);
-    setPayerSearch(c.name);
-    setPayerOpen(false);
-    setValues((prev) => ({
-      ...prev,
-      payerName: c.name ?? "",
-      payerTaxId: c.tax_id ? maskTaxIdInput(c.tax_id) : prev.payerTaxId,
-      payerAddress: c.address ?? prev.payerAddress,
-    }));
+  function clearPayerErrors() {
     setErrors((prev) =>
       prev.filter(
         (e) => e.field !== "payerName" && e.field !== "payerTaxId" && e.field !== "payerAddress"
@@ -289,10 +297,58 @@ export default function WhtPage() {
     );
   }
 
-  function clearPayerClient() {
-    setPayerClientId("");
-    setPayerSearch("");
-    setPayerOpen(false);
+  function clearPayeeErrors() {
+    setErrors((prev) =>
+      prev.filter(
+        (e) => e.field !== "payeeName" && e.field !== "payeeTaxId" && e.field !== "payeeAddress"
+      )
+    );
+  }
+
+  function fillPayerFromClient(c: Client) {
+    setValues((prev) => ({
+      ...prev,
+      payerName: c.name ?? "",
+      payerTaxId: c.tax_id ? maskTaxIdInput(c.tax_id) : prev.payerTaxId,
+      payerAddress: c.address ?? prev.payerAddress,
+    }));
+    clearPayerErrors();
+  }
+
+  function fillPayeeFromClient(c: Client) {
+    setValues((prev) => ({
+      ...prev,
+      payeeName: c.name ?? "",
+      payeeTaxId: c.tax_id ? maskTaxIdInput(c.tax_id) : prev.payeeTaxId,
+      payeeAddress: c.address ?? prev.payeeAddress,
+    }));
+    clearPayeeErrors();
+  }
+
+  function pickPayer(item: EntityItem) {
+    const c = dbClients.find((x) => x.id === item.rawId);
+    if (!c) return;
+    setPayerSel(item.key);
+    fillPayerFromClient(c);
+  }
+
+  function pickPayee(item: EntityItem) {
+    setPayeeSel(item.key);
+    if (item.kind === "client") {
+      const c = dbClients.find((x) => x.id === item.rawId);
+      if (!c) return;
+      fillPayeeFromClient(c);
+    } else {
+      const c = dbContacts.find((x) => x.id === item.rawId);
+      if (!c) return;
+      setValues((prev) => ({
+        ...prev,
+        payeeName: c.name ?? "",
+        payeeTaxId: c.tax_id ? maskTaxIdInput(c.tax_id) : prev.payeeTaxId,
+        payeeAddress: c.address ?? prev.payeeAddress,
+      }));
+      clearPayeeErrors();
+    }
   }
 
   const set = (k: keyof WhtFormValues, v: string | WhtFormType) =>
@@ -434,116 +490,22 @@ export default function WhtPage() {
 
           <section className="card">
             <h2 className="mb-3 font-medium">ผู้จ่ายเงิน</h2>
-            <div className="mb-3 rounded border border-neutral-200 bg-neutral-50 p-3">
-              <label className="label" htmlFor="wht-payer-search">
-                ค้นหาจากฐานข้อมูลลูกค้า {payerClientsLoading ? " (กำลังโหลด…)" : ` (${payerClients.length} ราย)`}
-              </label>
-              <div ref={payerBoxRef} className="relative">
-                <div className="flex items-center gap-2">
-                  <input
-                    id="wht-payer-search"
-                    className="input flex-1"
-                    placeholder="พิมพ์ชื่อลูกค้า…"
-                    autoComplete="off"
-                    disabled={payerClientsLoading}
-                    value={payerSearch}
-                    onChange={(e) => {
-                      setPayerSearch(e.target.value);
-                      // Typing after a pick switches back to manual editing.
-                      if (payerClientId) setPayerClientId("");
-                      setPayerOpen(true);
-                      setPayerHi(0);
-                    }}
-                    onFocus={() => {
-                      setPayerOpen(true);
-                      setPayerHi(0);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "ArrowDown" && payerSuggestions.length) {
-                        e.preventDefault();
-                        setPayerHi((h) => (h + 1) % payerSuggestions.length);
-                      } else if (e.key === "ArrowUp" && payerSuggestions.length) {
-                        e.preventDefault();
-                        setPayerHi((h) => (h - 1 + payerSuggestions.length) % payerSuggestions.length);
-                      } else if (e.key === "Enter" && payerOpen && payerSuggestions[payerHi]) {
-                        e.preventDefault();
-                        pickPayerClient(payerSuggestions[payerHi]);
-                      } else if (e.key === "Escape") {
-                        setPayerOpen(false);
-                      }
-                    }}
-                  />
-                  {payerClientId ? (
-                    <>
-                      <button
-                        type="button"
-                        className="btn shrink-0 !px-2"
-                        title={favorites.includes(payerClientId) ? "เอาออกจากรายการโปรด" : "เพิ่มในรายการโปรด"}
-                        onClick={() => toggleFav(payerClientId)}
-                      >
-                        {favorites.includes(payerClientId) ? "★" : "☆"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn shrink-0 !px-2"
-                        title="ล้างที่เลือก (คงค่าที่กรอกไว้)"
-                        onClick={clearPayerClient}
-                      >
-                        ✕
-                      </button>
-                    </>
-                  ) : (
-                    payerSearch && (
-                      <button
-                        type="button"
-                        className="btn shrink-0 !px-2"
-                        title="ล้างคำค้น"
-                        onClick={() => {
-                          setPayerSearch("");
-                          setPayerOpen(true);
-                        }}
-                      >
-                        ✕
-                      </button>
-                    )
-                  )}
-                </div>
-                {payerOpen && !payerClientsLoading && (
-                  <div className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded border border-neutral-200 bg-white shadow-lg">
-                    {payerSuggestions.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-neutral-500">
-                        ไม่พบลูกค้าที่ตรง — พิมพ์เองในช่องด้านล่างได้เลย
-                      </div>
-                    ) : (
-                      payerSuggestions.map((c, i) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-neutral-100 ${
-                            i === payerHi ? "bg-neutral-100" : ""
-                          }`}
-                          onMouseEnter={() => setPayerHi(i)}
-                          onClick={() => pickPayerClient(c)}
-                        >
-                          <span className="w-4 shrink-0 text-amber-500">
-                            {favorites.includes(c.id) ? "★" : ""}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                          {c.tax_id && (
-                            <span className="shrink-0 font-mono text-xs text-neutral-400">
-                              {c.tax_id}
-                            </span>
-                          )}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-              <p className="mt-1 text-xs text-neutral-500">
-                เลือกแล้วแก้ต่อได้ — ดาวซิงก์กับหน้ารายชื่อลูกค้า
-              </p>
-            </div>
+            <EntityPicker
+              id="wht-payer-search"
+              title="ค้นหาจากฐานข้อมูลลูกค้า"
+              meta={dbLoading ? "(กำลังโหลด…)" : `(${dbClients.length} ราย)`}
+              placeholder="พิมพ์ชื่อลูกค้า…"
+              items={payerItems}
+              loading={dbLoading}
+              favorites={favorites}
+              onToggleFav={toggleFav}
+              selectedKey={payerSel}
+              onPick={pickPayer}
+              onClearSelection={() => setPayerSel("")}
+              resetKey={pickerResetKey}
+              emptyText="ไม่พบลูกค้าที่ตรง — พิมพ์เองในช่องด้านล่างได้เลย"
+              footText="เลือกแล้วแก้ต่อได้ — ดาวซิงก์กับหน้ารายชื่อลูกค้า"
+            />
             <div className="space-y-3">
               <div>
                 <label className="label" htmlFor="wht-payer-name">ชื่อผู้จ่าย *</label>
@@ -590,6 +552,22 @@ export default function WhtPage() {
 
           <section className="card">
             <h2 className="mb-3 font-medium">ผู้รับเงิน</h2>
+            <EntityPicker
+              id="wht-payee-search"
+              title="ค้นหาจากฐานข้อมูลลูกค้าและผู้เกี่ยวข้อง"
+              meta={dbLoading ? "(กำลังโหลด…)" : `(${payeeItems.length} รายการ)`}
+              placeholder="พิมพ์ชื่อลูกค้าหรือผู้เกี่ยวข้อง…"
+              items={payeeItems}
+              loading={dbLoading}
+              favorites={favorites}
+              onToggleFav={toggleFav}
+              selectedKey={payeeSel}
+              onPick={pickPayee}
+              onClearSelection={() => setPayeeSel("")}
+              resetKey={pickerResetKey}
+              emptyText="ไม่พบที่ตรง — พิมพ์เองในช่องด้านล่างได้เลย"
+              footText="เลือกแล้วแก้ต่อได้ — ดาวซิงก์กับหน้ารายชื่อลูกค้า"
+            />
             <div className="space-y-3">
               <div>
                 <label className="label" htmlFor="wht-payee-name">ชื่อผู้รับ *</label>
@@ -823,9 +801,9 @@ export default function WhtPage() {
                 className="btn"
                 disabled={busy}
                 onClick={() => {
-                  setPayerClientId("");
-                  setPayerSearch("");
-                  setPayerOpen(false);
+                  setPayerSel("");
+                  setPayeeSel("");
+                  setPickerResetKey((k) => k + 1);
                   setDescMode("preset");
                   setErrors([]);
                   setSubmitMsg(null);
