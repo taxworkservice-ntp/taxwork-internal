@@ -16,18 +16,24 @@ import {
   WHT_PAGE_H,
   WHT_PAGE_W,
   WHT_SIGNATURE_BOX,
+  WHT_SIG_FONT_DEFAULT,
+  WHT_SIG_FONT_MAX,
+  WHT_SIG_FONT_MIN,
   WHT_SIG_OFFSET_LIMIT,
   WHT_STAMP_BOX,
   buildWhtOverlay,
   calcWht,
   checkTaxId,
+  clampSigFontSize,
   deleteCustomPreset,
   fmtNum,
   loadCustomPresets,
+  loadSigFontSize,
   loadSigOffset,
   maskTaxIdInput,
   parseAmount,
   saveCustomPreset,
+  saveSigFontSize,
   saveSigOffset,
   taxIdDigits,
   validateWhtForm,
@@ -63,73 +69,29 @@ async function fileToDataUri(file: File): Promise<string> {
   return `data:${mime};base64,${b64}`;
 }
 
-// Crop transparent margins so contain-fit maps the glyphs (not the canvas)
-// into the signature box — the text then straddles the dotted signing line
-// instead of colliding with the date below it.
-function trimTransparent(canvas: HTMLCanvasElement, pad = 8): HTMLCanvasElement {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return canvas;
-  const W = canvas.width;
-  const H = canvas.height;
-  const data = ctx.getImageData(0, 0, W, H).data;
-  let minX = W;
-  let minY = H;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      if (data[(y * W + x) * 4 + 3] > 8) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < 0) return canvas;
-  minX = Math.max(0, minX - pad);
-  minY = Math.max(0, minY - pad);
-  maxX = Math.min(W - 1, maxX + pad);
-  maxY = Math.min(H - 1, maxY + pad);
-  const out = document.createElement("canvas");
-  out.width = maxX - minX + 1;
-  out.height = maxY - minY + 1;
-  const octx = out.getContext("2d");
-  if (!octx) return canvas;
-  octx.drawImage(canvas, minX, minY, out.width, out.height, 0, 0, out.width, out.height);
-  return out;
-}
-
-// Typed signature: rendered to a PNG on canvas so it flows through the
-// exact same image pipeline (preview + server PDF) as an upload.
-function renderTypedSignature(text: string): string | null {
+// Typed signature: drawn at the box's exact aspect (2x) with NO cropping,
+// displayed at 100%x100% — so canvas pixels map 1:1 to the box and the
+// chosen font size is exact on paper.
+function renderTypedSignature(text: string, templatePx: number): string | null {
   const t = text.trim();
   if (!t) return null;
-  const W = 516;
-  const H = 194;
+  // 2x of the 186x70 signature box — identical aspect, exact mapping.
+  const W = 372;
+  const H = 140;
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
   const family = `"Cordia New","Sarabun",sans-serif`;
-  // Fixed payer-name style (32px regular black); shrink only when the text
-  // exceeds the box budget, so normal names always match the form text.
+  // Payer-name style baseline: regular black; size is user-chosen.
   ctx.fillStyle = "#000";
   ctx.textAlign = "center";
-  // Alphabetic baseline near the box bottom so the text sits ON the
-  // dotted signing line (like handwriting), with room for descenders.
-  ctx.textBaseline = "alphabetic";
-  const baselineY = H - 30;
-  let size = 32;
-  while (size > 24) {
-    ctx.font = `400 ${size}px ${family}`;
-    if (ctx.measureText(t).width <= W - 36) break;
-    size -= 4;
-  }
+  ctx.textBaseline = "middle";
+  const size = templatePx * 2;
   ctx.font = `400 ${size}px ${family}`;
-  ctx.fillText(t, W / 2, baselineY);
-  return trimTransparent(canvas).toDataURL("image/png");
+  ctx.fillText(t, W / 2, H / 2);
+  return canvas.toDataURL("image/png");
 }
 
 function WhtPreview({
@@ -296,6 +258,21 @@ export default function WhtPage() {
   const [typedSig, setTypedSig] = useState<string | null>(null);
   const sigTextRef = useRef("");
   sigTextRef.current = sigText;
+  const [sigFontSize, setSigFontSize] = useState(WHT_SIG_FONT_DEFAULT);
+  const sigFontSizeRef = useRef(WHT_SIG_FONT_DEFAULT);
+  sigFontSizeRef.current = sigFontSize;
+
+  useEffect(() => {
+    setSigFontSize(loadSigFontSize());
+  }, []);
+
+  function changeSigFontSize(delta: number) {
+    setSigFontSize((prev) => {
+      const next = clampSigFontSize(prev + delta);
+      saveSigFontSize(next);
+      return next;
+    });
+  }
   const [showSig, setShowSig] = useState(true);
   const [showStamp, setShowStamp] = useState(true);
   const [sigOffsetY, setSigOffsetY] = useState(0);
@@ -518,8 +495,8 @@ export default function WhtPage() {
           : "__custom";
 
   useEffect(() => {
-    setTypedSig(renderTypedSignature(sigText));
-  }, [sigText]);
+    setTypedSig(renderTypedSignature(sigText, sigFontSize));
+  }, [sigText, sigFontSize]);
 
   // Re-render once the Cordia webfont arrives so canvas uses the right metrics.
   useEffect(() => {
@@ -527,7 +504,7 @@ export default function WhtPage() {
     const p = document.fonts?.ready;
     if (p) {
       p.then(() => {
-        if (live) setTypedSig(renderTypedSignature(sigTextRef.current));
+        if (live) setTypedSig(renderTypedSignature(sigTextRef.current, sigFontSizeRef.current));
       }).catch(() => {
         /* keep fallback rendering */
       });
@@ -1037,6 +1014,40 @@ export default function WhtPage() {
                   value={sigText}
                   onChange={(e) => setSigText(e.target.value)}
                 />
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-neutral-500">ขนาดตัวอักษร:</span>
+                  <button
+                    type="button"
+                    className="btn !px-2 !py-1 text-xs"
+                    onClick={() => changeSigFontSize(-2)}
+                    disabled={sigFontSize <= WHT_SIG_FONT_MIN}
+                    title="ลดขนาด"
+                  >
+                    A−
+                  </button>
+                  <button
+                    type="button"
+                    className="btn !px-2 !py-1 text-xs"
+                    onClick={() => changeSigFontSize(2)}
+                    disabled={sigFontSize >= WHT_SIG_FONT_MAX}
+                    title="เพิ่มขนาด"
+                  >
+                    A+
+                  </button>
+                  <span className="font-mono text-xs text-neutral-600">{sigFontSize}px</span>
+                  {sigFontSize !== WHT_SIG_FONT_DEFAULT && (
+                    <button
+                      type="button"
+                      className="text-xs text-blue-600 underline"
+                      onClick={() => {
+                        setSigFontSize(WHT_SIG_FONT_DEFAULT);
+                        saveSigFontSize(WHT_SIG_FONT_DEFAULT);
+                      }}
+                    >
+                      รีเซ็ต
+                    </button>
+                  )}
+                </div>
                 {typedSig && !signature && (
                   <div className="mt-2 flex items-center gap-2">
                     {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -161,6 +161,35 @@ export function saveSigOffset(v: number): void {
   }
 }
 
+/** Typed-signature font size (template px). Fixed user choice, persisted. */
+export const WHT_SIG_FONT_DEFAULT = 32;
+export const WHT_SIG_FONT_MIN = 16;
+export const WHT_SIG_FONT_MAX = 64;
+export const WHT_SIG_FONT_KEY = "wht.sigFontSize";
+
+export function clampSigFontSize(v: unknown): number {
+  const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : WHT_SIG_FONT_DEFAULT;
+  if (!Number.isFinite(n)) return WHT_SIG_FONT_DEFAULT;
+  return Math.max(WHT_SIG_FONT_MIN, Math.min(WHT_SIG_FONT_MAX, Math.round(n)));
+}
+
+export function loadSigFontSize(): number {
+  try {
+    const raw = localStorage.getItem(WHT_SIG_FONT_KEY);
+    return raw == null ? WHT_SIG_FONT_DEFAULT : clampSigFontSize(raw);
+  } catch {
+    return WHT_SIG_FONT_DEFAULT;
+  }
+}
+
+export function saveSigFontSize(v: number): void {
+  try {
+    localStorage.setItem(WHT_SIG_FONT_KEY, String(clampSigFontSize(v)));
+  } catch {
+    /* ignore */
+  }
+}
+
 export type WhtFormValues = {
   formType: WhtFormType;
   certificateNo: string;
