@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listClients, type Client } from "@/lib/actions/clients";
 import { listContacts, type Contact } from "@/lib/actions/contacts";
-import { recordFile } from "@/lib/actions/files";
+import { deleteFileRecord, listWhtFiles, recordFile } from "@/lib/actions/files";
+import { whtExportFileName } from "@/lib/file-names";
 import { useClientFavorites } from "@/lib/use-client-favorites";
 import EntityPicker, { type EntityItem } from "@/components/entity-picker";
 import {
@@ -15,6 +16,7 @@ import {
   WHT_PAGE_H,
   WHT_PAGE_W,
   WHT_SIGNATURE_BOX,
+  WHT_SIG_OFFSET_LIMIT,
   WHT_STAMP_BOX,
   buildWhtOverlay,
   calcWht,
@@ -22,9 +24,11 @@ import {
   deleteCustomPreset,
   fmtNum,
   loadCustomPresets,
+  loadSigOffset,
   maskTaxIdInput,
   parseAmount,
   saveCustomPreset,
+  saveSigOffset,
   taxIdDigits,
   validateWhtForm,
   whtAmountThaiText,
@@ -129,12 +133,14 @@ function renderTypedSignature(text: string): string | null {
 function WhtPreview({
   values,
   signature,
+  sigOffsetY,
   stamp,
   showSig,
   showStamp,
 }: {
   values: WhtFormValues;
   signature: string | null;
+  sigOffsetY: number;
   stamp: string | null;
   showSig: boolean;
   showStamp: boolean;
@@ -191,7 +197,7 @@ function WhtPreview({
               alt="ลายเซ็น"
               style={{
                 position: "absolute",
-                top: WHT_SIGNATURE_BOX.top,
+                top: WHT_SIGNATURE_BOX.top + sigOffsetY,
                 left: WHT_SIGNATURE_BOX.left,
                 width: WHT_SIGNATURE_BOX.width,
                 height: WHT_SIGNATURE_BOX.height,
@@ -290,6 +296,24 @@ export default function WhtPage() {
   sigTextRef.current = sigText;
   const [showSig, setShowSig] = useState(true);
   const [showStamp, setShowStamp] = useState(true);
+  const [sigOffsetY, setSigOffsetY] = useState(0);
+
+  useEffect(() => {
+    setSigOffsetY(loadSigOffset());
+  }, []);
+
+  function nudgeSig(delta: number) {
+    setSigOffsetY((prev) => {
+      const next = Math.max(-WHT_SIG_OFFSET_LIMIT, Math.min(WHT_SIG_OFFSET_LIMIT, prev + delta));
+      saveSigOffset(next);
+      return next;
+    });
+  }
+
+  function resetSigOffset() {
+    setSigOffsetY(0);
+    saveSigOffset(0);
+  }
   const [errors, setErrors] = useState<{ field: string; message: string }[]>([]);
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -552,6 +576,7 @@ export default function WhtPage() {
           // Sign date always follows the payment date (single date field).
           signDate: values.issueDate,
           signatureDataUri: showSig ? effectiveSignature : null,
+          signatureOffsetY: sigOffsetY,
           stampDataUri: showStamp ? stamp : null,
           hideSignature: !showSig,
           hideStamp: !showStamp,
@@ -570,9 +595,15 @@ export default function WhtPage() {
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const safeCert =
-        values.certificateNo.trim().replace(/[^A-Za-z0-9-_]/g, "") || "nocert";
-      const fileName = `wht-${values.formType}-${values.issueDate}-${safeCert}.pdf`;
+      const fileName = whtExportFileName({
+        formType: values.formType,
+        issueDate: values.issueDate,
+        certificateNo: values.certificateNo,
+        payerName: values.payerName,
+        payeeName: values.payeeName,
+        amount: values.amount,
+        description: values.description,
+      });
       const a = document.createElement("a");
       a.href = url;
       a.download = fileName;
@@ -582,8 +613,10 @@ export default function WhtPage() {
       setTimeout(() => URL.revokeObjectURL(url), 2000);
 
       // Archive a copy to R2 + the files history (หัก ณ ที่จ่าย tab).
-      // A failed archive never fails the download itself.
-      let archived = false;
+      // Same filename = same certificate: replace the old entry instead of
+      // duplicating. Upload the new copy first so a failure keeps the old
+      // one intact. A failed archive never fails the download itself.
+      let archiveState: "created" | "replaced" | "failed" = "failed";
       try {
         const signRes = await fetch("/api/files/sign-upload", {
           method: "POST",
@@ -607,14 +640,35 @@ export default function WhtPage() {
           category: "wht",
           note: `ผู้จ่าย ${values.payerName.trim()} → ผู้รับ ${values.payeeName.trim()} · ${WHT_FORM_TYPE_LABELS[values.formType]} · หัก ${fmtNum(wht) || "0.00"} บาท`,
         });
-        archived = true;
+        const stale = (await listWhtFiles()).filter(
+          (f) => f.file_name === fileName && f.storage_path !== path
+        );
+        for (const old of stale) {
+          try {
+            await fetch("/api/files/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ storagePath: old.storage_path }),
+            });
+          } catch {
+            /* best effort — orphaned keys don't affect the listing */
+          }
+          try {
+            await deleteFileRecord(old.id);
+          } catch {
+            /* already gone */
+          }
+        }
+        archiveState = stale.length ? "replaced" : "created";
       } catch {
-        archived = false;
+        archiveState = "failed";
       }
       setSubmitMsg(
-        archived
+        archiveState === "created"
           ? "ดาวน์โหลดแล้ว และบันทึกสำเนาในไฟล์หัก ณ ที่จ่ายแล้ว"
-          : "ดาวน์โหลดแล้ว แต่บันทึกสำเนาเข้าไฟล์ไม่สำเร็จ"
+          : archiveState === "replaced"
+            ? "ดาวน์โหลดแล้ว และอัปเดตสำเนาเดิมในไฟล์หัก ณ ที่จ่ายแล้ว"
+            : "ดาวน์โหลดแล้ว แต่บันทึกสำเนาเข้าไฟล์ไม่สำเร็จ"
       );
     } catch {
       setSubmitMsg("สร้าง PDF ไม่สำเร็จ — ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
@@ -999,6 +1053,23 @@ export default function WhtPage() {
                   <input type="checkbox" checked={showSig} onChange={(e) => setShowSig(e.target.checked)} />
                   แสดงลายเซ็นใน PDF
                 </label>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-neutral-500">ตำแหน่ง:</span>
+                  <button type="button" className="btn !px-2 !py-1 text-xs" onClick={() => nudgeSig(-5)} title="เลื่อนขึ้น 5px">
+                    ▲ ขึ้น
+                  </button>
+                  <button type="button" className="btn !px-2 !py-1 text-xs" onClick={() => nudgeSig(5)} title="เลื่อนลง 5px">
+                    ▼ ลง
+                  </button>
+                  <span className="font-mono text-xs text-neutral-600">
+                    {sigOffsetY > 0 ? `+${sigOffsetY}` : sigOffsetY} px
+                  </span>
+                  {sigOffsetY !== 0 && (
+                    <button type="button" className="text-xs text-blue-600 underline" onClick={resetSigOffset}>
+                      รีเซ็ต
+                    </button>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="label" htmlFor="wht-stamp">ตราประทับ</label>
@@ -1033,6 +1104,7 @@ export default function WhtPage() {
             <WhtPreview
               values={{ ...values, signDate: values.issueDate }}
               signature={effectiveSignature}
+              sigOffsetY={sigOffsetY}
               stamp={stamp}
               showSig={showSig}
               showStamp={showStamp}

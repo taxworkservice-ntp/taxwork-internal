@@ -135,6 +135,32 @@ export const WHT_STAMP_BOX = {
   height: 139,
 } as const;
 
+/** Vertical nudge range (template px) for the on-form signature position. */
+export const WHT_SIG_OFFSET_LIMIT = 80;
+export const WHT_SIG_OFFSET_KEY = "wht.sigOffsetY";
+
+export function clampSigOffset(v: unknown): number {
+  const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : 0;
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-WHT_SIG_OFFSET_LIMIT, Math.min(WHT_SIG_OFFSET_LIMIT, Math.round(n)));
+}
+
+export function loadSigOffset(): number {
+  try {
+    return clampSigOffset(localStorage.getItem(WHT_SIG_OFFSET_KEY));
+  } catch {
+    return 0;
+  }
+}
+
+export function saveSigOffset(v: number): void {
+  try {
+    localStorage.setItem(WHT_SIG_OFFSET_KEY, String(clampSigOffset(v)));
+  } catch {
+    /* ignore */
+  }
+}
+
 export type WhtFormValues = {
   formType: WhtFormType;
   certificateNo: string;
