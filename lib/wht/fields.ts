@@ -68,10 +68,10 @@ export const WHT_PAGE_H = 2138;
 
 /** Signature / stamp overlay geometry (matches invoice-system print.tsx). */
 export const WHT_SIGNATURE_BOX = {
-  top: 1855,
-  left: 905,
-  width: 304,
-  height: 114,
+  top: 1864,
+  left: 928,
+  width: 258,
+  height: 97,
 } as const;
 
 export const WHT_STAMP_BOX = {

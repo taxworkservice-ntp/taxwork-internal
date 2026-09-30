@@ -95,7 +95,7 @@ export default function EntityPicker({
     const rest = pool
       .filter((it) => !favIds.has(it.rawId))
       .sort((a, b) => a.name.localeCompare(b.name, "th"));
-    return [...favs, ...rest].slice(0, 8);
+    return [...favs, ...rest];
   }, [items, query, favorites]);
 
   useEffect(() => {
