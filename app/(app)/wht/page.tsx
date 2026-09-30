@@ -113,19 +113,21 @@ function renderTypedSignature(text: string): string | null {
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
   const family = `"Cordia New","Sarabun",sans-serif`;
-  ctx.fillStyle = "#1e3a8c";
+  // Fixed payer-name style (32px regular black); shrink only when the text
+  // exceeds the box budget, so normal names always match the form text.
+  ctx.fillStyle = "#000";
   ctx.textAlign = "center";
   // Alphabetic baseline near the box bottom so the text sits ON the
   // dotted signing line (like handwriting), with room for descenders.
   ctx.textBaseline = "alphabetic";
   const baselineY = H - 30;
-  let size = 72;
+  let size = 32;
   while (size > 24) {
-    ctx.font = `700 ${size}px ${family}`;
+    ctx.font = `400 ${size}px ${family}`;
     if (ctx.measureText(t).width <= W - 36) break;
     size -= 4;
   }
-  ctx.font = `700 ${size}px ${family}`;
+  ctx.font = `400 ${size}px ${family}`;
   ctx.fillText(t, W / 2, baselineY);
   return trimTransparent(canvas).toDataURL("image/png");
 }
