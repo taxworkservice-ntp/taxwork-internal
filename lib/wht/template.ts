@@ -48,11 +48,21 @@ function readFontBase64(file: string): string | null {
 
 function fontCss(): string {
   if (fontCssCache !== null) return fontCssCache;
+  // Cordia New first — the PND field geometry is tuned for its metrics
+  // (same as invoice-system). Sarabun stays as fallback.
+  const cordia = readFontBase64("cordia-new-regular.ttf");
+  const cordiaBold = readFontBase64("cordia-new-bold.ttf");
   const regular = readFontBase64("Sarabun-Regular.ttf");
   const bold = readFontBase64("Sarabun-Bold.ttf");
   const faces: string[] = [];
-  // Server Chromium has no Cordia New; Sarabun keeps Thai shaping correct
-  // at the same geometry.
+  if (cordia)
+    faces.push(
+      `@font-face{font-family:'Cordia New';font-style:normal;font-weight:400;src:url(data:font/ttf;base64,${cordia}) format('truetype');}`
+    );
+  if (cordiaBold)
+    faces.push(
+      `@font-face{font-family:'Cordia New';font-style:normal;font-weight:700;src:url(data:font/ttf;base64,${cordiaBold}) format('truetype');}`
+    );
   if (regular)
     faces.push(
       `@font-face{font-family:'Sarabun';font-style:normal;font-weight:400;src:url(data:font/ttf;base64,${regular}) format('truetype');}`

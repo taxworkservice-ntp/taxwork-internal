@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { listClients, type Client } from "@/lib/actions/clients";
+import { useClientFavorites } from "@/lib/use-client-favorites";
 import {
   WHT_CHECKMARK_POS,
   WHT_DESCRIPTION_PRESETS,
@@ -209,6 +211,90 @@ export default function WhtPage() {
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Payer picker: pull name/tax ID/address from the clients database.
+  // Favorites reuse the shared clients.favorites store (same stars as Clients page).
+  const { favorites, toggleFav } = useClientFavorites();
+  const [payerClients, setPayerClients] = useState<Client[]>([]);
+  const [payerClientsLoading, setPayerClientsLoading] = useState(true);
+  const [payerClientId, setPayerClientId] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((rows) => {
+        if (!cancelled) setPayerClients(rows.filter((c) => c.status === "active"));
+      })
+      .catch(() => {
+        if (!cancelled) setPayerClients([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPayerClientsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const payerBoxRef = useRef<HTMLDivElement>(null);
+  const [payerSearch, setPayerSearch] = useState("");
+  const [payerOpen, setPayerOpen] = useState(false);
+  const [payerHi, setPayerHi] = useState(0);
+
+  // Suggestions: favorites first, then Thai-sorted matches. Empty query shows
+  // favorites for one-tap pick; typing filters by name or tax ID.
+  const payerSuggestions = useMemo(() => {
+    const q = payerSearch.trim().toLowerCase();
+    const qDigits = payerSearch.replace(/\D/g, "");
+    const pool = q
+      ? payerClients.filter(
+          (c) =>
+            c.name.toLowerCase().includes(q) ||
+            (qDigits && (c.tax_id ?? "").replace(/\D/g, "").includes(qDigits))
+        )
+      : payerClients;
+    const favIds = new Set(favorites);
+    const favs = pool
+      .filter((c) => favIds.has(c.id))
+      .sort((a, b) => a.name.localeCompare(b.name, "th"));
+    const rest = pool
+      .filter((c) => !favIds.has(c.id))
+      .sort((a, b) => a.name.localeCompare(b.name, "th"));
+    return [...favs, ...rest].slice(0, 8);
+  }, [payerClients, payerSearch, favorites]);
+
+  // Close suggestions on outside click.
+  useEffect(() => {
+    if (!payerOpen) return;
+    function onDown(e: MouseEvent) {
+      if (!payerBoxRef.current?.contains(e.target as Node)) setPayerOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [payerOpen]);
+
+  function pickPayerClient(c: Client) {
+    setPayerClientId(c.id);
+    setPayerSearch(c.name);
+    setPayerOpen(false);
+    setValues((prev) => ({
+      ...prev,
+      payerName: c.name ?? "",
+      payerTaxId: c.tax_id ? maskTaxIdInput(c.tax_id) : prev.payerTaxId,
+      payerAddress: c.address ?? prev.payerAddress,
+    }));
+    setErrors((prev) =>
+      prev.filter(
+        (e) => e.field !== "payerName" && e.field !== "payerTaxId" && e.field !== "payerAddress"
+      )
+    );
+  }
+
+  function clearPayerClient() {
+    setPayerClientId("");
+    setPayerSearch("");
+    setPayerOpen(false);
+  }
+
   const set = (k: keyof WhtFormValues, v: string | WhtFormType) =>
     setValues((prev) => ({ ...prev, [k]: v }));
 
@@ -307,6 +393,7 @@ export default function WhtPage() {
 
   return (
     <>
+      <style>{`@font-face{font-family:'Cordia New';font-style:normal;font-weight:400;src:url('/fonts/cordia-new-regular.ttf') format('truetype');}@font-face{font-family:'Cordia New';font-style:normal;font-weight:700;src:url('/fonts/cordia-new-bold.ttf') format('truetype');}`}</style>
       <h1 className="mb-1 text-lg font-semibold">หัก ณ ที่จ่าย</h1>
       <p className="mb-6 text-xs text-neutral-500">
         กรอกข้อมูลบนแบบฟอร์มหนังสือรับรองการหักภาษี ณ ที่จ่าย แล้วดาวน์โหลด PDF — ข้อมูลไม่ถูกบันทึก
@@ -347,6 +434,116 @@ export default function WhtPage() {
 
           <section className="card">
             <h2 className="mb-3 font-medium">ผู้จ่ายเงิน</h2>
+            <div className="mb-3 rounded border border-neutral-200 bg-neutral-50 p-3">
+              <label className="label" htmlFor="wht-payer-search">
+                ค้นหาจากฐานข้อมูลลูกค้า {payerClientsLoading ? " (กำลังโหลด…)" : ` (${payerClients.length} ราย)`}
+              </label>
+              <div ref={payerBoxRef} className="relative">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="wht-payer-search"
+                    className="input flex-1"
+                    placeholder="พิมพ์ชื่อลูกค้า…"
+                    autoComplete="off"
+                    disabled={payerClientsLoading}
+                    value={payerSearch}
+                    onChange={(e) => {
+                      setPayerSearch(e.target.value);
+                      // Typing after a pick switches back to manual editing.
+                      if (payerClientId) setPayerClientId("");
+                      setPayerOpen(true);
+                      setPayerHi(0);
+                    }}
+                    onFocus={() => {
+                      setPayerOpen(true);
+                      setPayerHi(0);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowDown" && payerSuggestions.length) {
+                        e.preventDefault();
+                        setPayerHi((h) => (h + 1) % payerSuggestions.length);
+                      } else if (e.key === "ArrowUp" && payerSuggestions.length) {
+                        e.preventDefault();
+                        setPayerHi((h) => (h - 1 + payerSuggestions.length) % payerSuggestions.length);
+                      } else if (e.key === "Enter" && payerOpen && payerSuggestions[payerHi]) {
+                        e.preventDefault();
+                        pickPayerClient(payerSuggestions[payerHi]);
+                      } else if (e.key === "Escape") {
+                        setPayerOpen(false);
+                      }
+                    }}
+                  />
+                  {payerClientId ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn shrink-0 !px-2"
+                        title={favorites.includes(payerClientId) ? "เอาออกจากรายการโปรด" : "เพิ่มในรายการโปรด"}
+                        onClick={() => toggleFav(payerClientId)}
+                      >
+                        {favorites.includes(payerClientId) ? "★" : "☆"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn shrink-0 !px-2"
+                        title="ล้างที่เลือก (คงค่าที่กรอกไว้)"
+                        onClick={clearPayerClient}
+                      >
+                        ✕
+                      </button>
+                    </>
+                  ) : (
+                    payerSearch && (
+                      <button
+                        type="button"
+                        className="btn shrink-0 !px-2"
+                        title="ล้างคำค้น"
+                        onClick={() => {
+                          setPayerSearch("");
+                          setPayerOpen(true);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )
+                  )}
+                </div>
+                {payerOpen && !payerClientsLoading && (
+                  <div className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded border border-neutral-200 bg-white shadow-lg">
+                    {payerSuggestions.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-neutral-500">
+                        ไม่พบลูกค้าที่ตรง — พิมพ์เองในช่องด้านล่างได้เลย
+                      </div>
+                    ) : (
+                      payerSuggestions.map((c, i) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-neutral-100 ${
+                            i === payerHi ? "bg-neutral-100" : ""
+                          }`}
+                          onMouseEnter={() => setPayerHi(i)}
+                          onClick={() => pickPayerClient(c)}
+                        >
+                          <span className="w-4 shrink-0 text-amber-500">
+                            {favorites.includes(c.id) ? "★" : ""}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                          {c.tax_id && (
+                            <span className="shrink-0 font-mono text-xs text-neutral-400">
+                              {c.tax_id}
+                            </span>
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-neutral-500">
+                เลือกแล้วแก้ต่อได้ — ดาวซิงก์กับหน้ารายชื่อลูกค้า
+              </p>
+            </div>
             <div className="space-y-3">
               <div>
                 <label className="label" htmlFor="wht-payer-name">ชื่อผู้จ่าย *</label>
@@ -625,7 +822,13 @@ export default function WhtPage() {
                 type="button"
                 className="btn"
                 disabled={busy}
-                onClick={() =>
+                onClick={() => {
+                  setPayerClientId("");
+                  setPayerSearch("");
+                  setPayerOpen(false);
+                  setDescMode("preset");
+                  setErrors([]);
+                  setSubmitMsg(null);
                   setValues({
                     formType: "pnd3",
                     certificateNo: "",
@@ -640,8 +843,8 @@ export default function WhtPage() {
                     signDate: todayIso(),
                     amount: "",
                     whtRate: "3",
-                  })
-                }
+                  });
+                }}
               >
                 ล้างฟอร์ม
               </button>

@@ -147,16 +147,28 @@ export function fmtDate(iso: string): string {
   }
 }
 
-/** Spread a 13-digit tax ID with wide gaps for the PND boxes. */
-export function splitTaxId(s: string | null | undefined): string {
+/**
+ * Digit-box columns measured on the PND background (template px).
+ * Boxes: [951-982] [997-1119] [1136-1289] [1303-1366] [1383-1414].
+ * A single spaced string drifts right (gap error accumulates), so each
+ * 13-digit ID renders as 5 group fields pinned to its box.
+ */
+const TAXID_GROUP_LEFTS = [961, 1005, 1144, 1311, 1391] as const;
+
+export function splitTaxIdGroups(
+  s: string | null | undefined
+): [string, string, string, string, string] {
   const digits = String(s || "")
     .replace(/\D/g, "")
     .slice(0, 13)
     .padEnd(13, " ");
-  const g1 = digits.slice(1, 5).split("").join(" ");
-  const g2 = digits.slice(5, 10).split("").join(" ");
-  const g3 = digits.slice(10, 12).split("").join(" ");
-  return `${digits[0]}    ${g1}      ${g2}       ${g3}   ${digits[12]}`;
+  return [
+    digits[0],
+    digits.slice(1, 5).split("").join(" "),
+    digits.slice(5, 10).split("").join(" "),
+    digits.slice(10, 12).split("").join(" "),
+    digits[12],
+  ];
 }
 
 export function taxIdDigits(raw: string): string {
@@ -223,13 +235,14 @@ export function buildWhtOverlay(v: WhtFormValues): WhtOverlayField[] {
   const AMT_W = 260;
   const WHT_W = 180;
 
-  return [
+  const payerGroups = splitTaxIdGroups(v.payerTaxId);
+  const payeeGroups = splitTaxIdGroups(v.payeeTaxId);
+
+  const fields: WhtOverlayField[] = [
     { name: "wht_id", top: cssTop(187, 33), left: 1317, fontSize: 33, value: v.certificateNo.trim() },
     { name: "payer_name", top: cssTop(279, 32), left: 165, fontSize: 32, width: 583, value: v.payerName.trim() },
-    { name: "payer_taxid", top: cssTop(241, 45), left: 961, fontSize: 45, bold: true, value: splitTaxId(v.payerTaxId) },
     { name: "payer_address", top: cssTop(337, 31), left: 166, fontSize: 31, wrap: true, width: 1166, value: v.payerAddress.trim() },
     { name: "name", top: cssTop(464, 32), left: 169, fontSize: 32, width: 583, value: v.payeeName.trim() },
-    { name: "taxid", top: cssTop(416, 45), left: 961, fontSize: 45, bold: true, value: splitTaxId(v.payeeTaxId) },
     { name: "address", top: cssTop(531, 31), left: 171, fontSize: 31, wrap: true, width: 1166, value: v.payeeAddress.trim() },
     { name: "description1", top: cssTop(1624, 33), left: 290, fontSize: 33, width: 480, value: v.description.trim() },
     { name: "date1", top: cssTop(1620, 35), left: 857, fontSize: 35, value: dateStr },
@@ -240,6 +253,29 @@ export function buildWhtOverlay(v: WhtFormValues): WhtOverlayField[] {
     { name: "thai_amount", top: cssTop(1726, 36), left: 503, fontSize: 36, value: thaiStr },
     { name: "date_bottom", top: cssTop(1945, 35), left: 972, fontSize: 35, value: signDateStr },
   ];
+
+  payerGroups.forEach((g, i) => {
+    fields.push({
+      name: `payer_taxid_g${i}`,
+      top: cssTop(241, 45),
+      left: TAXID_GROUP_LEFTS[i],
+      fontSize: 45,
+      bold: true,
+      value: g.trim(),
+    });
+  });
+  payeeGroups.forEach((g, i) => {
+    fields.push({
+      name: `taxid_g${i}`,
+      top: cssTop(416, 45),
+      left: TAXID_GROUP_LEFTS[i],
+      fontSize: 45,
+      bold: true,
+      value: g.trim(),
+    });
+  });
+
+  return fields;
 }
 
 export type WhtValidationError = {
