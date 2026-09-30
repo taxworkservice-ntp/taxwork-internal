@@ -66,6 +66,7 @@ export default function EntityPicker({
   footText,
 }: EntityPickerProps) {
   const boxRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
@@ -105,6 +106,12 @@ export default function EntityPicker({
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open ]);
+
+  // Keep the keyboard-highlighted row visible while scrolling the list.
+  useEffect(() => {
+    if (!open) return;
+    rowRefs.current[hi]?.scrollIntoView({ block: "nearest" });
+  }, [hi, open ]);
 
   const selectedRawId = selectedKey.includes(":")
     ? selectedKey.slice(selectedKey.indexOf(":") + 1)
@@ -195,13 +202,16 @@ export default function EntityPicker({
           )}
         </div>
         {open && !loading && (
-          <div className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded border border-neutral-200 bg-white shadow-lg">
+          <div className="absolute inset-x-0 top-full z-10 mt-1 max-h-[50vh] overflow-y-auto overscroll-contain rounded border border-neutral-200 bg-white shadow-lg">
             {suggestions.length === 0 ? (
               <div className="px-3 py-2 text-sm text-neutral-500">{emptyText}</div>
             ) : (
               suggestions.map((it, i) => (
                 <button
                   key={it.key}
+                  ref={(el) => {
+                    rowRefs.current[i] = el;
+                  }}
                   type="button"
                   className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-neutral-100 ${
                     i === hi ? "bg-neutral-100" : ""
