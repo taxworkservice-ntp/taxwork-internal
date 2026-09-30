@@ -49,6 +49,60 @@ export const WHT_DESCRIPTION_RATE_MAP: Record<string, string> = {
   ค่าบริการ: "3",
 };
 
+/** User-saved custom description + rate presets (localStorage, same pattern
+ * as client favorites — per browser, no migration). */
+export type WhtCustomPreset = { description: string; rate: string };
+
+export const WHT_CUSTOM_PRESETS_KEY = "wht.customDescriptions";
+const WHT_CUSTOM_PRESETS_MAX = 50;
+
+export function loadCustomPresets(): WhtCustomPreset[] {
+  try {
+    const raw = localStorage.getItem(WHT_CUSTOM_PRESETS_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter(
+        (p): p is WhtCustomPreset =>
+          typeof p === "object" &&
+          p !== null &&
+          typeof (p as WhtCustomPreset).description === "string" &&
+          typeof (p as WhtCustomPreset).rate === "string" &&
+          (p as WhtCustomPreset).description.trim() !== ""
+      )
+      .map((p) => ({ description: p.description.trim().slice(0, 200), rate: p.rate.trim().slice(0, 10) }))
+      .slice(0, WHT_CUSTOM_PRESETS_MAX);
+  } catch {
+    return [];
+  }
+}
+
+function persistCustomPresets(list: WhtCustomPreset[]): void {
+  try {
+    localStorage.setItem(WHT_CUSTOM_PRESETS_KEY, JSON.stringify(list));
+  } catch {
+    /* storage full/blocked — presets just don't persist */
+  }
+}
+
+/** Insert or update by description (case-sensitive Thai match). */
+export function saveCustomPreset(description: string, rate: string): WhtCustomPreset[] {
+  const desc = description.trim().slice(0, 200);
+  if (!desc) return loadCustomPresets();
+  const next = loadCustomPresets().filter((p) => p.description !== desc);
+  next.unshift({ description: desc, rate: rate.trim().slice(0, 10) });
+  const trimmed = next.slice(0, WHT_CUSTOM_PRESETS_MAX);
+  persistCustomPresets(trimmed);
+  return trimmed;
+}
+
+export function deleteCustomPreset(description: string): WhtCustomPreset[] {
+  const next = loadCustomPresets().filter((p) => p.description !== description);
+  persistCustomPresets(next);
+  return next;
+}
+
 /** Absolute checkmark position per form on the 1512x2138 template. */
 export const WHT_CHECKMARK_POS: Record<
   WhtFormType,
@@ -68,10 +122,10 @@ export const WHT_PAGE_H = 2138;
 
 /** Signature / stamp overlay geometry (matches invoice-system print.tsx). */
 export const WHT_SIGNATURE_BOX = {
-  top: 1872,
-  left: 948,
-  width: 219,
-  height: 82,
+  top: 1852,
+  left: 964,
+  width: 186,
+  height: 70,
 } as const;
 
 export const WHT_STAMP_BOX = {

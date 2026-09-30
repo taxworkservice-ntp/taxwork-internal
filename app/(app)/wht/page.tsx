@@ -19,12 +19,16 @@ import {
   buildWhtOverlay,
   calcWht,
   checkTaxId,
+  deleteCustomPreset,
   fmtNum,
+  loadCustomPresets,
   maskTaxIdInput,
   parseAmount,
+  saveCustomPreset,
   taxIdDigits,
   validateWhtForm,
   whtAmountThaiText,
+  type WhtCustomPreset,
   type WhtFormType,
   type WhtFormValues,
 } from "@/lib/wht/fields";
@@ -53,6 +57,73 @@ async function fileToDataUri(file: File): Promise<string> {
   const b64 = btoa(binary);
   const mime = file.type === "image/jpeg" ? "image/jpeg" : "image/png";
   return `data:${mime};base64,${b64}`;
+}
+
+// Crop transparent margins so contain-fit maps the glyphs (not the canvas)
+// into the signature box — the text then straddles the dotted signing line
+// instead of colliding with the date below it.
+function trimTransparent(canvas: HTMLCanvasElement, pad = 8): HTMLCanvasElement {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+  const W = canvas.width;
+  const H = canvas.height;
+  const data = ctx.getImageData(0, 0, W, H).data;
+  let minX = W;
+  let minY = H;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (data[(y * W + x) * 4 + 3] > 8) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return canvas;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(W - 1, maxX + pad);
+  maxY = Math.min(H - 1, maxY + pad);
+  const out = document.createElement("canvas");
+  out.width = maxX - minX + 1;
+  out.height = maxY - minY + 1;
+  const octx = out.getContext("2d");
+  if (!octx) return canvas;
+  octx.drawImage(canvas, minX, minY, out.width, out.height, 0, 0, out.width, out.height);
+  return out;
+}
+
+// Typed signature: rendered to a PNG on canvas so it flows through the
+// exact same image pipeline (preview + server PDF) as an upload.
+function renderTypedSignature(text: string): string | null {
+  const t = text.trim();
+  if (!t) return null;
+  const W = 516;
+  const H = 194;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const family = `"Cordia New","Sarabun",sans-serif`;
+  ctx.fillStyle = "#1e3a8c";
+  ctx.textAlign = "center";
+  // Alphabetic baseline near the box bottom so the text sits ON the
+  // dotted signing line (like handwriting), with room for descenders.
+  ctx.textBaseline = "alphabetic";
+  const baselineY = H - 30;
+  let size = 72;
+  while (size > 24) {
+    ctx.font = `700 ${size}px ${family}`;
+    if (ctx.measureText(t).width <= W - 36) break;
+    size -= 4;
+  }
+  ctx.font = `700 ${size}px ${family}`;
+  ctx.fillText(t, W / 2, baselineY);
+  return trimTransparent(canvas).toDataURL("image/png");
 }
 
 function WhtPreview({
@@ -206,6 +277,11 @@ export default function WhtPage() {
     whtRate: "3",
   }));
   const [descMode, setDescMode] = useState<"preset" | "custom">("preset");
+  const [customPresets, setCustomPresets] = useState<WhtCustomPreset[]>([]);
+
+  useEffect(() => {
+    setCustomPresets(loadCustomPresets());
+  }, []);
   const [signature, setSignature] = useState<string | null>(null);
   const [stamp, setStamp] = useState<string | null>(null);
   const [sigText, setSigText] = useState("");
@@ -362,50 +438,61 @@ export default function WhtPage() {
   const wht = calcWht(values.amount, values.whtRate);
   const thaiText = whtAmountThaiText(wht);
 
-  function pickPreset(preset: string) {
-    if (preset === "__custom") {
+  function pickPreset(value: string) {
+    if (value === "__custom") {
       setDescMode("custom");
       return;
     }
+    if (value.startsWith("saved:")) {
+      const desc = value.slice("saved:".length);
+      const saved = customPresets.find((p) => p.description === desc);
+      setDescMode("preset");
+      setValues((prev) => ({
+        ...prev,
+        description: desc,
+        ...(saved && saved.rate !== "" ? { whtRate: saved.rate } : {}),
+      }));
+      return;
+    }
     setDescMode("preset");
-    const rate = WHT_DESCRIPTION_RATE_MAP[preset];
+    const rate = WHT_DESCRIPTION_RATE_MAP[value];
     setValues((prev) => ({
       ...prev,
-      description: preset,
+      description: value,
       ...(rate ? { whtRate: rate } : {}),
     }));
   }
 
-  // Typed signature: rendered to a PNG on canvas so it flows through the
-  // exact same image pipeline (preview + server PDF) as an upload.
-  function renderTypedSignature(text: string): string | null {
-    const t = text.trim();
-    if (!t) return null;
-    const W = 516;
-    const H = 194;
-    const canvas = document.createElement("canvas");
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    const family = `"Cordia New","Sarabun",sans-serif`;
-    ctx.fillStyle = "#1e3a8c";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    let size = 120;
-    while (size > 28) {
-      ctx.font = `700 ${size}px ${family}`;
-      if (ctx.measureText(t).width <= W - 36) break;
-      size -= 4;
+  function rememberCustomPreset() {
+    const desc = values.description.trim();
+    if (!desc) {
+      setSubmitMsg("พิมพ์ชื่อรายการก่อนกดจำ");
+      return;
     }
-    ctx.font = `700 ${size}px ${family}`;
-    ctx.fillText(t, W / 2, H / 2 + 4);
-    return canvas.toDataURL("image/png");
+    const next = saveCustomPreset(desc, values.whtRate);
+    setCustomPresets(next);
+    setDescMode("preset");
+    setValues((prev) => ({ ...prev, description: desc }));
+    setSubmitMsg(`จำ “${desc}” (${values.whtRate || 0}%) ไว้ใช้ครั้งหน้าแล้ว`);
   }
+
+  function forgetCustomPreset(desc: string) {
+    setCustomPresets(deleteCustomPreset(desc));
+    if (values.description === desc) setDescMode("custom");
+  }
+
+  // Current select value: custom typing, a saved preset, or a built-in.
+  const descSelectValue =
+    descMode === "custom"
+      ? "__custom"
+      : customPresets.some((p) => p.description === values.description)
+        ? `saved:${values.description}`
+        : (WHT_DESCRIPTION_PRESETS as readonly string[]).includes(values.description)
+          ? values.description
+          : "__custom";
 
   useEffect(() => {
     setTypedSig(renderTypedSignature(sigText));
-     
   }, [sigText]);
 
   // Re-render once the Cordia webfont arrives so canvas uses the right metrics.
@@ -716,7 +803,7 @@ export default function WhtPage() {
                 <select
                   id="wht-desc-preset"
                   className="input mb-2"
-                  value={descMode === "custom" ? "__custom" : values.description}
+                  value={descSelectValue}
                   onChange={(e) => pickPreset(e.target.value)}
                 >
                   {WHT_DESCRIPTION_PRESETS.map((p) => (
@@ -724,15 +811,56 @@ export default function WhtPage() {
                       {p} ({WHT_DESCRIPTION_RATE_MAP[p]}%)
                     </option>
                   ))}
+                  {customPresets.length > 0 && (
+                    <optgroup label="★ ที่บันทึกไว้">
+                      {customPresets.map((p) => (
+                        <option key={p.description} value={`saved:${p.description}`}>
+                          {p.description} ({p.rate || 0}%)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                   <option value="__custom">กำหนดเอง…</option>
                 </select>
-                {descMode === "custom" && (
-                  <input
-                    className="input"
-                    placeholder="พิมพ์รายการเอง"
-                    value={values.description}
-                    onChange={(e) => set("description", e.target.value)}
-                  />
+                {(descMode === "custom" || descSelectValue === "__custom") && (
+                  <>
+                    <input
+                      className="input"
+                      placeholder="พิมพ์รายการเอง"
+                      value={values.description}
+                      onChange={(e) => {
+                        setDescMode("custom");
+                        set("description", e.target.value);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn mt-2"
+                      onClick={rememberCustomPreset}
+                    >
+                      ★ จำรายการนี้ ({values.whtRate || 0}%) ไว้ใช้ครั้งหน้า
+                    </button>
+                  </>
+                )}
+                {customPresets.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {customPresets.map((p) => (
+                      <span
+                        key={p.description}
+                        className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-800"
+                      >
+                        {p.description} ({p.rate || 0}%)
+                        <button
+                          type="button"
+                          className="text-amber-400 hover:text-red-600"
+                          title={`ลบ “${p.description}”`}
+                          onClick={() => forgetCustomPreset(p.description)}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                  </div>
                 )}
                 {fieldError(errors, "description") && (
                   <p className="mt-1 text-xs text-red-600">{fieldError(errors, "description")}</p>
@@ -817,12 +945,22 @@ export default function WhtPage() {
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="label" htmlFor="wht-sig">ลายเซ็น (รูปมี priority สูงสุด)</label>
+                <label className="label">ลายเซ็น (รูปมี priority สูงสุด)</label>
+                <label
+                  htmlFor="wht-sig"
+                  className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50/50 px-4 py-4 text-sm font-medium text-blue-700 transition-colors hover:border-blue-500 hover:bg-blue-50"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M12 16V4M8 8l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" strokeLinecap="round" />
+                  </svg>
+                  {signature ? "คลิกเพื่อเปลี่ยนรูปภาพ" : "คลิกเพื่อเลือกรูปภาพ"}
+                </label>
                 <input
                   id="wht-sig"
                   type="file"
                   accept="image/png,image/jpeg"
-                  className="text-sm"
+                  className="hidden"
                   onChange={(e) => onImage(e.target.files?.[0], "signature")}
                 />
                 {signature && (
