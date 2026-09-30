@@ -12,6 +12,7 @@ import EmptyState from "@/components/empty-state";
 import InlineConfirm from "@/components/inline-confirm";
 import { ToastStack, useToasts } from "@/components/toast";
 import ReportFilesPanel from "./report-files-panel";
+import WhtFilesPanel from "./wht-files-panel";
 
 type FileRow = {
   id: string;
@@ -84,7 +85,7 @@ function Chevron({ open }: { open: boolean }) {
 export default function FilesPage() {
   const [files, setFiles] = useState<FileRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"general" | "reports">("general");
+  const [tab, setTab] = useState<"general" | "reports" | "wht">("general");
   const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -293,7 +294,9 @@ export default function FilesPage() {
         subtitle={
           tab === "general"
             ? "อัปโหลด ค้นหา และจัดการไฟล์ทั้งหมด"
-            : "ไฟล์ทั้งหมดที่สร้างจากรายงานประจำเดือน"
+            : tab === "reports"
+              ? "ไฟล์ทั้งหมดที่สร้างจากรายงานประจำเดือน"
+              : "หนังสือรับรองการหักภาษี ณ ที่จ่ายที่บันทึกจากหน้าหัก ณ ที่จ่าย"
         }
         actions={
           tab === "general" ? (
@@ -317,6 +320,7 @@ export default function FilesPage() {
         {([
           { key: "general", label: "ไฟล์ทั่วไป" },
           { key: "reports", label: "ไฟล์รายงาน" },
+          { key: "wht", label: "หัก ณ ที่จ่าย" },
         ] as const).map((t) => (
           <button
             key={t.key}
@@ -755,8 +759,10 @@ export default function FilesPage() {
         </table>
       </div>
         </>
-      ) : (
+      ) : tab === "reports" ? (
         <ReportFilesPanel />
+      ) : (
+        <WhtFilesPanel />
       )}
 
       <ToastStack toasts={toasts} onDismiss={dismiss} />

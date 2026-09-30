@@ -42,7 +42,7 @@ export async function listFiles(): Promise<FileRow[]> {
   await requireUser();
   const rows = await sql`select f.*, c.name as client_name from files f
     left join clients c on c.id = f.client_id
-    where f.client_id is null order by f.uploaded_at desc`;
+    where f.client_id is null and (f.category is null or f.category <> 'wht') order by f.uploaded_at desc`;
   return rows.map(toRow);
 }
 
@@ -51,6 +51,14 @@ export async function listClientFiles(clientId: string): Promise<FileRow[]> {
   const rows = await sql`select f.*, c.name as client_name from files f
     left join clients c on c.id = f.client_id
     where f.client_id=${clientId} order by f.uploaded_at desc`;
+  return rows.map(toRow);
+}
+
+/** Withholding-tax certificates saved from the WHT page (category 'wht'). */
+export async function listWhtFiles(): Promise<FileRow[]> {
+  await requireUser();
+  const rows = await sql`select f.*, null as client_name from files f
+    where f.category = 'wht' order by f.uploaded_at desc`;
   return rows.map(toRow);
 }
 

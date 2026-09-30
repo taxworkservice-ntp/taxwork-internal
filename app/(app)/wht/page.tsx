@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listClients, type Client } from "@/lib/actions/clients";
 import { listContacts, type Contact } from "@/lib/actions/contacts";
+import { recordFile } from "@/lib/actions/files";
 import { useClientFavorites } from "@/lib/use-client-favorites";
 import EntityPicker, { type EntityItem } from "@/components/entity-picker";
 import {
@@ -482,15 +483,52 @@ export default function WhtPage() {
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
+      const safeCert =
+        values.certificateNo.trim().replace(/[^A-Za-z0-9-_]/g, "") || "nocert";
+      const fileName = `wht-${values.formType}-${values.issueDate}-${safeCert}.pdf`;
       const a = document.createElement("a");
-      const fileStamp = values.issueDate || todayIso();
       a.href = url;
-      a.download = `wht-${values.formType}-${fileStamp}.pdf`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
-      setSubmitMsg("ดาวน์โหลด PDF แล้ว");
+
+      // Archive a copy to R2 + the files history (หัก ณ ที่จ่าย tab).
+      // A failed archive never fails the download itself.
+      let archived = false;
+      try {
+        const signRes = await fetch("/api/files/sign-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientId: "wht", fileName }),
+        });
+        if (!signRes.ok) throw new Error("sign");
+        const { url: putUrl, path } = await signRes.json();
+        const putRes = await fetch(putUrl, {
+          method: "PUT",
+          body: blob,
+          headers: { "Content-Type": "application/pdf" },
+        });
+        if (!putRes.ok) throw new Error("put");
+        await recordFile({
+          client_id: null,
+          storage_path: path,
+          file_name: fileName,
+          size_bytes: blob.size,
+          mime_type: "application/pdf",
+          category: "wht",
+          note: `ผู้จ่าย ${values.payerName.trim()} → ผู้รับ ${values.payeeName.trim()} · ${WHT_FORM_TYPE_LABELS[values.formType]} · หัก ${fmtNum(wht) || "0.00"} บาท`,
+        });
+        archived = true;
+      } catch {
+        archived = false;
+      }
+      setSubmitMsg(
+        archived
+          ? "ดาวน์โหลดแล้ว และบันทึกสำเนาในไฟล์หัก ณ ที่จ่ายแล้ว"
+          : "ดาวน์โหลดแล้ว แต่บันทึกสำเนาเข้าไฟล์ไม่สำเร็จ"
+      );
     } catch {
       setSubmitMsg("สร้าง PDF ไม่สำเร็จ — ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
     } finally {
