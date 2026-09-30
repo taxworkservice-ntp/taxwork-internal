@@ -42,16 +42,6 @@ const links = [
     ),
   },
   {
-    href: "/tools",
-    label: "เครื่องมือ",
-    mobileLabel: "เครื่องมือ",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-        <path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14.5 12l-2.5-2.5z" />
-      </svg>
-    ),
-  },
-  {
     href: "/wht",
     label: "หัก ณ ที่จ่าย",
     mobileLabel: "หัก ณ ที่จ่าย",
@@ -60,6 +50,16 @@ const links = [
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
         <path d="M14 2v6h6" />
         <path d="M9 15l2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    href: "/tools",
+    label: "เครื่องมือ",
+    mobileLabel: "เครื่องมือ",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+        <path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14.5 12l-2.5-2.5z" />
       </svg>
     ),
   },
@@ -94,9 +94,14 @@ export default function Sidebar() {
   const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false);
 
-  const visibleLinks = links.slice(0, 4);
-  const overflowLinks = links.slice(4);
-  const isOverflowActive = overflowLinks.some((l) => isActive(l.href));
+  // Order: clients, files, reports, wht, tools, express-backup, contacts.
+  // Desktop shows 5 main links; mobile shows 4 (WHT instead of Tools).
+  const desktopLinks = links.slice(0, 5);
+  const desktopOverflow = links.slice(5);
+  const mobileLinks = links.slice(0, 4);
+  const mobileOverflow = links.slice(4);
+  const isDesktopOverflowActive = desktopOverflow.some((l) => isActive(l.href));
+  const isMobileOverflowActive = mobileOverflow.some((l) => isActive(l.href));
 
   // Close popover on navigation
   useEffect(() => {
@@ -138,7 +143,7 @@ export default function Sidebar() {
           />
         )}
         <nav className="flex flex-col gap-1">
-          {visibleLinks.map((l) => (
+          {desktopLinks.map((l) => (
             <Link
               key={l.href}
               href={l.href}
@@ -156,7 +161,7 @@ export default function Sidebar() {
               aria-haspopup="menu"
               aria-expanded={moreOpen}
               className={`flex w-full items-center justify-between rounded px-2 py-2 text-sm hover:bg-neutral-100 ${
-                isOverflowActive || moreOpen ? "bg-neutral-100 font-medium" : ""
+                isDesktopOverflowActive || moreOpen ? "bg-neutral-100 font-medium" : ""
               }`}
             >
               เพิ่มเติม
@@ -171,7 +176,7 @@ export default function Sidebar() {
                 role="menu"
                 className="absolute left-full top-0 z-50 ml-1 w-48 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg"
               >
-                {overflowLinks.map((l) => (
+                {desktopOverflow.map((l) => (
                   <Link
                     key={l.href}
                     href={l.href}
@@ -212,7 +217,7 @@ export default function Sidebar() {
         />
       )}
       <nav className="fixed inset-x-0 bottom-0 z-50 flex border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
-        {visibleLinks.map((l) => (
+        {mobileLinks.map((l) => (
           <Link
             key={l.href}
             href={l.href}
@@ -231,7 +236,7 @@ export default function Sidebar() {
             aria-expanded={moreOpen}
             aria-label="เมนูเพิ่มเติม"
             className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] ${
-              isOverflowActive || moreOpen ? "text-blue-600" : "text-neutral-500"
+              isMobileOverflowActive || moreOpen ? "text-blue-600" : "text-neutral-500"
             }`}
           >
             <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
@@ -246,7 +251,7 @@ export default function Sidebar() {
               role="menu"
               className="absolute bottom-full right-1 mb-2 w-48 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg"
             >
-              {overflowLinks.map((l) => (
+              {mobileOverflow.map((l) => (
                 <Link
                   key={l.href}
                   href={l.href}
