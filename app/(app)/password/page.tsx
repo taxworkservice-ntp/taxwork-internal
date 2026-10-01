@@ -19,8 +19,8 @@ export default function PasswordPage() {
       setMessage("รหัสผ่านใหม่ไม่ตรงกัน");
       return;
     }
-    if (newPassword.length < 8) {
-      setMessage("รหัสผ่านใหม่ต้องยาวอย่างน้อย 8 ตัวอักษร");
+    if (newPassword.length < 4) {
+      setMessage("รหัสผ่านใหม่ต้องยาวอย่างน้อย 4 ตัวอักษร");
       return;
     }
     setLoading(true);
@@ -53,7 +53,7 @@ export default function PasswordPage() {
           />
         </div>
         <div>
-          <label className="label">รหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร)</label>
+          <label className="label">รหัสผ่านใหม่ (อย่างน้อย 4 ตัวอักษร)</label>
           <input
             type="password"
             className="input"

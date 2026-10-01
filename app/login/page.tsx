@@ -1,28 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { listLoginAccounts, type LoginAccount } from "@/lib/actions/account";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<LoginAccount[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listLoginAccounts()
+      .then(setAccounts)
+      .catch(() => setAccounts([]));
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    if (!password) return;
     setLoading(true);
     setError(null);
-    const { error } = await authClient.signIn.email({ email, password });
-    if (error) {
-      setError(error.message ?? "เข้าสู่ระบบไม่สำเร็จ");
-      setLoading(false);
-      return;
+
+    // Password-only: try the password against each account until one
+    // matches. Each person's own password selects their account.
+    for (const account of accounts) {
+      const { error: signInError } = await authClient.signIn.email({
+        email: account.email,
+        password,
+      });
+      if (!signInError) {
+        router.push("/clients");
+        router.refresh();
+        return;
+      }
     }
-    router.push("/clients");
-    router.refresh();
+
+    setError("รหัสผ่านไม่ถูกต้อง");
+    setLoading(false);
   }
 
   return (
@@ -30,27 +47,21 @@ export default function LoginPage() {
       <form onSubmit={handleLogin} className="card w-80 space-y-3">
         <h1 className="text-lg font-semibold">Taxwork Internal</h1>
         <div>
-          <label className="label" htmlFor="email">อีเมล</label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            className="input"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label className="label" htmlFor="password">รหัสผ่าน</label>
+          <label className="label" htmlFor="password">
+            รหัสผ่าน (ตัวเลข)
+          </label>
           <input
             id="password"
             type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
             autoComplete="current-password"
             className="input"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => setPassword(e.target.value.replace(/[^0-9]/g, ""))}
+            disabled={loading}
             required
+            autoFocus
           />
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
