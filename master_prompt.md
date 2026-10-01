@@ -12,7 +12,9 @@ auto-deploys to `https://internal.taxworkaccount.com`).
 
 - **Database:** Neon Postgres (Singapore). No RLS — authorization is enforced in code.
 - **Auth:** better-auth, email + password. Only allowlisted emails (`USER_ALLOWLIST`)
-  may register; no sign-up UI. Sessions via cookies; password change at `/password`.
+  may register; no sign-up UI. Sessions via cookies; login is passcode-only
+  (no email field — the code is tried against each account). Passcode changes
+  are done directly in the database by the owner (no self-service UI).
 - **Data access:** Server Actions in `lib/actions/` (per domain), each gated by
   `requireUser()`. Route handlers use `requireUserApi()`. `middleware.ts` is a
   fast cookie-presence check only — never the real gate.

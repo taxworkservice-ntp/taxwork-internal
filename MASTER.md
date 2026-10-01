@@ -152,7 +152,7 @@ files.report_id → monthly_reports (SET NULL; set for monthly-report copies)
 
 - better-auth email/password. Two users (owner + mom), allowlisted via `USER_ALLOWLIST`; public sign-up is rejected server-side and no sign-up UI exists.
 - `middleware.ts` checks for the session cookie: unauthenticated → `/login`; authenticated hitting `/login` → `/clients`. Server Actions / API routes re-verify the session via `requireUser()` / `requireUserApi()`.
-- Passwords can be changed at `/password` (linked in sidebar).
+- Passwords can be changed at `/password` (linked in sidebar). [REMOVED 2026-09-30: passcode-only login; password changes are done directly in the database by the owner.]
 
 ## 8. Environment variables
 

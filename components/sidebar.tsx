@@ -197,14 +197,6 @@ export default function Sidebar() {
         <button onClick={signOut} className="btn mt-auto text-left text-neutral-500">
           ออกจากระบบ
         </button>
-        <Link
-          href="/password"
-          className={`rounded px-2 py-2 text-sm text-neutral-500 hover:bg-neutral-100 ${
-            isActive("/password") ? "bg-neutral-100 font-medium" : ""
-          }`}
-        >
-          เปลี่ยนรหัสผ่าน
-        </Link>
       </aside>
 
       {/* Mobile bottom nav: 4 icons + overflow */}
