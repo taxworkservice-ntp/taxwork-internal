@@ -48,6 +48,25 @@ export function detectIOS(userAgent: string): boolean {
   return /Macintosh/i.test(ua) && /Mobile/i.test(ua);
 }
 
+/** What the tax-ID gate should do when a share link is opened in a webview. */
+export type BrowserRedirectDecision = "auto" | "manual";
+
+/**
+ * Decide how the gate reacts to a user agent:
+ * - `null`     — a real browser; nothing to do.
+ * - `"auto"`   — Android webview; jump straight to Chrome via an intent.
+ * - `"manual"` — iOS webview (which cannot auto-open Safari) or a webview whose
+ *   auto attempt already failed; show a tap/copy fallback instead.
+ */
+export function browserRedirectDecision(
+  userAgent: string,
+  alreadyAttempted: boolean
+): BrowserRedirectDecision | null {
+  if (!detectInAppBrowser(userAgent)) return null;
+  if (detectIOS(userAgent) || alreadyAttempted) return "manual";
+  return "auto";
+}
+
 /**
  * Build an Android intent URL that re-opens `targetUrl` in Chrome, falling back
  * to the browser otherwise. Used by the "เปิดในเบราว์เซอร์" button inside an

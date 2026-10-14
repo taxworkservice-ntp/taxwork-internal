@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  browserRedirectDecision,
   chromeIntentUrl,
   detectIOS,
   detectInAppBrowser,
@@ -70,5 +71,28 @@ describe("chromeIntentUrl", () => {
     expect(chromeIntentUrl(target)).toBe(
       "intent://tax.example.com/r/tax-report-aug-2026-ABCD?x=1#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Ftax.example.com%2Fr%2Ftax-report-aug-2026-ABCD%3Fx%3D1;end"
     );
+  });
+});
+
+describe("browserRedirectDecision", () => {
+  it("does nothing in a real browser", () => {
+    expect(browserRedirectDecision(DESKTOP_CHROME, false)).toBeNull();
+    expect(browserRedirectDecision(IOS_SAFARI, false)).toBeNull();
+    expect(browserRedirectDecision("", false)).toBeNull();
+  });
+
+  it("auto-redirects an Android webview on the first attempt", () => {
+    expect(browserRedirectDecision(ANDROID_WEBVIEW, false)).toBe("auto");
+    expect(browserRedirectDecision(LINE_ANDROID, false)).toBe("auto");
+  });
+
+  it("falls back to manual on iOS (cannot auto-open Safari)", () => {
+    expect(browserRedirectDecision(LINE_IOS, false)).toBe("manual");
+    expect(browserRedirectDecision(MESSENGER_IOS, false)).toBe("manual");
+  });
+
+  it("falls back to manual when an attempt already failed", () => {
+    expect(browserRedirectDecision(ANDROID_WEBVIEW, true)).toBe("manual");
+    expect(browserRedirectDecision(LINE_ANDROID, true)).toBe("manual");
   });
 });
