@@ -126,6 +126,7 @@ export default async function SharePage({
     <ShareView
       model={loaded.model}
       hasPdf={Boolean(file)}
+      fileName={file?.file_name ?? null}
       token={token}
       expiresAt={loaded.resolved.expiresAt}
     />

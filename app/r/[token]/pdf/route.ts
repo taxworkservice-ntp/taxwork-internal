@@ -55,6 +55,7 @@ export async function GET(
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
+        "X-Content-Type-Options": "nosniff",
         // force download; include a UTF-8 filename for Thai names
         "Content-Disposition": `attachment; filename="${asciiFileName(name)}"; filename*=UTF-8''${encodeURIComponent(name)}`,
         "Content-Length": String(bytes.byteLength),

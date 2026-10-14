@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ReportModel } from "@/lib/report-model";
+import ShareDownloadButton from "./share-download";
 
 const THAI_MONTHS_FULL = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -244,11 +245,13 @@ function QrBlock({ dataUri, fileName }: { dataUri: string; fileName: string }) {
 export default function ShareView({
   model,
   hasPdf,
+  fileName,
   token,
   expiresAt,
 }: {
   model: ReportModel;
   hasPdf: boolean;
+  fileName: string | null;
   token: string;
   expiresAt?: string | null;
 }) {
@@ -565,12 +568,7 @@ export default function ShareView({
       {/* Download the full report (after the total, where attention rests) */}
       {hasPdf && (
         <div className="space-y-1">
-          <a
-            href={`/r/${token}/pdf`}
-            className="block rounded-xl bg-neutral-900 px-4 py-3 text-center text-sm font-semibold text-white shadow-sm active:bg-neutral-800"
-          >
-            ดาวน์โหลดรายงานฉบับเต็ม (PDF)
-          </a>
+          <ShareDownloadButton pdfUrl={`/r/${token}/pdf`} fileName={fileName} />
           {expiryLabel && (
             <p className="text-center text-xs text-neutral-400">
               ลิงก์นี้ใช้ได้ถึง {expiryLabel}
