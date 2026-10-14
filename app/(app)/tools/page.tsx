@@ -5,6 +5,15 @@ import { PDFDocument, degrees } from "pdf-lib";
 import { PDFDocument as SecurePDFDocument } from "@cantoo/pdf-lib";
 import JSZip from "jszip";
 import { thaiBahtText } from "@/lib/thai-baht-text";
+import {
+  RDX_FORMS,
+  buildJsonZip,
+  buildRdx,
+  buildTemplate,
+  convertFile,
+  type ConvertResult,
+  type RdxForm,
+} from "@/lib/rdprep/convert";
 
 type UnlockItem = {
   id: string;
@@ -162,6 +171,16 @@ export default function ToolsPage() {
     invalid: number;
     partial: boolean;
   } | null>(null);
+  // --- RDPrep Excel → RDX ---
+  const [rdpFile, setRdpFile] = useState<File | null>(null);
+  const [rdpForm, setRdpForm] = useState<RdxForm>("PND3");
+  const [rdpYear, setRdpYear] = useState(() => String(new Date().getFullYear() + 543));
+  const [rdpMonth, setRdpMonth] = useState("auto");
+  const [rdpBusy, setRdpBusy] = useState(false);
+  const [rdpStatus, setRdpStatus] = useState<string | null>(null);
+  const [rdpResult, setRdpResult] = useState<ConvertResult | null>(null);
+  const [rdpDragActive, setRdpDragActive] = useState(false);
+  const rdpInputRef = useRef<HTMLInputElement>(null);
 
   function isPdf(f: File) {
     return f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
@@ -354,6 +373,75 @@ export default function ToolsPage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function downloadBlob(blob: Blob, name: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  // --- RDPrep Excel → RDX ---
+  function addRdpFile(files: File[] | FileList) {
+    const f = Array.from(files).find(
+      (x) => x.name.toLowerCase().endsWith(".xlsx") || x.name.toLowerCase().endsWith(".json")
+    );
+    if (!f) {
+      setRdpStatus("เลือกไฟล์ .xlsx หรือ .json");
+      return;
+    }
+    setRdpFile(f);
+    setRdpResult(null);
+    setRdpStatus(null);
+  }
+
+  async function rdpConvert(): Promise<ConvertResult> {
+    if (!rdpFile) throw new Error("เลือกไฟล์ก่อน");
+    const result = await convertFile(rdpFile, {
+      formCode: rdpForm,
+      filingYear: parseInt(rdpYear, 10) || null,
+      filingMonth: rdpMonth === "auto" ? null : parseInt(rdpMonth, 10) || null,
+    });
+    setRdpResult(result);
+    return result;
+  }
+
+  async function rdpExportRdx() {
+    setRdpBusy(true);
+    setRdpStatus(null);
+    try {
+      const result = await rdpConvert();
+      downloadBlob(await buildRdx(result), `${result.base}-010000.rdx`);
+      setRdpStatus(`สร้าง ${result.base}-010000.rdx แล้ว — ${result.summary}`);
+    } catch (e) {
+      setRdpStatus(e instanceof Error ? e.message : "แปลงไฟล์ไม่สำเร็จ");
+    } finally {
+      setRdpBusy(false);
+    }
+  }
+
+  async function rdpExportJson() {
+    setRdpBusy(true);
+    setRdpStatus(null);
+    try {
+      const result = await rdpConvert();
+      downloadBlob(await buildJsonZip(result), `${result.base}-json.zip`);
+      setRdpStatus(`สร้าง ${result.base}-json.zip แล้ว — ${result.summary}`);
+    } catch (e) {
+      setRdpStatus(e instanceof Error ? e.message : "แปลงไฟล์ไม่สำเร็จ");
+    } finally {
+      setRdpBusy(false);
+    }
+  }
+
+  function rdpTemplate() {
+    downloadBlob(buildTemplate(rdpForm), `rdx-template-${rdpForm.toLowerCase()}.xlsx`);
+    setRdpStatus(`สร้างเทมเพลต ${rdpForm} แล้ว — กรอกชีต Settings และ Payees`);
+  }
+
   function addUnlockFiles(files: File[] | FileList) {
     const arr = Array.from(files).filter(
       (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
@@ -453,6 +541,9 @@ export default function ToolsPage() {
   }
 
   const okCount = unlockItems.filter((i) => i.status === "ok").length;
+
+  const rdpCurrentYear = new Date().getFullYear() + 543;
+  const rdpYearOptions = [0, 1, 2, 3].map((d) => rdpCurrentYear - d);
 
   // --- Subset sum solver (parsers live at module scope) ---
   function subsetSearch() {
@@ -1282,6 +1373,115 @@ export default function ToolsPage() {
 
       <h2 className="mb-3 mt-8 max-w-3xl font-medium text-neutral-600">เครื่องมืออื่น ๆ</h2>
       <div className="grid max-w-3xl grid-cols-1 gap-4">
+        <OtherTool
+          title="RDPrep Excel → RDX (PND3/PND53)"
+          desc="แปลงไฟล์ Excel/JSON เป็น RDX เข้ารหัส AES-256 — ประมวลผลในเบราว์เซอร์"
+        >
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setRdpDragActive(true);
+            }}
+            onDragLeave={() => setRdpDragActive(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setRdpDragActive(false);
+              if (e.dataTransfer.files?.length) addRdpFile(e.dataTransfer.files);
+            }}
+            onClick={() => rdpInputRef.current?.click()}
+            className={`mb-3 flex min-h-32 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed p-6 text-center text-sm transition ${
+              rdpDragActive ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+            }`}
+          >
+            <input
+              ref={rdpInputRef}
+              type="file"
+              accept=".xlsx,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/json"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) addRdpFile(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            {rdpFile ? rdpFile.name : "ลากไฟล์ .xlsx หรือ .json มาวาง หรือคลิกเพื่อเลือก"}
+            {rdpFile && <div className="mt-1 text-xs text-neutral-500">{(rdpFile.size / 1024).toFixed(0)} KB</div>}
+          </div>
+
+          <label className="label">แบบฟอร์ม (ใช้กับไฟล์ JSON และเทมเพลต — Excel ใช้ค่าจากชีต Settings)</label>
+          <div className="mb-3 flex gap-2">
+            {RDX_FORMS.map((f) => (
+              <button key={f} type="button" className={rdpForm === f ? "btn-primary" : "btn"} onClick={() => setRdpForm(f)}>
+                {f}
+              </button>
+            ))}
+          </div>
+
+          <div className="mb-3 grid grid-cols-2 gap-2">
+            <div>
+              <label className="label">ปีที่ยื่น (พ.ศ.)</label>
+              <select className="input" value={rdpYear} onChange={(e) => setRdpYear(e.target.value)}>
+                {rdpYearOptions.map((y) => (
+                  <option key={y} value={String(y)}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">เดือนที่ยื่น</label>
+              <select className="input" value={rdpMonth} onChange={(e) => setRdpMonth(e.target.value)}>
+                <option value="auto">อัตโนมัติจากข้อมูล</option>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={String(m)}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button className="btn" onClick={rdpTemplate}>
+              สร้างเทมเพลต
+            </button>
+            <button className="btn-primary" onClick={rdpExportRdx} disabled={rdpBusy || !rdpFile}>
+              {rdpBusy ? "กำลังแปลง…" : "สร้างไฟล์ RDX"}
+            </button>
+            <button className="btn" onClick={rdpExportJson} disabled={rdpBusy || !rdpFile}>
+              สร้าง JSON (ZIP)
+            </button>
+            {(rdpFile || rdpResult) && (
+              <button
+                className="btn-danger"
+                disabled={rdpBusy}
+                onClick={() => {
+                  setRdpFile(null);
+                  setRdpResult(null);
+                  setRdpStatus(null);
+                }}
+              >
+                ล้าง
+              </button>
+            )}
+          </div>
+
+          {rdpResult && (
+            <div className="mt-3 rounded bg-neutral-50 p-2 text-xs">
+              <div>
+                ฐานไฟล์: <span className="font-mono">{rdpResult.base}</span>
+              </div>
+              <div>
+                แบบฟอร์ม: {rdpResult.formCode} • สาขา: {rdpResult.branchType}
+              </div>
+              <div>
+                รายรับรวม: {rdpResult.totalIncome.toLocaleString("th-TH", { minimumFractionDigits: 2 })} • ภาษีรวม:{" "}
+                {rdpResult.totalTax.toLocaleString("th-TH", { minimumFractionDigits: 2 })} • ผู้รับ: {rdpResult.recipients}
+              </div>
+            </div>
+          )}
+          {rdpStatus && <p className="mt-2 text-xs text-neutral-600">{rdpStatus}</p>}
+        </OtherTool>
+
         <OtherTool title="VAT / หัก ณ ที่จ่าย / ตัวอักษร" desc="คำนวณในเบราว์เซอร์ ไม่บันทึกข้อมูล">
           <label className="label">ยอดเงิน</label>
           <input className="input mb-2" inputMode="decimal" placeholder="เช่น 10000" value={vatInput} onChange={(e) => setVatInput(e.target.value)} />
