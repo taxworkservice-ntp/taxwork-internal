@@ -283,26 +283,34 @@ export default function ShareView({
         )}
       </header>
 
-      {/* Download */}
+      {/* Download reminder (button lives below the total) */}
       {hasPdf && (
-        <>
-          <a
-            href={`/r/${token}/pdf`}
-            className="block rounded-xl bg-neutral-900 px-4 py-3 text-center text-sm font-semibold text-white shadow-sm active:bg-neutral-800"
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-800">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            className="mt-0.5 shrink-0"
+            aria-hidden="true"
           >
-            ดาวน์โหลดรายงานฉบับเต็ม (PDF)
-          </a>
-          <p className="mt-1 text-center text-xs text-neutral-500">
-            แนะนำให้ดาวน์โหลดรายงานฉบับเต็ม
-            <br />
-            เพื่อเก็บไว้ตรวจสอบและเป็นหลักฐานการชำระเงิน
-          </p>
-          {expiryLabel && (
-            <p className="mt-1 text-center text-xs text-neutral-400">
-              ลิงก์นี้ใช้ได้ถึง {expiryLabel}
+            <path
+              d="M8 2v8M4.5 7l3.5 3.5L11.5 7M3 14h10"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <div className="text-xs leading-relaxed">
+            <div className="text-sm font-semibold">
+              อย่าลืมดาวน์โหลดรายงานฉบับเต็ม (PDF)
+            </div>
+            <p className="mt-0.5 text-amber-700">
+              เก็บไว้ตรวจสอบและเป็นหลักฐานการชำระเงิน — ปุ่มดาวน์โหลดอยู่ท้ายรายการ
             </p>
-          )}
-        </>
+          </div>
+        </div>
       )}
 
       {/* Items */}
@@ -540,7 +548,7 @@ export default function ShareView({
               })}
             </div>
 
-            <div className="mt-4 flex items-center justify-between rounded-2xl bg-neutral-900 px-4 py-3 text-base font-bold text-white shadow-sm">
+            <div className="mt-4 flex items-center justify-between rounded-2xl border border-neutral-200 bg-neutral-100 px-4 py-3 text-base font-bold text-neutral-900">
               <span>ยอดรวมทั้งสิ้น</span>
               <span className="tabular-nums">{fmtMoney(grandTotal)} บาท</span>
             </div>
@@ -553,6 +561,23 @@ export default function ShareView({
           </p>
         )}
       </section>
+
+      {/* Download the full report (after the total, where attention rests) */}
+      {hasPdf && (
+        <div className="space-y-1">
+          <a
+            href={`/r/${token}/pdf`}
+            className="block rounded-xl bg-neutral-900 px-4 py-3 text-center text-sm font-semibold text-white shadow-sm active:bg-neutral-800"
+          >
+            ดาวน์โหลดรายงานฉบับเต็ม (PDF)
+          </a>
+          {expiryLabel && (
+            <p className="text-center text-xs text-neutral-400">
+              ลิงก์นี้ใช้ได้ถึง {expiryLabel}
+            </p>
+          )}
+        </div>
+      )}
 
       <footer className="flex flex-col items-center gap-1 pt-4">
         {model.logoDataUri && (
