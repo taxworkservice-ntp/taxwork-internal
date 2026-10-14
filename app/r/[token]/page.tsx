@@ -8,6 +8,8 @@ import {
 } from "@/lib/actions/reports";
 import { buildReportModel } from "@/lib/report-model";
 import { periodToThai, formatBaht } from "@/lib/report-format";
+import { buildSharePreview } from "@/lib/share-preview";
+import { loadSharePreviewSettings } from "@/lib/share-preview-data";
 import { shareTokenFromSegment } from "@/lib/share-link";
 import {
   shareAccessCookieName,
@@ -52,15 +54,24 @@ export async function generateMetadata({
   const { token } = await params;
 
   // Before verification we reveal nothing about the report (title/description
-  // are all a link preview or crawler will see).
+  // are all a link preview or crawler will see). The wording is configurable in
+  // Reports → settings; the OG image is branded via ./opengraph-image.tsx.
   if (!(await isShareVerified(token))) {
-    const title = "รายงานภาษี";
-    const description =
-      "ลิงก์รายงานภาษี — กรุณายืนยันตัวตนด้วยเลขท้าย 4 หลักของเลขประจำตัวผู้เสียภาษีเพื่อเปิดรายงาน";
+    const preview = buildSharePreview(await loadSharePreviewSettings());
     return {
-      title,
-      description,
-      twitter: { card: "summary", title, description },
+      title: preview.title,
+      description: preview.description,
+      openGraph: {
+        title: preview.title,
+        description: preview.description,
+        type: "website",
+        locale: "th_TH",
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: preview.title,
+        description: preview.description,
+      },
       robots: { index: false, follow: false },
     };
   }

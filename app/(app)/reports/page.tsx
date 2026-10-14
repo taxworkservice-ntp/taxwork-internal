@@ -202,6 +202,8 @@ export default function ReportsPage() {
   const [preparedBy, setPreparedBy] = useState("");
   const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
   const [reportRenderer, setReportRenderer] = useState<"legacy" | "server">("legacy");
+  const [sharePreviewTitle, setSharePreviewTitle] = useState("");
+  const [sharePreviewDescription, setSharePreviewDescription] = useState("");
   const [brandingBusy, setBrandingBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -555,6 +557,8 @@ export default function ReportsPage() {
         setPreparedBy(data?.prepared_by ?? "");
         setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
         setReportRenderer(data?.report_renderer === "server" ? "server" : "legacy");
+        setSharePreviewTitle(data?.share_preview_title ?? "");
+        setSharePreviewDescription(data?.share_preview_description ?? "");
       } catch (error) {
         console.error("load settings failed:", error);
         setStatus(
@@ -576,6 +580,8 @@ export default function ReportsPage() {
         coverStyle,
         preparedBy: preparedBy.trim() || null,
         reportRenderer,
+        sharePreviewTitle: sharePreviewTitle.trim() || null,
+        sharePreviewDescription: sharePreviewDescription.trim() || null,
       });
       if (!res.ok) {
         alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
@@ -2565,6 +2571,26 @@ export default function ReportsPage() {
                 </select>
                 <p className="text-xs text-neutral-500">
                   เลือก &quot;เดิม&quot; เพื่อย้อนกลับได้ทันทีโดยไม่ต้อง deploy ใหม่
+                </p>
+              </div>
+              <div className="space-y-2 border-t border-neutral-200 pt-3">
+                <label className="label">ตัวอย่างลิงก์ (LINE / โซเชียล)</label>
+                <input
+                  className="input"
+                  placeholder="รายงานภาษี"
+                  value={sharePreviewTitle}
+                  onChange={(e) => setSharePreviewTitle(e.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="เว้นว่างเพื่อใช้ข้อความเริ่มต้น (มีชื่อบริษัท)"
+                  value={sharePreviewDescription}
+                  onChange={(e) => setSharePreviewDescription(e.target.value)}
+                />
+                <p className="text-xs text-neutral-500">
+                  แสดงเป็นหัวข้อ/คำอธิบายเมื่อส่งลิงก์ใน LINE —
+                  ข้อความนี้ไม่เปิดเผยข้อมูลลูกค้า (ผู้รับต้องยืนยันตัวตนก่อนจึงเห็นรายงาน)
+                  และ LINE อาจแคชตัวอย่างไว้ 2–3 วัน
                 </p>
               </div>
             </div>
