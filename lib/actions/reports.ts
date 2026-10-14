@@ -17,6 +17,7 @@ import {
 } from "@/lib/share-access";
 import { clientKey, rateLimit } from "@/lib/rate-limit";
 import { buildUpdate, num } from "./db-helpers";
+import { planRoundMirror } from "@/lib/report-rounds";
 
 export type ClientRow = {
   id: string;
@@ -530,38 +531,124 @@ async function carryFilingsAsTemplate(
 }
 
 /**
- * Seed a fresh month with the default rounds (ครั้งที่ 1 and 2). Each round is
- * filled from the nearest earlier month that has the same round — carried
- * forward without amounts, slips, QR images, or Part 2 documents — so each
- * round acts as its own template. A no-op once the month has any round.
+ * Keep a month in sync with the previous one: every round the previous month
+ * has is created here if missing, and any round here that is still empty is
+ * prefilled from its same-numbered counterpart — carried forward without
+ * amounts, slips, QR images, or Part 2 documents, so each round acts as its own
+ * template. Idempotent (rounds that already hold items are never touched), so
+ * it is safe to run on every month view. With no earlier month it falls back to
+ * creating the default rounds ครั้งที่ 1 and 2, empty.
  */
 export async function ensureDefaultRounds(
   clientId: string,
-  period: string,
-  seqs: number[] = [1, 2]
+  period: string
 ): Promise<MonthlyReport[]> {
   await requireUser();
-  const existing = (await sql`select 1 from monthly_reports
-    where client_id=${clientId} and period_label=${period} limit 1`) as unknown[];
-  if (existing.length) return [];
+
+  const sourceMonths = (await sql`select period_label from monthly_reports
+    where client_id=${clientId} and period_label < ${period}
+    order by period_label desc limit 1`) as { period_label: string }[];
+  const sourcePeriod = sourceMonths[0]?.period_label;
+
+  if (!sourcePeriod) {
+    // No history to mirror — create the default template rounds, empty.
+    const existing = (await sql`select 1 from monthly_reports
+      where client_id=${clientId} and period_label=${period} limit 1`) as unknown[];
+    if (existing.length) return [];
+    const created: MonthlyReport[] = [];
+    for (const seq of [1, 2]) {
+      try {
+        created.push(await insertMonthlyReport(clientId, period, seq));
+      } catch {
+        // a concurrent call already created this round
+      }
+    }
+    return created;
+  }
+
+  const sourceRounds = (await sql`select id, seq from monthly_reports
+    where client_id=${clientId} and period_label=${sourcePeriod}
+    order by seq`) as { id: string; seq: number }[];
+  const targetRounds = (await sql`select r.id, r.seq,
+      (select count(*) from monthly_filings f where f.report_id = r.id)::int as filing_count
+    from monthly_reports r
+    where r.client_id=${clientId} and r.period_label=${period}
+    order by r.seq`) as { id: string; seq: number; filing_count: number }[];
+
+  const steps = planRoundMirror(
+    sourceRounds.map((r) => ({ id: r.id, seq: num(r.seq) })),
+    targetRounds.map((r) => ({ id: r.id, seq: num(r.seq), filingCount: num(r.filing_count) }))
+  );
 
   const created: MonthlyReport[] = [];
-  for (const seq of seqs) {
-    const source = (await sql`select id from monthly_reports
-      where client_id=${clientId} and seq=${seq} and period_label < ${period}
-      order by period_label desc limit 1`) as { id: string }[];
-    let report: MonthlyReport;
-    try {
-      report = await insertMonthlyReport(clientId, period, seq);
-    } catch {
-      continue; // a concurrent call already created this round
+  for (const step of steps) {
+    if (step.action === "create") {
+      let report: MonthlyReport;
+      try {
+        report = await insertMonthlyReport(clientId, period, step.seq);
+      } catch {
+        continue; // a concurrent call already created this round
+      }
+      await carryFilingsAsTemplate(step.sourceId, clientId, period, report.id);
+      created.push(report);
+    } else {
+      await carryFilingsAsTemplate(step.sourceId, clientId, period, step.targetId);
     }
-    if (source[0]) {
-      await carryFilingsAsTemplate(source[0].id, clientId, period, report.id);
-    }
-    created.push(report);
   }
   return created;
+}
+
+export type CopyRoundResult =
+  | { ok: true; filings: Filing[] }
+  | { ok: false; error: string };
+
+/**
+ * Pull a chosen source round's items into the current (target) round. Only
+ * allowed while the target round is empty and still editable — the pull is a
+ * template copy (amounts zeroed, no files), matching the automatic seeding.
+ */
+export async function copyRoundIntoReport(
+  sourceReportId: string,
+  targetReportId: string
+): Promise<CopyRoundResult> {
+  try {
+    await requireUser();
+    if (sourceReportId === targetReportId) {
+      return { ok: false, error: "รอบต้นทางและปลายทางเป็นรอบเดียวกันไม่ได้" };
+    }
+
+    const targets = (await sql`select client_id, period_label from monthly_reports
+      where id=${targetReportId}`) as { client_id: string; period_label: string }[];
+    const target = targets[0];
+    if (!target) return { ok: false, error: "ไม่พบรอบปลายทาง" };
+
+    const sources = (await sql`select client_id from monthly_reports
+      where id=${sourceReportId}`) as { client_id: string }[];
+    if (!sources[0]) return { ok: false, error: "ไม่พบรอบต้นทาง" };
+    if (sources[0].client_id !== target.client_id) {
+      return { ok: false, error: "ดึงได้เฉพาะรอบของลูกค้ารายเดียวกัน" };
+    }
+
+    await assertReportEditable(targetReportId);
+
+    const existing = (await sql`select 1 from monthly_filings
+      where report_id=${targetReportId} limit 1`) as unknown[];
+    if (existing.length) {
+      return { ok: false, error: "รอบนี้มีรายการอยู่แล้ว — ดึงได้เฉพาะรอบที่ยังว่าง" };
+    }
+
+    await carryFilingsAsTemplate(
+      sourceReportId,
+      target.client_id,
+      target.period_label,
+      targetReportId
+    );
+    const filings = await loadFilings(target.client_id, target.period_label, targetReportId);
+    return { ok: true, filings };
+  } catch (error) {
+    console.error("copyRoundIntoReport failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
 }
 
 export async function addFiling(

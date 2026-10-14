@@ -9,6 +9,7 @@ import {
   clearFilings,
   clearReportDocuments,
   copyReportToNewIssue,
+  copyRoundIntoReport,
   createMonthlyReport,
   createReportShareLink,
   deleteMonthlyReport,
@@ -179,6 +180,13 @@ export default function ReportsPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const loadSeq = useRef(0);
   const ensuredRoundsRef = useRef<string | null>(null);
+
+  // Explicit "pull a chosen round into the current round" control.
+  const [pullPeriod, setPullPeriod] = useState("");
+  const [pullRounds, setPullRounds] = useState<MonthlyReport[]>([]);
+  const [pullReportId, setPullReportId] = useState("");
+  const [pullBusy, setPullBusy] = useState(false);
+  const pullSeqRef = useRef(0);
 
   const [showSettings, setShowSettings] = useState(false);
   const [logoPath, setLogoPath] = useState<string | null>(null);
@@ -401,23 +409,21 @@ export default function ReportsPage() {
     setReportsLoading(true);
     try {
       let rows = await listMonthlyReports(clientId, period);
-      // A fresh month starts with the default rounds (1 & 2), each seeded from
-      // the nearest earlier month's same round (no amounts/files). Runs once
-      // per client+month and only while the month has no rounds yet.
-      if (!rows.length) {
-        const key = `${clientId}|${period}`;
-        if (ensuredRoundsRef.current !== key) {
-          ensuredRoundsRef.current = key;
-          try {
-            await ensureDefaultRounds(clientId, period);
-            rows = await listMonthlyReports(clientId, period);
-          } catch (error) {
-            ensuredRoundsRef.current = null; // allow a retry on the next load
-            console.error("ensureDefaultRounds failed:", error);
-            setStatus(
-              `สร้างรอบเริ่มต้นไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
-            );
-          }
+      // Keep the month in sync with the previous one: mirror its rounds (each
+      // seeded from the same round, no amounts/files) and prefill any round
+      // that is still empty. Runs once per client+month view; idempotent.
+      const key = `${clientId}|${period}`;
+      if (ensuredRoundsRef.current !== key) {
+        ensuredRoundsRef.current = key;
+        try {
+          const created = await ensureDefaultRounds(clientId, period);
+          if (created.length) rows = await listMonthlyReports(clientId, period);
+        } catch (error) {
+          ensuredRoundsRef.current = null; // allow a retry on the next load
+          console.error("ensureDefaultRounds failed:", error);
+          setStatus(
+            `สร้างรอบเริ่มต้นไม่สำเร็จ: ${error instanceof Error ? error.message : error}`
+          );
         }
       }
       setReports(rows);
@@ -656,6 +662,62 @@ export default function ReportsPage() {
   const accentHex = normalizeHex(selectedClient?.avatar_color);
 
   const [copyOffset, setCopyOffset] = useState(1);
+
+  // Explicit pull: choose a source month + round and fill the current round.
+  const defaultPullPeriod = shiftPeriod(period, -1);
+
+  useEffect(() => {
+    setPullPeriod("");
+    setPullReportId("");
+  }, [clientId, period]);
+
+  useEffect(() => {
+    if (!clientId) {
+      setPullRounds([]);
+      return;
+    }
+    const source = pullPeriod || defaultPullPeriod;
+    let cancelled = false;
+    const seq = ++pullSeqRef.current;
+    listMonthlyReports(clientId, source)
+      .then((rows) => {
+        if (cancelled || seq !== pullSeqRef.current) return;
+        setPullRounds(rows);
+        setPullReportId((prev) => {
+          if (prev && rows.some((r) => r.id === prev)) return prev;
+          const current = reports.find((r) => r.id === activeReportId);
+          const same = current ? rows.find((r) => r.seq === current.seq) : undefined;
+          return same?.id ?? rows[rows.length - 1]?.id ?? "";
+        });
+      })
+      .catch(() => {
+        if (!cancelled && seq === pullSeqRef.current) setPullRounds([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Re-run only when the source month or client/month changes; the active
+    // round/report list are read for a smarter default, not as triggers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, period, pullPeriod, defaultPullPeriod]);
+
+  async function pullRoundIntoCurrent() {
+    if (!activeReportId || !pullReportId) return;
+    setPullBusy(true);
+    try {
+      const res = await copyRoundIntoReport(pullReportId, activeReportId);
+      if (!res.ok) {
+        alert(res.error);
+        return;
+      }
+      await loadFilings();
+      setStatus(`ดึงรายการ ${res.filings.length} รายการเข้าสู่รอบนี้แล้ว`);
+    } catch (err) {
+      alert(`ดึงรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setPullBusy(false);
+    }
+  }
 
   // Copy the previously selected round from an earlier month into a new round here.
   async function copyFromPastMonth() {
@@ -1721,6 +1783,54 @@ export default function ReportsPage() {
                     </button>
                   )}
                 </div>
+              </div>
+              <div className="flex flex-wrap items-end gap-2 border-t border-neutral-200 pt-3 text-xs">
+                <div>
+                  <label className="label">ดึงรายการจากเดือน</label>
+                  <input
+                    type="month"
+                    className="input w-auto !py-1 text-xs"
+                    value={pullPeriod || defaultPullPeriod}
+                    max={period}
+                    onChange={(e) => setPullPeriod(e.target.value)}
+                    disabled={reportLocked}
+                  />
+                </div>
+                <div>
+                  <label className="label">รอบต้นทาง</label>
+                  <select
+                    className="input w-auto !py-1 text-xs"
+                    value={pullReportId}
+                    onChange={(e) => setPullReportId(e.target.value)}
+                    disabled={reportLocked || !pullRounds.length}
+                  >
+                    {!pullRounds.length && <option value="">— ไม่มีรอบ —</option>}
+                    {pullRounds.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.label ?? `ครั้งที่ ${r.seq}`}
+                        {r.status === "issued" ? " (ออกแล้ว)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  className="btn text-xs"
+                  onClick={pullRoundIntoCurrent}
+                  disabled={pullBusy || !pullReportId || reportLocked || Boolean(filings.length)}
+                  title={
+                    filings.length
+                      ? "รอบนี้มีรายการอยู่แล้ว — ดึงได้เฉพาะรอบที่ยังว่าง"
+                      : "ดึงรายการจากรอบต้นทางเข้าสู่รอบนี้ (ยอดเงินเป็น 0)"
+                  }
+                >
+                  {pullBusy ? "กำลังดึง…" : "ดึงเข้าสู่รอบนี้"}
+                </button>
+                <span className="text-neutral-500">
+                  {filings.length
+                    ? "รอบนี้มีรายการแล้ว"
+                    : "ใช้ได้เมื่อรอบนี้ยังว่าง — ยอดเงินจะถูกตั้งเป็น 0"}
+                </span>
               </div>
             </div>
           </section>
