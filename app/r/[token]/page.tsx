@@ -9,7 +9,7 @@ import {
 import { buildReportModel } from "@/lib/report-model";
 import { periodToThai, formatBaht } from "@/lib/report-format";
 import { buildSharePreview } from "@/lib/share-preview";
-import { loadSharePreviewSettings } from "@/lib/share-preview-data";
+import { loadSharePreviewSettings, loadSharePreviewFields } from "@/lib/share-preview-data";
 import { shareTokenFromSegment } from "@/lib/share-link";
 import {
   shareAccessCookieName,
@@ -60,11 +60,22 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { token } = await params;
 
-  // Before verification we reveal nothing about the report (title/description
-  // are all a link preview or crawler will see). The wording is configurable in
-  // Reports → settings; the OG image is branded via ./opengraph-image.tsx.
+  // Preview shown to unauthenticated crawlers (LINE, etc.). Detail level is
+  // configured in Reports → settings; at higher levels the period/client/total
+  // appear, but the document itself stays behind the tax-ID gate.
   if (!(await isShareVerified(token))) {
-    const preview = buildSharePreview(await loadSharePreviewSettings());
+    const settings = await loadSharePreviewSettings();
+    const fields = await loadSharePreviewFields(shareTokenFromSegment(token));
+    const preview = buildSharePreview({
+      title: settings.title,
+      description: settings.description,
+      firmName: settings.firmName,
+      detail: settings.detail,
+      periodTh: fields?.periodTh,
+      label: fields?.label,
+      clientName: fields?.clientName,
+      total: fields?.total,
+    });
     return {
       title: preview.title,
       description: preview.description,

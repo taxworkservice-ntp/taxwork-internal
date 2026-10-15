@@ -211,6 +211,7 @@ export default function ReportsPage() {
   const [reportRenderer, setReportRenderer] = useState<"legacy" | "server">("legacy");
   const [sharePreviewTitle, setSharePreviewTitle] = useState("");
   const [sharePreviewDescription, setSharePreviewDescription] = useState("");
+  const [sharePreviewDetail, setSharePreviewDetail] = useState("amount");
   const [brandingBusy, setBrandingBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -581,6 +582,7 @@ export default function ReportsPage() {
         setReportRenderer(data?.report_renderer === "server" ? "server" : "legacy");
         setSharePreviewTitle(data?.share_preview_title ?? "");
         setSharePreviewDescription(data?.share_preview_description ?? "");
+        setSharePreviewDetail(data?.share_preview_detail ?? "amount");
       } catch (error) {
         console.error("load settings failed:", error);
         setStatus(
@@ -604,6 +606,7 @@ export default function ReportsPage() {
         reportRenderer,
         sharePreviewTitle: sharePreviewTitle.trim() || null,
         sharePreviewDescription: sharePreviewDescription.trim() || null,
+        sharePreviewDetail,
         firmPhone: firmPhone.trim() || null,
         firmLine: firmLine.trim() || null,
         firmAddress: firmAddress.trim() || null,
@@ -2715,10 +2718,26 @@ export default function ReportsPage() {
                   value={sharePreviewDescription}
                   onChange={(e) => setSharePreviewDescription(e.target.value)}
                 />
+                <div className="space-y-1">
+                  <label className="label">รายละเอียดในตัวอย่างลิงก์</label>
+                  <select
+                    className="input"
+                    value={sharePreviewDetail}
+                    onChange={(e) => setSharePreviewDetail(e.target.value)}
+                  >
+                    <option value="none">ไม่แสดง (ชื่อบริษัทเท่านั้น)</option>
+                    <option value="period">รอบระยะเวลา + ครั้งที่</option>
+                    <option value="client">รอบระยะเวลา + ชื่อลูกค้า</option>
+                    <option value="amount">รอบระยะเวลา + ชื่อลูกค้า + ยอดเงิน</option>
+                  </select>
+                  <p className="text-xs text-neutral-500">
+                    ตัวอย่างลิงก์ถูกดึงโดยผู้ที่ถือลิงก์ (ก่อนยืนยันตัวตน) —
+                    เลือกให้ละเอียดเท่าที่ต้องการเปิดเผยในแชต
+                  </p>
+                </div>
                 <p className="text-xs text-neutral-500">
-                  แสดงเป็นหัวข้อ/คำอธิบายเมื่อส่งลิงก์ใน LINE —
-                  ข้อความนี้ไม่เปิดเผยข้อมูลลูกค้า (ผู้รับต้องยืนยันตัวตนก่อนจึงเห็นรายงาน)
-                  และ LINE อาจแคชตัวอย่างไว้ 2–3 วัน
+                  ใช้เมื่อส่งลิงก์ใน LINE — ชื่อ/คำอธิบายด้านบนจะแทนที่ข้อความอัตโนมัติ
+                  และ LINE อาจแคชตัวอย่างไว้ 2–3 วัน (ลิงก์ใหม่จะอัปเดตทันที)
                 </p>
               </div>
             </div>

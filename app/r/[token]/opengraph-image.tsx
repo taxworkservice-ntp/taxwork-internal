@@ -1,7 +1,11 @@
 import { ImageResponse } from "next/og";
 import { headers } from "next/headers";
 import { buildSharePreview } from "@/lib/share-preview";
-import { loadSharePreviewSettings } from "@/lib/share-preview-data";
+import {
+  loadSharePreviewSettings,
+  loadSharePreviewFields,
+} from "@/lib/share-preview-data";
+import { shareTokenFromSegment } from "@/lib/share-link";
 import { contrastText, normalizeHex } from "@/lib/client-avatar";
 
 // Edge runtime keeps the image generation cheap and off the Chromium path.
@@ -30,22 +34,45 @@ async function loadFont(origin: string): Promise<ArrayBuffer | null> {
   try {
     const res = await fetch(`${origin}/fonts/Sarabun-Bold.ttf`);
     if (!res.ok) return null;
+    const type = res.headers.get("content-type") ?? "";
+    // Guard against being served an HTML login page (which would break Satori).
+    if (!/font|ttf|octet-stream|binary/i.test(type)) return null;
     return await res.arrayBuffer();
   } catch {
     return null;
   }
 }
 
-export default async function Image() {
-  const [settings, origin] = await Promise.all([
+export default async function Image({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token } = await params;
+  const key = shareTokenFromSegment(token);
+
+  const [settings, origin, fields] = await Promise.all([
     loadSharePreviewSettings(),
     resolveOrigin(),
+    loadSharePreviewFields(key),
   ]);
-  const preview = buildSharePreview(settings);
+
+  // Clean, professional image: period + round only — never client name/amount.
+  const preview = buildSharePreview({
+    firmName: settings.firmName,
+    detail: "period",
+    periodTh: fields?.periodTh,
+    label: fields?.label,
+  });
+
   const firm = settings.firmName?.trim() || "Taxwork";
   const accent = normalizeHex(settings.brandColor) ?? "#111827";
   const onAccent = contrastText(accent);
   const font = await loadFont(origin);
+  if (!font) {
+    // Fail loudly so a broken (0-byte) image is never cached for a year.
+    throw new Error("OG image font unavailable");
+  }
 
   return new ImageResponse(
     (
@@ -82,7 +109,7 @@ export default async function Image() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: "88px", fontWeight: 700, color: "#111827" }}>
+          <div style={{ fontSize: "84px", fontWeight: 700, color: "#111827" }}>
             {preview.title}
           </div>
           <div style={{ marginTop: "16px", fontSize: "34px", color: "#6b7280" }}>
@@ -103,9 +130,7 @@ export default async function Image() {
     ),
     {
       ...size,
-      fonts: font
-        ? [{ name: "Sarabun", data: font, weight: 700, style: "normal" }]
-        : undefined,
+      fonts: [{ name: "Sarabun", data: font, weight: 700, style: "normal" }],
     }
   );
 }

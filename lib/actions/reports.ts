@@ -12,6 +12,7 @@ import {
   type ReportShare as ReportShareCore,
 } from "@/lib/report-share";
 import { getReportEmailQuota as readReportEmailQuota } from "@/lib/report-email";
+import { normalizeSharePreviewDetail } from "@/lib/share-preview";
 import {
   isValidTaxId,
   matchesTaxIdSuffix,
@@ -282,6 +283,7 @@ export type AppSettings = {
   report_renderer: string | null;
   share_preview_title: string | null;
   share_preview_description: string | null;
+  share_preview_detail: string | null;
   firm_phone: string | null;
   firm_line: string | null;
   firm_address: string | null;
@@ -311,29 +313,29 @@ export async function getAppSettings(): Promise<AppSettingsResult> {
 /** Read app_settings, degrading gracefully when newer columns aren't migrated. */
 async function selectAppSettings(): Promise<AppSettings[]> {
   try {
-    return (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, firm_phone, firm_line, firm_address from app_settings where id=1`) as AppSettings[];
+    return (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, share_preview_detail, firm_phone, firm_line, firm_address from app_settings where id=1`) as AppSettings[];
   } catch {
     try {
-      const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description from app_settings where id=1`) as Omit<AppSettings, "firm_phone" | "firm_line" | "firm_address">[];
-      return rows.map((r) => ({ ...r, firm_phone: null, firm_line: null, firm_address: null }));
+      const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, firm_phone, firm_line, firm_address from app_settings where id=1`) as Omit<AppSettings, "share_preview_detail">[];
+      return rows.map((r) => ({ ...r, share_preview_detail: null }));
     } catch {
       try {
-        const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer from app_settings where id=1`) as Omit<AppSettings, "share_preview_title" | "share_preview_description" | "firm_phone" | "firm_line" | "firm_address">[];
+        const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description from app_settings where id=1`) as Omit<AppSettings, "share_preview_detail" | "firm_phone" | "firm_line" | "firm_address">[];
         return rows.map((r) => ({
           ...r,
-          share_preview_title: null,
-          share_preview_description: null,
+          share_preview_detail: null,
           firm_phone: null,
           firm_line: null,
           firm_address: null,
         }));
       } catch {
-        const legacy = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as Omit<AppSettings, "report_renderer" | "share_preview_title" | "share_preview_description" | "firm_phone" | "firm_line" | "firm_address">[];
+        const legacy = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as Omit<AppSettings, "report_renderer" | "share_preview_title" | "share_preview_description" | "share_preview_detail" | "firm_phone" | "firm_line" | "firm_address">[];
         return legacy.map((r) => ({
           ...r,
           report_renderer: null,
           share_preview_title: null,
           share_preview_description: null,
+          share_preview_detail: null,
           firm_phone: null,
           firm_line: null,
           firm_address: null,
@@ -364,6 +366,7 @@ export async function saveReportBranding(input: {
   reportRenderer?: string;
   sharePreviewTitle?: string | null;
   sharePreviewDescription?: string | null;
+  sharePreviewDetail?: string | null;
   firmPhone?: string | null;
   firmLine?: string | null;
   firmAddress?: string | null;
@@ -374,29 +377,36 @@ export async function saveReportBranding(input: {
     const renderer = normalizeRenderer(input.reportRenderer);
     const shareTitle = input.sharePreviewTitle?.trim() || null;
     const shareDesc = input.sharePreviewDescription?.trim() || null;
+    const shareDetail = normalizeSharePreviewDetail(input.sharePreviewDetail);
     const firmPhone = input.firmPhone?.trim() || null;
     const firmLine = input.firmLine?.trim() || null;
     const firmAddress = input.firmAddress?.trim() || null;
     const now = new Date().toISOString();
     try {
-      await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, firm_phone, firm_line, firm_address, updated_at)
-        values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${shareTitle}, ${shareDesc}, ${firmPhone}, ${firmLine}, ${firmAddress}, ${now})
-        on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, share_preview_title=${shareTitle}, share_preview_description=${shareDesc}, firm_phone=${firmPhone}, firm_line=${firmLine}, firm_address=${firmAddress}, updated_at=${now}`;
+      await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, share_preview_detail, firm_phone, firm_line, firm_address, updated_at)
+        values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${shareTitle}, ${shareDesc}, ${shareDetail}, ${firmPhone}, ${firmLine}, ${firmAddress}, ${now})
+        on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, share_preview_title=${shareTitle}, share_preview_description=${shareDesc}, share_preview_detail=${shareDetail}, firm_phone=${firmPhone}, firm_line=${firmLine}, firm_address=${firmAddress}, updated_at=${now}`;
     } catch {
       try {
-        await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, updated_at)
-          values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${shareTitle}, ${shareDesc}, ${now})
-          on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, share_preview_title=${shareTitle}, share_preview_description=${shareDesc}, updated_at=${now}`;
+        await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, share_preview_detail, updated_at)
+          values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${shareTitle}, ${shareDesc}, ${shareDetail}, ${now})
+          on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, share_preview_title=${shareTitle}, share_preview_description=${shareDesc}, share_preview_detail=${shareDetail}, updated_at=${now}`;
       } catch {
-        // Some columns may not be migrated yet — save what the schema supports.
         try {
-          await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, updated_at)
-            values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${now})
-            on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, updated_at=${now}`;
+          await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, updated_at)
+            values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${shareTitle}, ${shareDesc}, ${now})
+            on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, share_preview_title=${shareTitle}, share_preview_description=${shareDesc}, updated_at=${now}`;
         } catch {
-          await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
-            values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${now})
-            on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${now}`;
+          // Some columns may not be migrated yet — save what the schema supports.
+          try {
+            await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, updated_at)
+              values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${now})
+              on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, updated_at=${now}`;
+          } catch {
+            await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
+              values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${now})
+              on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${now}`;
+          }
         }
       }
     }
