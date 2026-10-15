@@ -10,7 +10,6 @@ import {
   type ReportEmailInput,
 } from "@/lib/email/report-email";
 import { sendEmail } from "@/lib/email/resend";
-import { buildServerReportPdf } from "@/lib/report-pdf/server";
 
 /**
  * Server-side helpers for the report email: monthly quota accounting, context
@@ -182,8 +181,13 @@ export async function sendReportEmailForRound(opts: {
   };
 
   try {
-    const bytes =
-      (await storedReportPdf(opts.reportId)) ?? (await buildServerReportPdf(opts.reportId)).bytes;
+    // Render lazily so the heavy Chromium pipeline is never pulled into the
+    // lightweight server-action graph that also reads the quota.
+    let bytes = await storedReportPdf(opts.reportId);
+    if (!bytes) {
+      const { buildServerReportPdf } = await import("@/lib/report-pdf/server");
+      bytes = (await buildServerReportPdf(opts.reportId)).bytes;
+    }
 
     const { id } = await sendEmail({
       to: ctx.to,
