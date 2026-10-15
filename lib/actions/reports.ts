@@ -11,7 +11,7 @@ import {
   mintReportShare,
   type ReportShare as ReportShareCore,
 } from "@/lib/report-share";
-import { getReportEmailQuota as readReportEmailQuota } from "@/lib/report-email";
+import { getReportEmailQuota as readReportEmailQuota } from "@/lib/report-email-quota";
 import { normalizeSharePreviewDetail } from "@/lib/share-preview";
 import {
   isValidTaxId,

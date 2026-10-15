@@ -5,40 +5,26 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { periodToThai } from "@/lib/report-format";
 import { sanitizeFileName } from "@/lib/download";
 import {
-  REPORT_EMAIL_MONTHLY_LIMIT,
   buildReportEmail,
   type ReportEmailInput,
 } from "@/lib/email/report-email";
 import { sendEmail } from "@/lib/email/resend";
+import { getReportEmailQuota } from "@/lib/report-email-quota";
+
+export {
+  getReportEmailQuota,
+  countSentThisMonth,
+  type EmailQuota,
+} from "@/lib/report-email-quota";
 
 /**
- * Server-side helpers for the report email: monthly quota accounting, context
- * assembly, and one shared send path used by both the admin route and the
- * client-facing share route.
+ * Server-side helpers for the report email: context assembly and one shared
+ * send path used by both the admin route and the client-facing share route.
+ * Quota accounting lives in ./report-email-quota (dependency-light).
  */
 
 /** Minutes within which a repeat send for the same round is treated as a dupe. */
 export const REPORT_EMAIL_DEDUPE_MINUTES = 10;
-
-export type EmailQuota = { limit: number; sent: number; remaining: number };
-
-export async function countSentThisMonth(): Promise<number> {
-  const rows = (await sql`
-    select count(*)::int as c from report_emails
-    where status='sent'
-      and sent_at >= date_trunc('month', now() at time zone 'Asia/Bangkok')
-  `) as { c: number }[];
-  return Number(rows[0]?.c ?? 0);
-}
-
-export async function getReportEmailQuota(): Promise<EmailQuota> {
-  const sent = await countSentThisMonth();
-  return {
-    limit: REPORT_EMAIL_MONTHLY_LIMIT,
-    sent,
-    remaining: Math.max(0, REPORT_EMAIL_MONTHLY_LIMIT - sent),
-  };
-}
 
 /** True when this round was already emailed successfully within `minutes`. */
 export async function hasRecentSend(
