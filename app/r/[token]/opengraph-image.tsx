@@ -1,6 +1,5 @@
 import { ImageResponse } from "next/og";
 import { headers } from "next/headers";
-import { buildSharePreview } from "@/lib/share-preview";
 import {
   loadSharePreviewSettings,
   loadSharePreviewFields,
@@ -57,15 +56,11 @@ export default async function Image({
     loadSharePreviewFields(key),
   ]);
 
-  // Clean, professional image: period only — no round label, client, or amount.
-  // (The Thai round label like "ครั้งที่ 2" has stacked marks that Satori
-  // mis-renders; it stays in the og:title/description where LINE shapes it.)
-  const preview = buildSharePreview({
-    firmName: settings.firmName,
-    detail: "period",
-    periodTh: fields?.periodTh,
-  });
-
+  // Clean, professional image: "รายงานภาษี" + the period on two lines — no
+  // round label, client, or amount. (Thai round labels like "ครั้งที่ 2" have
+  // stacked marks that Satori mis-renders; they stay in the og:title/description
+  // where LINE shapes them correctly.)
+  const periodTh = fields?.periodTh?.trim() || null;
   const firm = settings.firmName?.trim() || "Taxwork";
   const accent = normalizeHex(settings.brandColor) ?? "#111827";
   const onAccent = contrastText(accent);
@@ -110,9 +105,16 @@ export default async function Image({
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: "84px", fontWeight: 700, color: "#111827" }}>
-            {preview.title}
+          <div style={{ fontSize: "84px", fontWeight: 700, color: "#111827", lineHeight: 1.15 }}>
+            รายงานภาษี
           </div>
+          {periodTh && (
+            <div
+              style={{ fontSize: "84px", fontWeight: 700, color: "#111827", lineHeight: 1.15 }}
+            >
+              {periodTh}
+            </div>
+          )}
           <div style={{ marginTop: "16px", fontSize: "34px", color: "#6b7280" }}>
             เอกสารรายงานภาษีสำหรับลูกค้า
           </div>
