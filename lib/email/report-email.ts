@@ -15,10 +15,6 @@ const DEFAULT_BRAND_COLOR = "#111827";
 
 export type ReportEmailInput = {
   firmName: string;
-  preparedBy: string | null;
-  firmPhone: string | null;
-  firmLine: string | null;
-  firmAddress: string | null;
   brandColor: string | null;
   clientName: string;
   periodTh: string;
@@ -51,7 +47,6 @@ export function buildReportEmail(input: ReportEmailInput): ReportEmail {
   const client = input.clientName.trim() || "ลูกค้า";
   const color = normalizeColor(input.brandColor);
   const reportNo = input.reportNo?.trim() || null;
-  const preparedBy = input.preparedBy?.trim() || firm;
 
   const subject = reportNo
     ? `${firm} — รายงานสรุปการนำส่งภาษีประจำเดือน ${input.periodTh} (${reportNo})`
@@ -60,16 +55,6 @@ export function buildReportEmail(input: ReportEmailInput): ReportEmail {
   const showAmount = Number.isFinite(input.total) && input.total > 0;
   const amountLine = showAmount
     ? `<p style="margin:0 0 16px;">ยอดนำส่งรวม <strong>฿${formatBaht(input.total)}</strong></p>`
-    : "";
-
-  const contactParts = [firm];
-  if (input.firmPhone?.trim()) contactParts.push(`โทร ${input.firmPhone.trim()}`);
-  if (input.firmLine?.trim()) contactParts.push(`LINE ${input.firmLine.trim()}`);
-  const contactLine = contactParts.map((p) => escapeHtml(p)).join(" · ");
-  const addressLine = input.firmAddress?.trim()
-    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:13px;">${escapeHtml(
-        input.firmAddress.trim()
-      )}</p>`
     : "";
 
   const html = `<!doctype html>
@@ -101,10 +86,7 @@ export function buildReportEmail(input: ReportEmailInput): ReportEmail {
     หากลิงก์หมดอายุ กรุณาติดต่อเจ้าหน้าที่
   </p>
   <p style="margin:0 0 4px;">จึงเรียนมาเพื่อโปรดทราบ</p>
-  <p style="margin:0 0 4px;font-weight:600;">คุณ${escapeHtml(preparedBy)}</p>
-  <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">${contactLine}</p>
-  ${addressLine}
-  <p style="margin:8px 0 0;color:#6b7280;font-size:13px;">ตอบกลับอีเมลนี้ได้เลยหากมีข้อสงสัย</p>
+  <p style="margin:0;font-weight:600;">${escapeHtml(firm)}</p>
 </body>
 </html>`;
 
@@ -122,12 +104,8 @@ export function buildReportEmail(input: ReportEmailInput): ReportEmail {
     "(ลิงก์มีอายุ 7 วัน และต้องยืนยันตัวตนด้วยเลขท้าย 4 หลักของเลขประจำตัวผู้เสียภาษี)",
     "",
     "จึงเรียนมาเพื่อโปรดทราบ",
-    "",
-    `คุณ${preparedBy}`,
-    contactParts.join(" · ")
+    firm
   );
-  if (input.firmAddress?.trim()) textLines.push(input.firmAddress.trim());
-  textLines.push("ตอบกลับอีเมลนี้ได้เลยหากมีข้อสงสัย");
 
   return { subject, html, text: textLines.join("\n") };
 }

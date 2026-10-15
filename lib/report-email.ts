@@ -73,17 +73,10 @@ export async function loadReportEmailContext(
   if (!to) return { ok: false, error: "ลูกค้ายังไม่มีอีเมล กรุณาเพิ่มที่หน้าลูกค้าก่อน", status: 400 };
 
   const settings = (await sql`
-    select firm_name, prepared_by, brand_color, company_logo_path,
-           firm_phone, firm_line, firm_address
-    from app_settings where id=1
+    select firm_name, brand_color from app_settings where id=1
   `) as {
     firm_name: string | null;
-    prepared_by: string | null;
     brand_color: string | null;
-    company_logo_path: string | null;
-    firm_phone: string | null;
-    firm_line: string | null;
-    firm_address: string | null;
   }[];
   const s = settings[0];
 
@@ -111,10 +104,6 @@ export async function loadReportEmailContext(
     attachmentName,
     email: {
       firmName: s?.firm_name?.trim() || "Taxwork",
-      preparedBy: s?.prepared_by?.trim() || null,
-      firmPhone: s?.firm_phone?.trim() || null,
-      firmLine: s?.firm_line?.trim() || null,
-      firmAddress: s?.firm_address?.trim() || null,
       brandColor: s?.brand_color?.trim() || null,
       clientName: report.client_name,
       periodTh: periodToThai(report.period_label),

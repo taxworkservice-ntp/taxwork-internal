@@ -6,7 +6,8 @@ import { Resend } from "resend";
  * browser. Configuration lives in env vars (see MASTER.md §8):
  *   RESEND_API_KEY     – Resend API key
  *   REPORT_FROM_EMAIL  – verified sender, e.g. "Taxwork Account <reports@…>"
- *   REPORT_REPLY_TO    – optional reply-to address
+ *
+ * The report email is transactional/non-reply, so no reply-to is set.
  */
 
 let client: Resend | null = null;
@@ -40,13 +41,11 @@ export type SendEmailResult = { id: string | null };
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   const from = process.env.REPORT_FROM_EMAIL?.trim();
   if (!from) throw new Error("REPORT_FROM_EMAIL is not set");
-  const replyTo = process.env.REPORT_REPLY_TO?.trim() || undefined;
 
   const { data, error } = await getClient().emails.send(
     {
       from,
       to: input.to,
-      replyTo,
       subject: input.subject,
       html: input.html,
       text: input.text,

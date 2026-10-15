@@ -2564,7 +2564,7 @@ export default function ReportsPage() {
           onClick={() => setShowSettings(false)}
         >
           <div
-            className="card w-full max-w-md space-y-4 bg-white"
+            className="card flex max-h-[90vh] w-full max-w-md flex-col space-y-4 overflow-y-auto bg-white"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">

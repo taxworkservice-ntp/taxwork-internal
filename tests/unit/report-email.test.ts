@@ -6,11 +6,7 @@ import {
 } from "@/lib/email/report-email";
 
 const base = {
-  firmName: "Taxwork Account",
-  preparedBy: "คุณสมชาย",
-  firmPhone: "02-000-0000",
-  firmLine: "@taxwork",
-  firmAddress: "99/1 ถนนสุขุมวิท กรุงเทพฯ",
+  firmName: "บริษัท แท็กซ์เวิร์ค จำกัด",
   brandColor: "#0f766e",
   clientName: "บริษัท ตัวอย่าง จำกัด",
   periodTh: "สิงหาคม 2569",
@@ -24,7 +20,7 @@ describe("buildReportEmail", () => {
   it("builds a formal subject with firm, period, and report number", () => {
     const { subject } = buildReportEmail(base);
     expect(subject).toBe(
-      "Taxwork Account — รายงานสรุปการนำส่งภาษีประจำเดือน สิงหาคม 2569 (TW-6908-7F3K9Q2M)"
+      "บริษัท แท็กซ์เวิร์ค จำกัด — รายงานสรุปการนำส่งภาษีประจำเดือน สิงหาคม 2569 (TW-6908-7F3K9Q2M)"
     );
   });
 
@@ -41,20 +37,22 @@ describe("buildReportEmail", () => {
     expect(html).toContain("เปิดดูรายงานออนไลน์");
     expect(html).toContain(base.attachmentName);
     expect(text).toContain(base.shareUrl);
-    expect(text).toContain("คุณสมชาย");
+  });
+
+  it("signs off with only the firm name (no คุณ, no reply invitation)", () => {
+    const { html, text } = buildReportEmail(base);
+    expect(html).toContain("จึงเรียนมาเพื่อโปรดทราบ");
+    expect(html).toContain(base.firmName);
+    expect(html).not.toContain("คุณ");
+    expect(html).not.toContain("ตอบกลับอีเมลนี้");
+    expect(text).toContain("จึงเรียนมาเพื่อโปรดทราบ");
+    expect(text).toContain(base.firmName);
   });
 
   it("shows the total amount line only when there is an amount due", () => {
     expect(buildReportEmail(base).html).toContain("ยอดนำส่งรวม");
     expect(buildReportEmail(base).html).toContain("15,650.00");
     expect(buildReportEmail({ ...base, total: 0 }).html).not.toContain("ยอดนำส่งรวม");
-  });
-
-  it("includes the firm contact details in the footer", () => {
-    const { html, text } = buildReportEmail(base);
-    expect(html).toContain("โทร 02-000-0000");
-    expect(html).toContain("LINE @taxwork");
-    expect(text).toContain("โทร 02-000-0000 · LINE @taxwork");
   });
 
   it("escapes user-controlled strings in the HTML body", () => {
