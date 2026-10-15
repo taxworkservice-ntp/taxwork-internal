@@ -5,17 +5,11 @@ import { useState } from "react";
 type State = "idle" | "sending" | "sent" | "deduped" | "error";
 
 /**
- * Client-facing "email me this report" action. Sends only to the client's email
- * on file (masked in the UI); the server enforces the recipient. Deduped and
- * rate-limited server-side.
+ * Client-facing "email me this report" action (archival copy). Sends only to the
+ * client's email on file — the server enforces the recipient, and the address is
+ * never shown here. Deduped and rate-limited server-side.
  */
-export default function ShareEmailButton({
-  emailUrl,
-  maskedEmail,
-}: {
-  emailUrl: string;
-  maskedEmail: string;
-}) {
+export default function ShareEmailButton({ emailUrl }: { emailUrl: string }) {
   const [state, setState] = useState<State>("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -67,7 +61,11 @@ export default function ShareEmailButton({
             strokeLinejoin="round"
           />
         </svg>
-        {state === "sending" ? "กำลังส่ง..." : done ? "ส่งอีกครั้ง" : "ส่งไปที่อีเมลของฉัน"}
+        {state === "sending"
+          ? "กำลังส่ง..."
+          : done
+            ? "ส่งอีกครั้ง"
+            : "ส่งไปที่อีเมลของท่านเพื่อจัดเก็บ"}
       </button>
 
       <p className="text-center text-xs text-neutral-500">
@@ -84,13 +82,8 @@ export default function ShareEmailButton({
         {state === "error" && <span className="text-red-600">{error}</span>}
         {(state === "idle" || state === "sending") && (
           <>
-            ส่งไปที่ <span className="font-mono">{maskedEmail}</span>
+            ระบบจะส่งรายงานฉบับเต็มไปที่อีเมลที่ลงทะเบียนไว้ของท่าน
           </>
-        )}
-        {done && (
-          <span className="block text-neutral-400">
-            หรือส่งไปที่ <span className="font-mono">{maskedEmail}</span>
-          </span>
         )}
       </p>
     </div>

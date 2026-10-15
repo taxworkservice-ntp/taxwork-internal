@@ -35,13 +35,6 @@ async function isShareVerified(token: string): Promise<boolean> {
   return verifyShareAccess(value, key);
 }
 
-/** Mask an email for display: keep the first character + the domain. */
-function maskEmail(email: string): string {
-  const [local, domain] = email.split("@");
-  if (!domain) return "•••";
-  return `${local.slice(0, 1)}•••@${domain}`;
-}
-
 function ExpiredLink() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-2 p-6 text-center">
@@ -152,7 +145,7 @@ export default async function SharePage({
   const file = await latestReportFile(loaded.resolved.reportId);
   const clientEmail = loaded.model.client.email?.trim() || null;
 
-  // Never ship the client's real email to the browser — pass a masked hint only.
+  // Never ship the client's real email to the browser.
   const safeModel = {
     ...loaded.model,
     client: { ...loaded.model.client, email: null },
@@ -166,7 +159,6 @@ export default async function SharePage({
       token={token}
       expiresAt={loaded.resolved.expiresAt}
       hasEmail={Boolean(clientEmail)}
-      maskedEmail={clientEmail ? maskEmail(clientEmail) : null}
     />
   );
 }

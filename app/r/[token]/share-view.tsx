@@ -250,7 +250,6 @@ export default function ShareView({
   token,
   expiresAt,
   hasEmail,
-  maskedEmail,
 }: {
   model: ReportModel;
   hasPdf: boolean;
@@ -258,7 +257,6 @@ export default function ShareView({
   token: string;
   expiresAt?: string | null;
   hasEmail: boolean;
-  maskedEmail: string | null;
 }) {
   const sections = buildSections(model);
   const grandTotal = sections.reduce((sum, s) => sum + s.amount, 0);
@@ -578,11 +576,8 @@ export default function ShareView({
             {hasPdf && (
               <ShareDownloadButton pdfUrl={`/r/${token}/pdf`} fileName={fileName} />
             )}
-            {hasEmail && maskedEmail && (
-              <ShareEmailButton
-                emailUrl={`/r/${token}/email`}
-                maskedEmail={maskedEmail}
-              />
+            {hasEmail && (
+              <ShareEmailButton emailUrl={`/r/${token}/email`} />
             )}
             {expiryLabel && (
               <p className="text-center text-xs text-neutral-400">
