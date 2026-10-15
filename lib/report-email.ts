@@ -1,7 +1,5 @@
 import "server-only";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { sql } from "@/lib/db";
-import { r2, R2_BUCKET } from "@/lib/r2";
 import { periodToThai } from "@/lib/report-format";
 import {
   REPORT_EMAIL_MONTHLY_LIMIT,
@@ -31,21 +29,6 @@ export async function getReportEmailQuota(): Promise<EmailQuota> {
     sent,
     remaining: Math.max(0, REPORT_EMAIL_MONTHLY_LIMIT - sent),
   };
-}
-
-async function logoDataUri(storagePath: string | null): Promise<string | null> {
-  if (!storagePath) return null;
-  try {
-    const obj = await r2.send(
-      new GetObjectCommand({ Bucket: R2_BUCKET, Key: storagePath })
-    );
-    const bytes = await obj.Body?.transformToByteArray();
-    if (!bytes) return null;
-    const type = obj.ContentType ?? "image/png";
-    return `data:${type};base64,${Buffer.from(bytes).toString("base64")}`;
-  } catch {
-    return null;
-  }
 }
 
 export type ReportEmailContext =
@@ -133,7 +116,6 @@ export async function loadReportEmailContext(
       firmLine: s?.firm_line?.trim() || null,
       firmAddress: s?.firm_address?.trim() || null,
       brandColor: s?.brand_color?.trim() || null,
-      logoDataUri: await logoDataUri(s?.company_logo_path ?? null),
       clientName: report.client_name,
       periodTh: periodToThai(report.period_label),
       reportNo,

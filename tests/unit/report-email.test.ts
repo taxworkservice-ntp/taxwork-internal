@@ -12,7 +12,6 @@ const base = {
   firmLine: "@taxwork",
   firmAddress: "99/1 ถนนสุขุมวิท กรุงเทพฯ",
   brandColor: "#0f766e",
-  logoDataUri: null,
   clientName: "บริษัท ตัวอย่าง จำกัด",
   periodTh: "สิงหาคม 2569",
   reportNo: "TW-6908-7F3K9Q2M",
