@@ -19,6 +19,7 @@ import {
   deleteFiling as deleteFilingAction,
   ensureDefaultRounds,
   getAppSettings,
+  getReportEmailQuota,
   getReportShare,
   revokeReportShareLink,
   deleteCustomPaymentMethod as deleteCustomPaymentMethodAction,
@@ -47,6 +48,7 @@ import {
   type Filing,
   type MonthlyReport,
   type ReportDocument as SavedDocument,
+  type ReportEmailQuota,
   type ReportFile,
   type ReportShare,
 } from "@/lib/actions/reports";
@@ -177,6 +179,8 @@ export default function ReportsPage() {
   const [reportFiles, setReportFiles] = useState<ReportFile[]>([]);
   const [share, setShare] = useState<ReportShare | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
+  const [emailQuota, setEmailQuota] = useState<ReportEmailQuota | null>(null);
+  const [emailBusy, setEmailBusy] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const loadSeq = useRef(0);
   const ensuredRoundsRef = useRef<string | null>(null);
@@ -200,6 +204,9 @@ export default function ReportsPage() {
   const [slipFilingId, setSlipFilingId] = useState<string | null>(null);
   const [firmName, setFirmName] = useState("");
   const [preparedBy, setPreparedBy] = useState("");
+  const [firmPhone, setFirmPhone] = useState("");
+  const [firmLine, setFirmLine] = useState("");
+  const [firmAddress, setFirmAddress] = useState("");
   const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
   const [reportRenderer, setReportRenderer] = useState<"legacy" | "server">("legacy");
   const [sharePreviewTitle, setSharePreviewTitle] = useState("");
@@ -536,6 +543,18 @@ export default function ReportsPage() {
     };
   }, [activeReportId]);
 
+  const reloadEmailQuota = useCallback(async () => {
+    try {
+      setEmailQuota(await getReportEmailQuota());
+    } catch {
+      // Non-fatal: the quota badge simply won't render.
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadEmailQuota();
+  }, [reloadEmailQuota]);
+
   const reloadBanks = useCallback(async () => {
     setBankAccounts(await listBankAccounts());
      
@@ -555,6 +574,9 @@ export default function ReportsPage() {
         setLogoFileName(data?.company_logo_file_name ?? null);
         setFirmName(data?.firm_name ?? "");
         setPreparedBy(data?.prepared_by ?? "");
+        setFirmPhone(data?.firm_phone ?? "");
+        setFirmLine(data?.firm_line ?? "");
+        setFirmAddress(data?.firm_address ?? "");
         setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
         setReportRenderer(data?.report_renderer === "server" ? "server" : "legacy");
         setSharePreviewTitle(data?.share_preview_title ?? "");
@@ -582,6 +604,9 @@ export default function ReportsPage() {
         reportRenderer,
         sharePreviewTitle: sharePreviewTitle.trim() || null,
         sharePreviewDescription: sharePreviewDescription.trim() || null,
+        firmPhone: firmPhone.trim() || null,
+        firmLine: firmLine.trim() || null,
+        firmAddress: firmAddress.trim() || null,
       });
       if (!res.ok) {
         alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
@@ -1468,6 +1493,52 @@ export default function ReportsPage() {
     }
   }
 
+  async function sendReportEmail() {
+    if (!activeReportId || !selectedClient || !reportLocked) return;
+    const to = selectedClient.email?.trim();
+    if (!to) {
+      alert("ลูกค้ายังไม่มีอีเมล กรุณาเพิ่มที่หน้าลูกค้าก่อน");
+      return;
+    }
+    const remaining = emailQuota?.remaining ?? 0;
+    if (emailQuota && remaining <= 0) {
+      alert(`ครบโควตาส่งอีเมล ${emailQuota.limit} ฉบับ/เดือนแล้ว`);
+      return;
+    }
+    const ok = confirm(
+      `ส่งรายงานทางอีเมลถึง:\n${to}\n\nคงเหลือโควตาเดือนนี้ ${remaining}/${
+        emailQuota?.limit ?? 30
+      } ฉบับ\n\nยืนยันการส่ง?`
+    );
+    if (!ok) return;
+
+    setEmailBusy(true);
+    setStatus("");
+    try {
+      const res = await fetch("/api/reports/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportId: activeReportId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        remaining?: number;
+      };
+      if (!res.ok) {
+        alert(`ส่งอีเมลไม่สำเร็จ: ${data.error ?? res.statusText}`);
+        return;
+      }
+      setStatus(
+        `ส่งอีเมลถึง ${to} แล้ว (คงเหลือ ${data.remaining ?? remaining - 1} ฉบับ)`
+      );
+      await reloadEmailQuota();
+    } catch (error) {
+      alert(`ส่งอีเมลไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setEmailBusy(false);
+    }
+  }
+
   /**
    * Build the report PDF and archive a copy to R2 + the files history.
    * Optionally also download it to the device (used by "ดาวน์โหลด PDF").
@@ -2220,6 +2291,39 @@ export default function ReportsPage() {
                   </p>
                 )}
               </div>
+
+              <div className="card mt-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">ส่งอีเมลถึงลูกค้า</span>
+                  {emailQuota && (
+                    <span className="text-xs text-neutral-500">
+                      คงเหลือเดือนนี้ {emailQuota.remaining}/{emailQuota.limit} ฉบับ
+                    </span>
+                  )}
+                  <button
+                    className="btn-primary ml-auto text-xs"
+                    onClick={sendReportEmail}
+                    disabled={
+                      emailBusy ||
+                      !reportLocked ||
+                      !selectedClient?.email ||
+                      (emailQuota ? emailQuota.remaining <= 0 : false)
+                    }
+                  >
+                    {emailBusy ? "กำลังส่ง..." : "ส่งอีเมลรายงาน"}
+                  </button>
+                </div>
+                {selectedClient?.email ? (
+                  <p className="text-xs text-neutral-500">
+                    ส่งไปที่ <span className="font-mono">{selectedClient.email}</span> —
+                    แนบไฟล์ PDF พร้อมลิงก์เปิดดูออนไลน์
+                  </p>
+                ) : (
+                  <p className="text-xs text-neutral-500">
+                    ลูกค้ายังไม่มีอีเมล — กรุณาเพิ่มที่หน้าลูกค้าก่อน
+                  </p>
+                )}
+              </div>
             </section>
           )}
 
@@ -2537,6 +2641,30 @@ export default function ReportsPage() {
                   value={preparedBy}
                   onChange={(e) => setPreparedBy(e.target.value)}
                 />
+              </div>
+              <div className="space-y-2 border-t border-neutral-200 pt-3">
+                <label className="label">ข้อมูลติดต่อ (ท้ายอีเมลถึงลูกค้า)</label>
+                <input
+                  className="input"
+                  placeholder="เบอร์โทรศัพท์ เช่น 02-000-0000"
+                  value={firmPhone}
+                  onChange={(e) => setFirmPhone(e.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="LINE เช่น @taxwork"
+                  value={firmLine}
+                  onChange={(e) => setFirmLine(e.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="ที่อยู่ (ไม่บังคับ)"
+                  value={firmAddress}
+                  onChange={(e) => setFirmAddress(e.target.value)}
+                />
+                <p className="text-xs text-neutral-500">
+                  แสดงในอีเมลที่ส่งรายงานให้ลูกค้า (เว้นว่างได้)
+                </p>
               </div>
               <div className="space-y-1">
                 <label className="label">รูปแบบปก</label>
