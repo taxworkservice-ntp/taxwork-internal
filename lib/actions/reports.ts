@@ -4,8 +4,14 @@ import { cookies, headers } from "next/headers";
 import { sql } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { generatePublicId } from "@/lib/ids";
-import { appOrigin } from "@/lib/app-url";
-import { shareSlug, shareTokenFromSegment, shareUrl } from "@/lib/share-link";
+import { shareTokenFromSegment } from "@/lib/share-link";
+import {
+  getActiveReportShare,
+  isShareActive,
+  mintReportShare,
+  type ReportShare as ReportShareCore,
+} from "@/lib/report-share";
+import { getReportEmailQuota as readReportEmailQuota } from "@/lib/report-email";
 import {
   isValidTaxId,
   matchesTaxIdSuffix,
@@ -276,6 +282,9 @@ export type AppSettings = {
   report_renderer: string | null;
   share_preview_title: string | null;
   share_preview_description: string | null;
+  firm_phone: string | null;
+  firm_line: string | null;
+  firm_address: string | null;
 };
 
 export type ReportRenderer = "legacy" | "server";
@@ -302,19 +311,34 @@ export async function getAppSettings(): Promise<AppSettingsResult> {
 /** Read app_settings, degrading gracefully when newer columns aren't migrated. */
 async function selectAppSettings(): Promise<AppSettings[]> {
   try {
-    return (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description from app_settings where id=1`) as AppSettings[];
+    return (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, firm_phone, firm_line, firm_address from app_settings where id=1`) as AppSettings[];
   } catch {
     try {
-      const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer from app_settings where id=1`) as Omit<AppSettings, "share_preview_title" | "share_preview_description">[];
-      return rows.map((r) => ({ ...r, share_preview_title: null, share_preview_description: null }));
+      const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description from app_settings where id=1`) as Omit<AppSettings, "firm_phone" | "firm_line" | "firm_address">[];
+      return rows.map((r) => ({ ...r, firm_phone: null, firm_line: null, firm_address: null }));
     } catch {
-      const legacy = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as Omit<AppSettings, "report_renderer" | "share_preview_title" | "share_preview_description">[];
-      return legacy.map((r) => ({
-        ...r,
-        report_renderer: null,
-        share_preview_title: null,
-        share_preview_description: null,
-      }));
+      try {
+        const rows = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by, report_renderer from app_settings where id=1`) as Omit<AppSettings, "share_preview_title" | "share_preview_description" | "firm_phone" | "firm_line" | "firm_address">[];
+        return rows.map((r) => ({
+          ...r,
+          share_preview_title: null,
+          share_preview_description: null,
+          firm_phone: null,
+          firm_line: null,
+          firm_address: null,
+        }));
+      } catch {
+        const legacy = (await sql`select company_logo_path, company_logo_file_name, firm_name, brand_color, cover_style, prepared_by from app_settings where id=1`) as Omit<AppSettings, "report_renderer" | "share_preview_title" | "share_preview_description" | "firm_phone" | "firm_line" | "firm_address">[];
+        return legacy.map((r) => ({
+          ...r,
+          report_renderer: null,
+          share_preview_title: null,
+          share_preview_description: null,
+          firm_phone: null,
+          firm_line: null,
+          firm_address: null,
+        }));
+      }
     }
   }
 }
@@ -340,6 +364,9 @@ export async function saveReportBranding(input: {
   reportRenderer?: string;
   sharePreviewTitle?: string | null;
   sharePreviewDescription?: string | null;
+  firmPhone?: string | null;
+  firmLine?: string | null;
+  firmAddress?: string | null;
 }): Promise<ActionResult> {
   try {
     await requireUser();
@@ -347,21 +374,30 @@ export async function saveReportBranding(input: {
     const renderer = normalizeRenderer(input.reportRenderer);
     const shareTitle = input.sharePreviewTitle?.trim() || null;
     const shareDesc = input.sharePreviewDescription?.trim() || null;
+    const firmPhone = input.firmPhone?.trim() || null;
+    const firmLine = input.firmLine?.trim() || null;
+    const firmAddress = input.firmAddress?.trim() || null;
     const now = new Date().toISOString();
     try {
-      await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, updated_at)
-        values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${shareTitle}, ${shareDesc}, ${now})
-        on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, share_preview_title=${shareTitle}, share_preview_description=${shareDesc}, updated_at=${now}`;
+      await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, firm_phone, firm_line, firm_address, updated_at)
+        values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${shareTitle}, ${shareDesc}, ${firmPhone}, ${firmLine}, ${firmAddress}, ${now})
+        on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, share_preview_title=${shareTitle}, share_preview_description=${shareDesc}, firm_phone=${firmPhone}, firm_line=${firmLine}, firm_address=${firmAddress}, updated_at=${now}`;
     } catch {
-      // Some columns may not be migrated yet — save what the schema supports.
       try {
-        await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, updated_at)
-          values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${now})
-          on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, updated_at=${now}`;
+        await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, share_preview_title, share_preview_description, updated_at)
+          values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${shareTitle}, ${shareDesc}, ${now})
+          on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, share_preview_title=${shareTitle}, share_preview_description=${shareDesc}, updated_at=${now}`;
       } catch {
-        await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
-          values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${now})
-          on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${now}`;
+        // Some columns may not be migrated yet — save what the schema supports.
+        try {
+          await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, report_renderer, updated_at)
+            values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${renderer}, ${now})
+            on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, report_renderer=${renderer}, updated_at=${now}`;
+        } catch {
+          await sql`insert into app_settings (id, firm_name, brand_color, cover_style, prepared_by, updated_at)
+            values (1, ${input.firmName}, ${input.brandColor}, ${coverStyle}, ${input.preparedBy ?? null}, ${now})
+            on conflict (id) do update set firm_name=${input.firmName}, brand_color=${input.brandColor}, cover_style=${coverStyle}, prepared_by=${input.preparedBy ?? null}, updated_at=${now}`;
+        }
       }
     }
     return { ok: true };
@@ -955,48 +991,16 @@ export async function reorderReportDocuments(
 // Temporary share links
 // ---------------------------------------------------------------------------
 
-export type ReportShare = {
-  token: string;
-  url: string;
-  expiresAt: string;
-};
+export type ReportShare = ReportShareCore;
 
 export type ReportShareResult =
   | { ok: true; share: ReportShare | null }
   | { ok: false; error: string };
 
-function isShareActive(row: {
-  share_token: string | null;
-  share_expires_at: string | null;
-  share_revoked_at: string | null;
-}): boolean {
-  if (!row.share_token || row.share_revoked_at) return false;
-  if (row.share_expires_at && new Date(row.share_expires_at).getTime() < Date.now())
-    return false;
-  return true;
-}
-
 /** Current active share link for a report round (for the settings UI). */
 export async function getReportShare(reportId: string): Promise<ReportShare | null> {
   await requireUser();
-  const rows = (await sql`
-    select share_token, share_expires_at, share_revoked_at, period_label, seq
-    from monthly_reports where id=${reportId}
-  `) as {
-    share_token: string | null;
-    share_expires_at: string | null;
-    share_revoked_at: string | null;
-    period_label: string;
-    seq: number;
-  }[];
-  const row = rows[0];
-  if (!row || !isShareActive(row)) return null;
-  const origin = await appOrigin();
-  return {
-    token: row.share_token!,
-    url: shareUrl(origin, shareSlug(row.period_label, num(row.seq)), row.share_token!),
-    expiresAt: row.share_expires_at ?? "",
-  };
+  return getActiveReportShare(reportId);
 }
 
 /** Mint (or refresh) a share link. Only issued rounds may be shared. */
@@ -1006,46 +1010,8 @@ export async function createReportShareLink(
 ): Promise<ReportShareResult> {
   try {
     await requireUser();
-    const rows = (await sql`
-      select r.status, r.period_label, r.seq, c.tax_id
-      from monthly_reports r
-      join clients c on c.id = r.client_id
-      where r.id=${reportId}
-    `) as {
-      status: string;
-      period_label: string;
-      seq: number;
-      tax_id: string | null;
-    }[];
-    if (!rows[0]) return { ok: false, error: "ไม่พบรายงาน" };
-    if (rows[0].status !== "issued")
-      return { ok: false, error: "ต้องออกรายงานก่อนจึงจะสร้างลิงก์ได้" };
-    // The client must be able to pass the tax-ID gate, so a tax ID is required.
-    if (!isValidTaxId(rows[0].tax_id))
-      return {
-        ok: false,
-        error:
-          "ลูกค้ายังไม่มีเลขประจำตัวผู้เสียภาษี (13 หลัก) กรุณาเพิ่มที่หน้าลูกค้าก่อนสร้างลิงก์",
-      };
-
-    // The token is a long random secret and the only lookup key; the slug in
-    // the URL is decorative. Writing a new token on the single monthly_reports
-    // row replaces (cancels) any previous link immediately.
-    const token = generatePublicId(20);
-    const expires = new Date(Date.now() + Math.max(1, days) * 86400000);
-    await sql`update monthly_reports
-      set share_token=${token}, share_expires_at=${expires.toISOString()}, share_revoked_at=null
-      where id=${reportId}`;
-    const origin = await appOrigin();
-    const slug = shareSlug(rows[0].period_label, num(rows[0].seq));
-    return {
-      ok: true,
-      share: {
-        token,
-        url: shareUrl(origin, slug, token),
-        expiresAt: expires.toISOString(),
-      },
-    };
+    const res = await mintReportShare(reportId, days);
+    return res.ok ? { ok: true, share: res.share } : res;
   } catch (error) {
     console.error("createReportShareLink failed:", error);
     return { ok: false, error: actionError(error) };
@@ -1061,6 +1027,14 @@ export async function revokeReportShareLink(reportId: string): Promise<ActionRes
     console.error("revokeReportShareLink failed:", error);
     return fail(error);
   }
+}
+
+export type ReportEmailQuota = { limit: number; sent: number; remaining: number };
+
+/** Report-email quota for the current calendar month (client delivery). */
+export async function getReportEmailQuota(): Promise<ReportEmailQuota> {
+  await requireUser();
+  return readReportEmailQuota();
 }
 
 /** Public: resolve a share token to a report id, respecting expiry/revoke. */
