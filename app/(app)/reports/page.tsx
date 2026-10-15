@@ -695,8 +695,6 @@ export default function ReportsPage() {
   const reportLocked = activeReport?.status === "issued";
   const accentHex = normalizeHex(selectedClient?.avatar_color);
 
-  const [copyOffset, setCopyOffset] = useState(1);
-
   // Explicit pull: choose a source month + round and fill the current round.
   const defaultPullPeriod = shiftPeriod(period, -1);
 
@@ -750,44 +748,6 @@ export default function ReportsPage() {
       alert(`ดึงรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setPullBusy(false);
-    }
-  }
-
-  // Copy the previously selected round from an earlier month into a new round here.
-  async function copyFromPastMonth() {
-    if (!clientId) return;
-    const prevPeriod = shiftPeriod(period, -copyOffset);
-    if (
-      filings.length &&
-      !confirm(
-        `มีรายการอยู่แล้ว ${filings.length} รายการ — คัดลอกจาก ${periodToThai(prevPeriod)} เป็นรอบใหม่หรือไม่? (รายการเดิมจะไม่ถูกลบ)`
-      )
-    )
-      return;
-    setCopyingFrom(true);
-    try {
-      const prevReports = await listMonthlyReports(clientId, prevPeriod);
-      if (!prevReports.length) {
-        alert(`ไม่พบรายงานของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
-        return;
-      }
-      const source = prevReports[prevReports.length - 1];
-      const inserted = await copyReportToNewIssue(source.id, clientId, period);
-      if (!inserted.length) {
-        alert(`ไม่พบรายการของ ${periodToThai(prevPeriod)} สำหรับลูกค้านี้`);
-        return;
-      }
-      const rows = await listMonthlyReports(clientId, period);
-      setReports(rows);
-      if (rows.length) setActiveReportId(rows[rows.length - 1].id);
-      inserted.forEach((f) => {
-        rememberFormCode(f.form_code);
-        if (f.payment_method) rememberPaymentMethod(f.payment_method);
-      });
-    } catch (err) {
-      alert(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
-    } finally {
-      setCopyingFrom(false);
     }
   }
 
@@ -1623,57 +1583,41 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <h1 className="text-lg font-bold">รายงานรายเดือน</h1>
-        <div className="flex items-center gap-2">
-          <button className="btn px-2.5" onClick={() => setPeriod((p) => shiftPeriod(p, -1))}>
+        <div className="flex items-center gap-1">
+          <button
+            className="btn px-2.5"
+            onClick={() => setPeriod((p) => shiftPeriod(p, -1))}
+            aria-label="เดือนก่อนหน้า"
+          >
             ←
           </button>
-          <input
-            type="month"
-            className="input w-auto"
-            value={period}
-            onChange={(e) => e.target.value && setPeriod(e.target.value)}
-          />
-          <button className="btn px-2.5" onClick={() => setPeriod((p) => shiftPeriod(p, 1))}>
+          <label
+            className="relative inline-flex cursor-pointer items-center rounded-lg px-2 py-0.5 hover:bg-neutral-100"
+            title="เลือกเดือน"
+          >
+            <span className="text-xl font-bold tracking-tight text-neutral-900 sm:text-2xl">
+              {periodToThai(period)}
+            </span>
+            <input
+              type="month"
+              value={period}
+              onChange={(e) => e.target.value && setPeriod(e.target.value)}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              aria-label="เลือกเดือน"
+            />
+          </label>
+          <button
+            className="btn px-2.5"
+            onClick={() => setPeriod((p) => shiftPeriod(p, 1))}
+            aria-label="เดือนถัดไป"
+          >
             →
           </button>
-          <select
-            className="input w-auto !py-1 text-xs"
-            value={copyOffset}
-            onChange={(e) => setCopyOffset(Number(e.target.value))}
-            title="เลือกเดือนต้นทางที่จะคัดลอก"
-            aria-label="เลือกเดือนต้นทางที่จะคัดลอก"
-            disabled={!clientId || copyingFrom}
-          >
-            {[1, 2, 3].map((n) => (
-              <option key={n} value={n}>
-                {periodToThai(shiftPeriod(period, -n))}
-              </option>
-            ))}
-          </select>
           <button
-            className="btn px-2.5"
-            title="คัดลอกรายการจากเดือนที่เลือก"
-            aria-label="คัดลอกรายการจากเดือนที่เลือก"
-            onClick={copyFromPastMonth}
-            disabled={!clientId || copyingFrom}
-          >
-            {copyingFrom ? <SpinnerIcon /> : <CopyIcon />}
-          </button>
-          <button
-            className="btn px-2.5"
-            title={`คัดลอกจากรอบล่าสุด (${reports[reports.length - 1]?.label ?? "ครั้งที่ 1"}) เป็นรอบใหม่`}
-            aria-label="คัดลอกจากรอบล่าสุดเป็นรอบใหม่"
-            onClick={copyLastRound}
-            disabled={!clientId || copyingFrom || !reports.length}
-          >
-            {copyingFrom ? <SpinnerIcon /> : <CopyLastIcon />}
-            <span className="ml-1 hidden sm:inline">คัดลอกรอบล่าสุด</span>
-          </button>
-          <button
-            className="btn px-2.5"
+            className="btn ml-1 px-2.5"
             title="ตั้งค่ารายงาน (โลโก้บริษัท)"
             aria-label="ตั้งค่ารายงาน"
             onClick={() => setShowSettings(true)}
@@ -1726,17 +1670,37 @@ export default function ReportsPage() {
         )}
       </div>
 
+      {status && (
+        <p className="text-xs font-medium text-green-700">{status}</p>
+      )}
+
       {!clientId ? (
         <p className="text-sm text-neutral-500">
           เลือกลูกค้าและเดือนเพื่อจัดทำรายการและสร้างรายงาน PDF
         </p>
       ) : (
-        <>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+          <div className="min-w-0 space-y-6">
+          <WorkflowStepper
+            filled={filings.length > 0}
+            issued={reportLocked}
+            delivered={Boolean(share)}
+          />
           <section className="max-w-4xl">
             <div className="card space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm font-medium">รอบรายงาน</span>
                 <span className="inline-flex items-center gap-1">
+                  <button
+                    className="btn text-xs"
+                    title={`คัดลอกจากรอบล่าสุด (${reports[reports.length - 1]?.label ?? "ครั้งที่ 1"}) เป็นรอบใหม่`}
+                    aria-label="คัดลอกจากรอบล่าสุดเป็นรอบใหม่"
+                    onClick={copyLastRound}
+                    disabled={reportBusy || copyingFrom || !reports.length}
+                  >
+                    {copyingFrom ? <SpinnerIcon /> : <CopyLastIcon />}
+                    <span className="ml-1 hidden sm:inline">คัดลอกรอบล่าสุด</span>
+                  </button>
                   <input
                     type="number"
                     min="1"
@@ -2206,134 +2170,12 @@ export default function ReportsPage() {
             </div>
           </section>
 
-          {Boolean(filings.length) && (
-            <section className="max-w-4xl">
-              <div className="card flex flex-wrap items-center justify-between gap-3">
-                <div className="text-sm">
-                  <span className="font-medium">
-                    ปก {filings.length} รายการ + เอกสาร {docs.length} ไฟล์
-                  </span>
-                  <div className="text-xs text-neutral-500">
-                    ยอดรวม {fmtMoney(total)} บาท
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {status && (
-                    <span className="text-xs text-green-700">{status}</span>
-                  )}
-                  <button
-                    className="btn"
-                    onClick={previewCover}
-                    disabled={previewBusy || generating}
-                  >
-                    {previewBusy ? "กำลังสร้างตัวอย่าง..." : "ดูตัวอย่างปก"}
-                  </button>
-                  <button
-                    className="btn-primary"
-                    onClick={generatePdf}
-                    disabled={generating}
-                  >
-                    {generating ? "กำลังสร้าง..." : "ดาวน์โหลด PDF"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="card mt-3 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium">ลิงก์แชร์ให้ลูกค้า</span>
-                  {!reportLocked && (
-                    <span className="text-xs text-neutral-500">
-                      (ต้องออกรายงานก่อน)
-                    </span>
-                  )}
-                  {share && (
-                    <button
-                      className="btn text-xs"
-                      onClick={revokeShareLink}
-                      disabled={shareBusy}
-                    >
-                      ยกเลิก
-                    </button>
-                  )}
-                  <button
-                    className="btn-primary ml-auto text-xs"
-                    onClick={
-                      share
-                        ? async () => {
-                            await navigator.clipboard.writeText(share.url).catch(() => undefined);
-                            setStatus("คัดลอกลิงก์แล้ว");
-                          }
-                        : createShareLink
-                    }
-                    disabled={shareBusy || (!share && !reportLocked)}
-                  >
-                    {shareBusy
-                      ? "กำลังดำเนินการ..."
-                      : share
-                        ? "คัดลอกลิงก์"
-                        : "สร้างลิงก์แชร์ (7 วัน)"}
-                  </button>
-                </div>
-                {share ? (
-                  <div className="space-y-1 text-xs">
-                    <div className="break-all font-mono text-neutral-700">
-                      {share.url}
-                    </div>
-                    <div className="text-neutral-500">
-                      หมดอายุ{" "}
-                      {share.expiresAt
-                        ? new Date(share.expiresAt).toLocaleDateString("th-TH")
-                        : "-"}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-neutral-500">
-                    ส่งลิงก์นี้ให้ลูกค้าทาง LINE เพื่อดูรายการ ชำระเงิน และดาวน์โหลด PDF —
-                    ลูกค้าต้องกรอกเลขท้าย 4 หลักของเลขประจำตัวผู้เสียภาษีเพื่อเปิดลิงก์
-                    (ลิงก์ใช้ได้ 7 วัน)
-                  </p>
-                )}
-              </div>
-
-              <div className="card mt-3 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium">ส่งอีเมลถึงลูกค้า</span>
-                  {emailQuota && (
-                    <span className="text-xs text-neutral-500">
-                      คงเหลือเดือนนี้ {emailQuota.remaining}/{emailQuota.limit} ฉบับ
-                    </span>
-                  )}
-                  <button
-                    className="btn-primary ml-auto text-xs"
-                    onClick={sendReportEmail}
-                    disabled={
-                      emailBusy ||
-                      !reportLocked ||
-                      !selectedClient?.email ||
-                      (emailQuota ? emailQuota.remaining <= 0 : false)
-                    }
-                  >
-                    {emailBusy ? "กำลังส่ง..." : "ส่งอีเมลรายงาน"}
-                  </button>
-                </div>
-                {selectedClient?.email ? (
-                  <p className="text-xs text-neutral-500">
-                    ส่งไปที่ <span className="font-mono">{selectedClient.email}</span> —
-                    แนบไฟล์ PDF พร้อมลิงก์เปิดดูออนไลน์
-                  </p>
-                ) : (
-                  <p className="text-xs text-neutral-500">
-                    ลูกค้ายังไม่มีอีเมล — กรุณาเพิ่มที่หน้าลูกค้าก่อน
-                  </p>
-                )}
-              </div>
-            </section>
-          )}
-
           {activeReportId && (
-            <section className="max-w-4xl space-y-2">
-              <h2 className="font-medium">ประวัติไฟล์รายงาน</h2>
-              <div className="overflow-x-auto">
+            <details className="card">
+              <summary className="cursor-pointer text-sm font-medium">
+                ประวัติไฟล์รายงาน ({reportFiles.length})
+              </summary>
+              <div className="mt-3 overflow-x-auto">
                 <table className="table-base w-full min-w-[620px]">
                   <thead>
                     <tr>
@@ -2375,7 +2217,7 @@ export default function ReportsPage() {
                   </tbody>
                 </table>
               </div>
-            </section>
+            </details>
           )}
 
           <section className="max-w-4xl">
@@ -2558,7 +2400,133 @@ export default function ReportsPage() {
               </div>
             )}
           </section>
-        </>
+          </div>
+
+          {Boolean(filings.length) && (
+            <aside className="space-y-4 lg:sticky lg:top-24">
+              <section className="card space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium">สรุป & การส่ง</span>
+                  <span className="text-xs text-neutral-500">
+                    {activeReport?.label ?? ""}
+                    {activeReport?.report_no ? ` · ${activeReport.report_no}` : ""}
+                  </span>
+                </div>
+                <div className="text-2xl font-bold">
+                  {fmtMoney(total)}
+                  <span className="ml-1 text-sm font-normal text-neutral-500">บาท</span>
+                </div>
+                <div className="text-xs text-neutral-500">
+                  {filings.length} รายการ · เอกสาร {docs.length} ไฟล์
+                </div>
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    className="btn-primary"
+                    onClick={generatePdf}
+                    disabled={generating}
+                  >
+                    {generating ? "กำลังสร้าง..." : "ดาวน์โหลด PDF"}
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={previewCover}
+                    disabled={previewBusy || generating}
+                  >
+                    {previewBusy ? "กำลังสร้างตัวอย่าง..." : "ดูตัวอย่างปก"}
+                  </button>
+                </div>
+              </section>
+
+              <section className="card space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">ลิงก์แชร์ให้ลูกค้า</span>
+                  {!reportLocked && (
+                    <span className="text-xs text-neutral-500">(ต้องออกรายงานก่อน)</span>
+                  )}
+                  {share && (
+                    <button
+                      className="btn text-xs"
+                      onClick={revokeShareLink}
+                      disabled={shareBusy}
+                    >
+                      ยกเลิก
+                    </button>
+                  )}
+                  <button
+                    className="btn-primary ml-auto text-xs"
+                    onClick={
+                      share
+                        ? async () => {
+                            await navigator.clipboard
+                              .writeText(share.url)
+                              .catch(() => undefined);
+                            setStatus("คัดลอกลิงก์แล้ว");
+                          }
+                        : createShareLink
+                    }
+                    disabled={shareBusy || (!share && !reportLocked)}
+                  >
+                    {shareBusy
+                      ? "กำลังดำเนินการ..."
+                      : share
+                        ? "คัดลอกลิงก์"
+                        : "สร้างลิงก์แชร์ (7 วัน)"}
+                  </button>
+                </div>
+                {share ? (
+                  <div className="space-y-1 text-xs">
+                    <div className="break-all font-mono text-neutral-700">{share.url}</div>
+                    <div className="text-neutral-500">
+                      หมดอายุ{" "}
+                      {share.expiresAt
+                        ? new Date(share.expiresAt).toLocaleDateString("th-TH")
+                        : "-"}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-neutral-500">
+                    ส่งลิงก์นี้ให้ลูกค้าทาง LINE เพื่อดูรายการ ชำระเงิน และดาวน์โหลด PDF —
+                    ลูกค้าต้องกรอกเลขท้าย 4 หลักของเลขประจำตัวผู้เสียภาษีเพื่อเปิดลิงก์
+                    (ลิงก์ใช้ได้ 7 วัน)
+                  </p>
+                )}
+              </section>
+
+              <section className="card space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">ส่งอีเมลถึงลูกค้า</span>
+                  {emailQuota && (
+                    <span className="text-xs text-neutral-500">
+                      คงเหลือเดือนนี้ {emailQuota.remaining}/{emailQuota.limit} ฉบับ
+                    </span>
+                  )}
+                  <button
+                    className="btn-primary ml-auto text-xs"
+                    onClick={sendReportEmail}
+                    disabled={
+                      emailBusy ||
+                      !reportLocked ||
+                      !selectedClient?.email ||
+                      (emailQuota ? emailQuota.remaining <= 0 : false)
+                    }
+                  >
+                    {emailBusy ? "กำลังส่ง..." : "ส่งอีเมลรายงาน"}
+                  </button>
+                </div>
+                {selectedClient?.email ? (
+                  <p className="text-xs text-neutral-500">
+                    แนบไฟล์ PDF (ฉบับเต็ม) ไปที่{" "}
+                    <span className="font-mono">{selectedClient.email}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-neutral-500">
+                    ลูกค้ายังไม่มีอีเมล — กรุณาเพิ่มที่หน้าลูกค้าก่อน
+                  </p>
+                )}
+              </section>
+            </aside>
+          )}
+        </div>
       )}
 
       {showSettings && (
@@ -3221,21 +3189,47 @@ function FileThumb({
   );
 }
 
-function CopyIcon() {
+function WorkflowStepper({
+  filled,
+  issued,
+  delivered,
+}: {
+  filled: boolean;
+  issued: boolean;
+  delivered: boolean;
+}) {
+  const steps = [
+    { label: "กรอกข้อมูล", done: filled },
+    { label: "ออกรายงาน", done: issued },
+    { label: "ส่งให้ลูกค้า", done: delivered },
+    { label: "ติดตามการชำระ", done: false },
+  ];
+  const activeIndex = steps.findIndex((s) => !s.done);
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="9" y="9" width="13" height="13" rx="2" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-    </svg>
+    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      {steps.map((s, i) => {
+        const active = i === activeIndex;
+        return (
+          <li key={s.label} className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${
+                s.done
+                  ? "bg-emerald-50 text-emerald-700"
+                  : active
+                    ? "bg-neutral-900 text-white"
+                    : "bg-neutral-100 text-neutral-500"
+              }`}
+            >
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white/20 text-[10px]">
+                {s.done ? "✓" : i + 1}
+              </span>
+              {s.label}
+            </span>
+            {i < steps.length - 1 && <span className="text-neutral-300">›</span>}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
