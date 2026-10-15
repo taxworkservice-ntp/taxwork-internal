@@ -21,6 +21,7 @@ import {
   getAppSettings,
   getReportEmailQuota,
   getReportShare,
+  getRoundEmailCounts,
   revokeReportShareLink,
   deleteCustomPaymentMethod as deleteCustomPaymentMethodAction,
   issueMonthlyReport,
@@ -29,6 +30,7 @@ import {
   listCustomFormCodes,
   listCustomPaymentMethods,
   listMonthlyReports,
+  listReportEmails,
   listReportFiles,
   listReportDocuments,
   loadFilings as loadFilingsAction,
@@ -48,6 +50,7 @@ import {
   type Filing,
   type MonthlyReport,
   type ReportDocument as SavedDocument,
+  type ReportEmailLog,
   type ReportEmailQuota,
   type ReportFile,
   type ReportShare,
@@ -181,6 +184,8 @@ export default function ReportsPage() {
   const [shareBusy, setShareBusy] = useState(false);
   const [emailQuota, setEmailQuota] = useState<ReportEmailQuota | null>(null);
   const [emailBusy, setEmailBusy] = useState(false);
+  const [emailLogs, setEmailLogs] = useState<ReportEmailLog[]>([]);
+  const [roundEmailCounts, setRoundEmailCounts] = useState<Record<string, number>>({});
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const loadSeq = useRef(0);
   const ensuredRoundsRef = useRef<string | null>(null);
@@ -555,6 +560,49 @@ export default function ReportsPage() {
   useEffect(() => {
     reloadEmailQuota();
   }, [reloadEmailQuota]);
+
+  const reloadEmailLogs = useCallback(async () => {
+    if (!activeReportId) {
+      setEmailLogs([]);
+      return;
+    }
+    try {
+      setEmailLogs(await listReportEmails(activeReportId));
+    } catch {
+      setEmailLogs([]);
+    }
+  }, [activeReportId]);
+
+  useEffect(() => {
+    reloadEmailLogs();
+  }, [reloadEmailLogs]);
+
+  const reloadRoundEmailCounts = useCallback(async () => {
+    if (!clientId) {
+      setRoundEmailCounts({});
+      return;
+    }
+    try {
+      setRoundEmailCounts(await getRoundEmailCounts(clientId, period));
+    } catch {
+      setRoundEmailCounts({});
+    }
+  }, [clientId, period]);
+
+  useEffect(() => {
+    reloadRoundEmailCounts();
+  }, [reloadRoundEmailCounts]);
+
+  // Client-triggered sends happen on the client's schedule — refresh when the
+  // tab regains focus so staff see them without a manual reload.
+  useEffect(() => {
+    const onFocus = () => {
+      reloadEmailLogs();
+      reloadRoundEmailCounts();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reloadEmailLogs, reloadRoundEmailCounts]);
 
   const reloadBanks = useCallback(async () => {
     setBankAccounts(await listBankAccounts());
@@ -1495,6 +1543,8 @@ export default function ReportsPage() {
         `ส่งอีเมลถึง ${to} แล้ว (คงเหลือ ${data.remaining ?? remaining - 1} ฉบับ)`
       );
       await reloadEmailQuota();
+      await reloadEmailLogs();
+      await reloadRoundEmailCounts();
     } catch (error) {
       alert(`ส่งอีเมลไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     } finally {
@@ -1793,6 +1843,11 @@ export default function ReportsPage() {
                               />
                               {issued ? "ออกแล้ว" : "ฉบับร่าง"}
                               {r.report_no ? <span className="truncate">· {r.report_no}</span> : null}
+                              {roundEmailCounts[r.id] ? (
+                                <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                                  ✉ {roundEmailCounts[r.id]}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -2522,6 +2577,51 @@ export default function ReportsPage() {
                   <p className="text-xs text-neutral-500">
                     ลูกค้ายังไม่มีอีเมล — กรุณาเพิ่มที่หน้าลูกค้าก่อน
                   </p>
+                )}
+                {emailLogs.length > 0 && (
+                  <div className="space-y-1 border-t border-neutral-200 pt-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-neutral-500">
+                        ส่งล่าสุด:{" "}
+                        {emailLogs[0].sent_by === "client"
+                          ? "ลูกค้าขอสำเนา"
+                          : "เจ้าหน้าที่"}{" "}
+                        · {new Date(emailLogs[0].sent_at).toLocaleString("th-TH")}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-xs text-neutral-400 hover:text-neutral-700"
+                        onClick={reloadEmailLogs}
+                      >
+                        รีเฟรช
+                      </button>
+                    </div>
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-neutral-500">
+                        ประวัติการส่งอีเมล ({emailLogs.length})
+                      </summary>
+                      <ul className="mt-1 space-y-1">
+                        {emailLogs.map((log) => (
+                          <li key={log.id} className="flex items-start justify-between gap-2">
+                            <span
+                              className={
+                                log.status === "sent" ? "text-emerald-600" : "text-red-600"
+                              }
+                            >
+                              {log.status === "sent" ? "✓" : "✗"}{" "}
+                              {log.sent_by === "client" ? "ลูกค้าขอสำเนา" : "เจ้าหน้าที่"}
+                              {log.status === "failed" && log.error
+                                ? ` — ${log.error}`
+                                : ""}
+                            </span>
+                            <span className="shrink-0 text-neutral-400">
+                              {new Date(log.sent_at).toLocaleString("th-TH")}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </div>
                 )}
               </section>
             </aside>

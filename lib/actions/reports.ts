@@ -1047,6 +1047,70 @@ export async function getReportEmailQuota(): Promise<ReportEmailQuota> {
   return readReportEmailQuota();
 }
 
+export type ReportEmailLog = {
+  id: string;
+  to_email: string;
+  status: "sent" | "failed";
+  /** Staff email, or "client" when the client requested the archive copy. */
+  sent_by: string | null;
+  sent_at: string;
+  error: string | null;
+};
+
+/** Recent delivery attempts for a round (most recent first). */
+export async function listReportEmails(reportId: string): Promise<ReportEmailLog[]> {
+  await requireUser();
+  try {
+    const rows = (await sql`
+      select id, to_email, status, sent_by, sent_at, error
+      from report_emails
+      where report_id=${reportId}
+      order by sent_at desc
+      limit 20
+    `) as {
+      id: string;
+      to_email: string;
+      status: string;
+      sent_by: string | null;
+      sent_at: string;
+      error: string | null;
+    }[];
+    return rows.map((r) => ({
+      id: r.id,
+      to_email: r.to_email,
+      status: r.status === "failed" ? "failed" : "sent",
+      sent_by: r.sent_by,
+      sent_at: typeof r.sent_at === "string" ? r.sent_at : new Date(r.sent_at).toISOString(),
+      error: r.error,
+    }));
+  } catch {
+    // Table not migrated yet.
+    return [];
+  }
+}
+
+/** Successful-email counts per round for a client+month (for the round chips). */
+export async function getRoundEmailCounts(
+  clientId: string,
+  period: string
+): Promise<Record<string, number>> {
+  await requireUser();
+  try {
+    const rows = (await sql`
+      select e.report_id, count(*)::int as c
+      from report_emails e
+      join monthly_reports r on r.id = e.report_id
+      where r.client_id=${clientId} and r.period_label=${period} and e.status='sent'
+      group by e.report_id
+    `) as { report_id: string; c: number }[];
+    const map: Record<string, number> = {};
+    for (const r of rows) map[r.report_id] = Number(r.c);
+    return map;
+  } catch {
+    return {};
+  }
+}
+
 /** Public: resolve a share token to a report id, respecting expiry/revoke. */
 /** Public: resolve a share token (optionally slug-prefixed) to a report. */
 export async function resolveShareToken(
