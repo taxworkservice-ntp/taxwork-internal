@@ -57,12 +57,13 @@ export default async function Image({
     loadSharePreviewFields(key),
   ]);
 
-  // Clean, professional image: period + round only — never client name/amount.
+  // Clean, professional image: period only — no round label, client, or amount.
+  // (The Thai round label like "ครั้งที่ 2" has stacked marks that Satori
+  // mis-renders; it stays in the og:title/description where LINE shapes it.)
   const preview = buildSharePreview({
     firmName: settings.firmName,
     detail: "period",
     periodTh: fields?.periodTh,
-    label: fields?.label,
   });
 
   const firm = settings.firmName?.trim() || "Taxwork";
