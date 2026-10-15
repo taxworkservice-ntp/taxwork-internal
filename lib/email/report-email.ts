@@ -2,28 +2,25 @@
  * Pure builder for the client-facing report email. No server-only imports so
  * it can be unit-tested in isolation. All dynamic strings are HTML-escaped.
  *
- * Kept deliberately small (no inline/base64 images) so Gmail doesn't clip the
- * message; the report travels as a PDF attachment plus a share link.
+ * This is an *archival delivery* note: the report travels as a PDF attachment
+ * and the body just identifies it (reference block). Deliberately small — no
+ * inline/base64 images, buttons, or links — so Gmail doesn't clip it.
  */
 
 import { formatBaht } from "@/lib/report-format";
 
 /** Hard cap on successful report emails per calendar month. */
-export const REPORT_EMAIL_MONTHLY_LIMIT = 30;
-
-const DEFAULT_BRAND_COLOR = "#111827";
+export const REPORT_EMAIL_MONTHLY_LIMIT = 200;
 
 export type ReportEmailInput = {
   firmName: string;
-  brandColor: string | null;
   clientName: string;
   periodTh: string;
+  /** Round label as stored (e.g. "ครั้งที่ 1"), used verbatim. */
+  reportLabel: string | null;
   reportNo: string | null;
   /** Total amount due for the round; hidden when <= 0. */
   total: number;
-  shareUrl: string;
-  /** Name of the attached PDF, shown in the body. */
-  attachmentName: string;
 };
 
 export type ReportEmail = { subject: string; html: string; text: string };
@@ -37,25 +34,29 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function normalizeColor(value: string | null): string {
-  const v = value?.trim();
-  return v && /^#?[0-9a-fA-F]{6}$/.test(v) ? (v.startsWith("#") ? v : `#${v}`) : DEFAULT_BRAND_COLOR;
-}
-
 export function buildReportEmail(input: ReportEmailInput): ReportEmail {
   const firm = input.firmName.trim() || "Taxwork";
   const client = input.clientName.trim() || "ลูกค้า";
-  const color = normalizeColor(input.brandColor);
+  const label = input.reportLabel?.trim() || null;
   const reportNo = input.reportNo?.trim() || null;
+  const period = input.periodTh.trim();
 
-  const subject = reportNo
-    ? `${firm} — รายงานสรุปการนำส่งภาษีประจำเดือน ${input.periodTh} (${reportNo})`
-    : `${firm} — รายงานสรุปการนำส่งภาษีประจำเดือน ${input.periodTh}`;
+  const subject = `${firm} — รายงานสรุปการนำส่งภาษี ${period}${label ? ` ${label}` : ""}${
+    reportNo ? ` (${reportNo})` : ""
+  }`;
 
-  const showAmount = Number.isFinite(input.total) && input.total > 0;
-  const amountLine = showAmount
-    ? `<p style="margin:0 0 16px;">ยอดนำส่งรวม <strong>฿${formatBaht(input.total)}</strong></p>`
-    : "";
+  const showTotal = Number.isFinite(input.total) && input.total > 0;
+  const refRow = (caption: string, value: string) =>
+    `<div style="margin:0 0 3px;font-size:13px;color:#6b7280;">${escapeHtml(
+      caption
+    )} <span style="color:#111827;">${escapeHtml(value)}</span></div>`;
+
+  const refBlock = `<div style="margin:0 0 20px;padding:14px 16px;background:#f9fafb;border:1px solid #eef0f2;border-radius:8px;">
+${reportNo ? refRow("เลขอ้างอิง:", reportNo) : ""}
+${refRow("รอบระยะเวลา:", period)}
+${label ? `<div style="margin:0 0 3px;font-size:13px;color:#6b7280;">${escapeHtml(label)}</div>` : ""}
+${showTotal ? refRow("ยอดนำส่งรวม:", `฿${formatBaht(input.total)}`) : ""}
+</div>`;
 
   const html = `<!doctype html>
 <html lang="th">
@@ -67,44 +68,33 @@ export function buildReportEmail(input: ReportEmailInput): ReportEmail {
 <body style="margin:0;padding:24px;font-family:'Sarabun','Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;line-height:1.7;color:#111827;">
   <p style="margin:0 0 16px;font-size:17px;font-weight:600;">เรียน ${escapeHtml(client)}</p>
   <p style="margin:0 0 16px;color:#374151;">
-    ทาง ${escapeHtml(firm)} ได้จัดทำรายงานสรุปการนำส่งภาษีประจำเดือน ${escapeHtml(
-      input.periodTh
-    )} เรียบร้อยแล้ว รายละเอียดตามไฟล์ที่แนบมากับอีเมลนี้
+    รายงานสรุปการนำส่งภาษีประจำเดือน ${escapeHtml(
+      period
+    )} ของท่านได้จัดทำเรียบร้อยแล้ว เอกสารฉบับเต็มแนบมากับอีเมลนี้ เพื่อใช้ในการจัดเก็บและตรวจสอบ
   </p>
-  ${amountLine}
-  <p style="margin:0 0 20px;">
-    <a href="${escapeHtml(input.shareUrl)}" target="_blank"
-       style="display:inline-block;padding:11px 24px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:6px;background:${color};">
-      เปิดดูรายงานออนไลน์
-    </a>
-  </p>
-  <p style="margin:0 0 20px;color:#6b7280;font-size:13px;">เอกสารแนบ: ${escapeHtml(
-    input.attachmentName
-  )}</p>
-  <p style="margin:0 0 24px;color:#9ca3af;font-size:12px;">
-    ลิงก์มีอายุ 7 วัน และต้องยืนยันตัวตนด้วยเลขท้าย 4 หลักของเลขประจำตัวผู้เสียภาษี
-    หากลิงก์หมดอายุ กรุณาติดต่อเจ้าหน้าที่
-  </p>
+  ${refBlock}
   <p style="margin:0 0 4px;">จึงเรียนมาเพื่อโปรดทราบ</p>
-  <p style="margin:0;font-weight:600;">${escapeHtml(firm)}</p>
+  <p style="margin:0 0 20px;font-weight:600;">${escapeHtml(firm)}</p>
+  <p style="margin:0;color:#9ca3af;font-size:12px;">อีเมลฉบับนี้ส่งโดยระบบอัตโนมัติ กรุณาเก็บไว้เป็นหลักฐาน</p>
 </body>
 </html>`;
 
   const textLines = [
     `เรียน ${client}`,
     "",
-    `ทาง ${firm} ได้จัดทำรายงานสรุปการนำส่งภาษีประจำเดือน ${input.periodTh} เรียบร้อยแล้ว รายละเอียดตามไฟล์ที่แนบมากับอีเมลนี้`,
+    `รายงานสรุปการนำส่งภาษีประจำเดือน ${period} ของท่านได้จัดทำเรียบร้อยแล้ว เอกสารฉบับเต็มแนบมากับอีเมลนี้ เพื่อใช้ในการจัดเก็บและตรวจสอบ`,
     "",
   ];
-  if (showAmount) textLines.push(`ยอดนำส่งรวม ฿${formatBaht(input.total)}`, "");
+  if (reportNo) textLines.push(`เลขอ้างอิง: ${reportNo}`);
+  textLines.push(`รอบระยะเวลา: ${period}`);
+  if (label) textLines.push(label);
+  if (showTotal) textLines.push(`ยอดนำส่งรวม: ฿${formatBaht(input.total)}`);
   textLines.push(
-    `เปิดดูรายงานออนไลน์: ${input.shareUrl}`,
-    "",
-    `เอกสารแนบ: ${input.attachmentName}`,
-    "(ลิงก์มีอายุ 7 วัน และต้องยืนยันตัวตนด้วยเลขท้าย 4 หลักของเลขประจำตัวผู้เสียภาษี)",
     "",
     "จึงเรียนมาเพื่อโปรดทราบ",
-    firm
+    firm,
+    "",
+    "อีเมลฉบับนี้ส่งโดยระบบอัตโนมัติ กรุณาเก็บไว้เป็นหลักฐาน"
   );
 
   return { subject, html, text: textLines.join("\n") };

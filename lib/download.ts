@@ -1,3 +1,18 @@
+/**
+ * Strip characters that are illegal in filenames / the Content-Disposition
+ * header while keeping Unicode (Thai) intact. Collapses whitespace.
+ */
+export function sanitizeFileName(name: string): string {
+  const cleaned = name
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/-\s*-+/g, "-")
+    .trim()
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .trim();
+  return (cleaned || "report").slice(0, 120);
+}
+
 /** ASCII-safe fallback filename for the Content-Disposition header. */
 export function asciiFileName(name: string): string {
   const cleaned = name

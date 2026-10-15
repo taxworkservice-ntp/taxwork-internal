@@ -18,6 +18,10 @@ const nextConfig: NextConfig = {
       "./public/fonts/**",
       "./node_modules/@sparticuz/chromium/bin/**",
     ],
+    "/r/[token]/email": [
+      "./public/fonts/**",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
   },
 };
 

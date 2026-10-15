@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ReportModel } from "@/lib/report-model";
 import ShareDownloadButton from "./share-download";
+import ShareEmailButton from "./share-email";
 
 const THAI_MONTHS_FULL = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -248,12 +249,16 @@ export default function ShareView({
   fileName,
   token,
   expiresAt,
+  hasEmail,
+  maskedEmail,
 }: {
   model: ReportModel;
   hasPdf: boolean;
   fileName: string | null;
   token: string;
   expiresAt?: string | null;
+  hasEmail: boolean;
+  maskedEmail: string | null;
 }) {
   const sections = buildSections(model);
   const grandTotal = sections.reduce((sum, s) => sum + s.amount, 0);
@@ -307,10 +312,10 @@ export default function ShareView({
           </svg>
           <div className="text-xs leading-relaxed">
             <div className="text-sm font-semibold">
-              อย่าลืมดาวน์โหลดรายงานฉบับเต็ม (PDF)
+              อย่าลืมเก็บรายงานฉบับเต็ม (PDF)
             </div>
             <p className="mt-0.5 text-amber-700">
-              เก็บไว้ตรวจสอบและเป็นหลักฐานการชำระเงิน — ปุ่มดาวน์โหลดอยู่ท้ายรายการ
+              เก็บไว้ตรวจสอบและเป็นหลักฐานการชำระเงิน — ดาวน์โหลดหรือส่งเข้าอีเมลของท่านได้ที่ท้ายรายการ
             </p>
           </div>
         </div>
@@ -565,16 +570,27 @@ export default function ShareView({
         )}
       </section>
 
-      {/* Download the full report (after the total, where attention rests) */}
-      {hasPdf && (
-        <div className="space-y-1">
-          <ShareDownloadButton pdfUrl={`/r/${token}/pdf`} fileName={fileName} />
-          {expiryLabel && (
-            <p className="text-center text-xs text-neutral-400">
-              ลิงก์นี้ใช้ได้ถึง {expiryLabel}
-            </p>
-          )}
-        </div>
+      {/* Receive the document: download + optional email (after the total) */}
+      {(hasPdf || hasEmail) && (
+        <section className="space-y-2">
+          <SectionTitle>รับเอกสาร</SectionTitle>
+          <div className="space-y-1">
+            {hasPdf && (
+              <ShareDownloadButton pdfUrl={`/r/${token}/pdf`} fileName={fileName} />
+            )}
+            {hasEmail && maskedEmail && (
+              <ShareEmailButton
+                emailUrl={`/r/${token}/email`}
+                maskedEmail={maskedEmail}
+              />
+            )}
+            {expiryLabel && (
+              <p className="text-center text-xs text-neutral-400">
+                ลิงก์นี้ใช้ได้ถึง {expiryLabel}
+              </p>
+            )}
+          </div>
+        </section>
       )}
 
       <footer className="flex flex-col items-center gap-1 pt-4">

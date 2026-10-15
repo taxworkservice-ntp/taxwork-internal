@@ -35,6 +35,13 @@ async function isShareVerified(token: string): Promise<boolean> {
   return verifyShareAccess(value, key);
 }
 
+/** Mask an email for display: keep the first character + the domain. */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return "•••";
+  return `${local.slice(0, 1)}•••@${domain}`;
+}
+
 function ExpiredLink() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-2 p-6 text-center">
@@ -132,14 +139,23 @@ export default async function SharePage({
   if (!loaded) return <ExpiredLink />;
 
   const file = await latestReportFile(loaded.resolved.reportId);
+  const clientEmail = loaded.model.client.email?.trim() || null;
+
+  // Never ship the client's real email to the browser — pass a masked hint only.
+  const safeModel = {
+    ...loaded.model,
+    client: { ...loaded.model.client, email: null },
+  };
 
   return (
     <ShareView
-      model={loaded.model}
+      model={safeModel}
       hasPdf={Boolean(file)}
       fileName={file?.file_name ?? null}
       token={token}
       expiresAt={loaded.resolved.expiresAt}
+      hasEmail={Boolean(clientEmail)}
+      maskedEmail={clientEmail ? maskEmail(clientEmail) : null}
     />
   );
 }
