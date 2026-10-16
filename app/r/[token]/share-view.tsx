@@ -131,6 +131,39 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function AccountNoInline({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="text-right leading-tight">
+        <span className="block text-[10px] uppercase tracking-wide text-neutral-400">
+          เลขที่บัญชี
+        </span>
+        <span className="font-mono text-sm text-neutral-800">{value}</span>
+      </span>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(value);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          } catch {
+            // clipboard unavailable
+          }
+        }}
+        className={`shrink-0 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+          copied
+            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+            : "border-neutral-300 bg-white text-neutral-700 active:bg-neutral-100"
+        }`}
+      >
+        {copied ? "คัดลอกแล้ว" : "คัดลอก"}
+      </button>
+    </span>
+  );
+}
+
 function AmountCopy({ amount }: { amount: number }) {
   const [copied, setCopied] = useState(false);
   const text = amount.toFixed(2);
@@ -486,45 +519,38 @@ export default function ShareView({
                         <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                           วิธีชำระ
                         </div>
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 text-sm font-medium text-neutral-800">
-                            {s.bankName || (hasQr ? s.paymentMethod?.trim() || "ชำระผ่าน QR" : "")}
+                            {s.bankName
+                              ? `${s.bankName}${
+                                  s.accountName ? ` · ชื่อบัญชี ${s.accountName}` : ""
+                                }`
+                              : hasQr
+                                ? s.paymentMethod?.trim() || "ชำระผ่าน QR"
+                                : ""}
                           </div>
-                          <div className="flex shrink-0 flex-col items-end gap-1">
+                          <div className="flex shrink-0 items-center gap-2">
                             {hasQr && !hasBank && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                                 QR code
                               </span>
                             )}
-                            {s.bankLogos.length > 0 && (
-                              <div className="flex flex-col items-end gap-1">
-                                {s.bankLogos.map((logo, li) => (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    key={li}
-                                    src={logo}
-                                    alt=""
-                                    className="h-5 max-w-[88px] rounded object-contain"
-                                  />
-                                ))}
-                              </div>
-                            )}
+                            {s.bankLogos.map((logo, li) => (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                key={li}
+                                src={logo}
+                                alt=""
+                                className="h-5 max-w-[72px] rounded object-contain"
+                              />
+                            ))}
+                            {s.accountNo && <AccountNoInline value={s.accountNo} />}
                           </div>
                         </div>
-                        {s.accountName && (
-                          <div className="text-xs text-neutral-500">
-                            ชื่อบัญชี {s.accountName}
-                          </div>
-                        )}
-                        {(s.accountNo || s.promptpay) && (
+                        {s.promptpay && (
                           <div className="mt-1 divide-y divide-neutral-100">
-                            {s.accountNo && (
-                              <CopyRow label="เลขที่บัญชี" value={s.accountNo} />
-                            )}
-                            {s.promptpay && (
-                              <CopyRow label="พร้อมเพย์" value={s.promptpay} />
-                            )}
+                            <CopyRow label="พร้อมเพย์" value={s.promptpay} />
                           </div>
                         )}
                         {hasQr && (

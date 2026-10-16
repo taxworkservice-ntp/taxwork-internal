@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ReportModel, ReportModelFiling } from "@/lib/report-model";
+import type { ReportModel, ReportModelBank, ReportModelFiling } from "@/lib/report-model";
 
 /**
  * Server-side HTML template for the professional report PDF (rendered to PDF
@@ -82,27 +82,47 @@ function paymentRef(model: ReportModel): string {
 
 function payLine(f: ReportModelFiling): string | null {
   const custom = f.payment_method?.trim();
-  if (custom) return custom;
-  return null;
+  return custom || null;
 }
 
-function bankLine1(f: ReportModelFiling): string | null {
-  const b = f.bank;
-  if (!b) return null;
-  return [b.bank_name, b.account_no ? `เลขที่บัญชี ${b.account_no}` : ""]
-    .filter(Boolean)
-    .join("  ·  ");
+/** Both bank logos (1 and 2), inline. */
+function bankLogoImgs(b: ReportModelBank): string {
+  const logos = [b.logoDataUri, b.logoBottomDataUri].filter(
+    (x): x is string => Boolean(x)
+  );
+  if (!logos.length) return "";
+  return `<span class="banklogos">${logos
+    .map((src) => `<img src="${src}" alt="" />`)
+    .join("")}</span>`;
 }
 
-function bankLine2(f: ReportModelFiling): string | null {
-  const b = f.bank;
-  if (!b) return null;
-  return [
-    b.account_name ? `ชื่อบัญชี ${b.account_name}` : "",
-    b.promptpay_id ? `พร้อมเพย์ ${b.promptpay_id}` : "",
-  ]
+/** Bank row: bank · account name (left), logos + เลขที่บัญชี (right). */
+function bankInfoRow(b: ReportModelBank): string {
+  const left = [b.bank_name, b.account_name ? `ชื่อบัญชี ${b.account_name}` : ""]
     .filter(Boolean)
     .join("  ·  ");
+  const right = `${bankLogoImgs(b)}${
+    b.account_no ? `<span class="acctno">เลขที่บัญชี ${escapeHtml(b.account_no)}</span>` : ""
+  }`;
+  if (!left && !right) return "";
+  return `<div class="payrow"><span class="payleft">${escapeHtml(
+    left
+  )}</span><span class="payright">${right}</span></div>`;
+}
+
+function renderPayBlock(f: ReportModelFiling): string {
+  const b = f.bank;
+  const custom = payLine(f);
+  if (!b && !custom) return "";
+  const extra: string[] = [];
+  if (b?.promptpay_id) extra.push(`พร้อมเพย์ ${b.promptpay_id}`);
+  if (custom) extra.push(custom);
+  return `<div class="divider"></div>
+    <div class="pay">
+      <span class="lbl">ช่องทางการชำระเงิน</span>
+      ${b ? bankInfoRow(b) : ""}
+      ${extra.map((l) => `<div class="payline">${escapeHtml(l)}</div>`).join("")}
+    </div>`;
 }
 
 function renderCard(f: ReportModelFiling, index: number): string {
@@ -110,28 +130,14 @@ function renderCard(f: ReportModelFiling, index: number): string {
   const desc = f.description?.trim();
   const amount = `${escapeHtml(fmtMoney(f.amount))} บาท`;
 
-  const l1 = bankLine1(f);
-  const l2 = bankLine2(f);
-  const custom = payLine(f);
-  const hasPay = Boolean(l1 || l2 || custom);
+  const payBlock = renderPayBlock(f);
   const qr = f.qrDataUri;
-  const hasBody = Boolean(desc || hasPay || qr);
+  const hasBody = Boolean(payBlock || qr || f.due_date);
 
   const bodyCol = `
     <div class="col">
-      ${desc ? `<div class="desc"><span class="lbl">รายละเอียด</span> ${escapeHtml(desc)}</div>` : ""}
       ${f.due_date ? `<div class="desc"><span class="lbl">กำหนดชำระ</span> ${escapeHtml(dateToThai(f.due_date))}</div>` : ""}
-      ${
-        hasPay || qr
-          ? `<div class="divider"></div>
-             <div class="pay">
-               <span class="lbl">ช่องทางการชำระเงิน</span>
-               ${l1 ? `<div class="payline">${escapeHtml(l1)}</div>` : ""}
-               ${l2 ? `<div class="payline">${escapeHtml(l2)}</div>` : ""}
-               ${custom ? `<div class="payline">${escapeHtml(custom)}</div>` : ""}
-             </div>`
-          : ""
-      }
+      ${payBlock}
     </div>`;
 
   const qrCol = qr
@@ -141,33 +147,44 @@ function renderCard(f: ReportModelFiling, index: number): string {
   return `
     <div class="card">
       <div class="head">
-        <div class="head-left"><span class="idx">รายการที่ ${index + 1}</span><span class="form">${form}</span></div>
+        <div class="head-left">
+          <span class="idx">รายการที่ ${index + 1}</span>
+          <span class="form">${form}</span>${desc ? `<span class="formdesc">(${escapeHtml(desc)})</span>` : ""}
+        </div>
         <div class="amt">${amount}</div>
       </div>
       ${hasBody ? `<div class="body">${bodyCol}${qrCol}</div>` : ""}
     </div>`;
 }
 
-function uniqueBanks(model: ReportModel) {
-  const seen = new Map<string, { key: string; label: string; qr: string | null; logo: string | null; lines: string[]; items: ReportModelFiling[] }>();
+type BankGroup = {
+  key: string;
+  bankName: string;
+  accountName: string;
+  accountNo: string;
+  promptpay: string | null;
+  logos: string[];
+  qr: string | null;
+  items: ReportModelFiling[];
+};
+
+function uniqueBanks(model: ReportModel): BankGroup[] {
+  const seen = new Map<string, BankGroup>();
   for (const f of model.filings) {
     if (!f.bank && !f.qrDataUri && !f.payment_method && !f.slips.length) continue;
     const key = f.bank?.id ?? `qr-${f.id}`;
     if (!seen.has(key)) {
       const b = f.bank;
-      const lines: string[] = [];
-      if (b) {
-        if (b.bank_name) lines.push(b.bank_name);
-        if (b.account_no) lines.push(`เลขที่บัญชี ${b.account_no}`);
-        if (b.account_name) lines.push(`ชื่อบัญชี ${b.account_name}`);
-        if (b.promptpay_id) lines.push(`พร้อมเพย์ ${b.promptpay_id}`);
-      }
       seen.set(key, {
         key,
-        label: b?.label ?? f.form_code ?? "QR",
+        bankName: b?.bank_name || b?.label || f.form_code || "QR",
+        accountName: b?.account_name || "",
+        accountNo: b?.account_no || "",
+        promptpay: b?.promptpay_id ?? null,
+        logos: [b?.logoDataUri, b?.logoBottomDataUri].filter(
+          (x): x is string => Boolean(x)
+        ),
         qr: b?.qrDataUri ?? null,
-        logo: b?.logoDataUri ?? b?.logoBottomDataUri ?? null,
-        lines,
         items: [],
       });
     }
@@ -189,7 +206,16 @@ function renderPaymentPage(
     slipPages?.get(slipId) ?? fallback ?? null;
   const blocks = groups
     .map((g) => {
-      const logo = g.logo ? `<img class="banklogo" src="${g.logo}" alt="" />` : "";
+      const bankLeft = [g.bankName, g.accountName ? `ชื่อบัญชี ${g.accountName}` : ""]
+        .filter(Boolean)
+        .join("  ·  ");
+      const bankRight = `${
+        g.logos.length
+          ? `<span class="banklogos">${g.logos
+              .map((s) => `<img src="${s}" alt="" />`)
+              .join("")}</span>`
+          : ""
+      }${g.accountNo ? `<span class="acctno">เลขที่บัญชี ${escapeHtml(g.accountNo)}</span>` : ""}`;
       const subtotal = g.items.reduce((sum, f) => sum + Number(f.amount ?? 0), 0);
       const filenames = g.items
         .map(
@@ -229,8 +255,8 @@ function renderPaymentPage(
       return `
         <div class="paycard">
           <div class="paycard-info">
-            <div class="paycard-title">${logo}${escapeHtml(g.lines[0] ?? g.label)}</div>
-            ${g.lines.slice(1).map((l) => `<div class="paycard-line">${escapeHtml(l)}</div>`).join("")}
+            <div class="payrow"><span class="payleft">${escapeHtml(bankLeft)}</span><span class="payright">${bankRight}</span></div>
+            ${g.promptpay ? `<div class="paycard-line">พร้อมเพย์ ${escapeHtml(g.promptpay)}</div>` : ""}
             ${methodHtml}
             ${slipHtml}
             <ul class="paycard-items">${filenames}</ul>
@@ -295,6 +321,13 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .card .divider { border-top: 0.5pt solid #d1d1da; margin: 6pt 0; }
 .card .pay .lbl { color: #73737d; margin-right: 6pt; }
 .card .payline { padding-left: 8pt; }
+.payrow { display: flex; justify-content: space-between; align-items: baseline; gap: 8pt; margin-top: 2pt; }
+.payleft { min-width: 0; }
+.payright { display: inline-flex; align-items: center; gap: 5pt; white-space: nowrap; flex-shrink: 0; }
+.banklogos { display: inline-flex; align-items: center; gap: 4pt; }
+.banklogos img { height: 14pt; max-width: 48pt; object-fit: contain; }
+.acctno { font-weight: 600; }
+.formdesc { color: #73737d; margin-left: 4pt; font-weight: 400; }
 .card .qrbox { width: 44pt; height: 44pt; border: 0.5pt solid #d1d1da; padding: 2pt; background: #fff; }
 .card .qrbox img { width: 100%; height: 100%; object-fit: contain; }
 
