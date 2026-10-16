@@ -87,6 +87,13 @@ export async function POST(
     return json("กรุณาแนบสำเนาทะเบียนบ้านของที่ตั้งบริษัท", 400);
   if (body.consent !== true) return json("กรุณายินยอมให้เก็บและใช้ข้อมูล", 400);
 
+  const signerName = clean(body.signer_name);
+  const signaturePath = clean(body.signature_path, 400);
+  if (!signerName) return json("กรุณากรอกชื่อ–นามสกุลผู้ลงนาม", 400);
+  if (!isValidIntakePath(signaturePath, found.link.id))
+    return json("กรุณาลงนามยืนยันข้อมูล", 400);
+  const signedIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null;
+
   const rawShareholders = Array.isArray(body.shareholders) ? body.shareholders : [];
   if (rawShareholders.length < 1 || rawShareholders.length > 20)
     return json("กรุณากรอกข้อมูลผู้ถือหุ้นอย่างน้อย 1 ราย", 400);
@@ -152,6 +159,10 @@ export async function POST(
     shareholders: JSON.stringify(shareholders),
     consent_at: new Date().toISOString(),
     consent_version: INTAKE_CONSENT_VERSION,
+    signer_name: signerName,
+    signature_path: signaturePath,
+    signed_at: new Date().toISOString(),
+    signed_ip: signedIp,
     notes: nullable(body.notes, 1000),
     raw: JSON.stringify(body).slice(0, 20000),
   };
@@ -173,6 +184,7 @@ export async function POST(
         contact_name=${cols.contact_name}, contact_position=${cols.contact_position},
         contact_phone=${cols.contact_phone}, contact_email=${cols.contact_email},
         shareholders=${cols.shareholders}::jsonb, consent_at=${cols.consent_at}, consent_version=${cols.consent_version},
+        signer_name=${cols.signer_name}, signature_path=${cols.signature_path}, signed_at=${cols.signed_at}, signed_ip=${cols.signed_ip},
         notes=${cols.notes}, raw=${cols.raw}::jsonb, status='submitted'
         where id=${found.submission.id}`;
     } else {
@@ -182,14 +194,14 @@ export async function POST(
         addr_line, addr_moo, addr_soi, addr_road, addr_subdistrict, addr_district, addr_province, addr_postcode,
         company_house_path, vat_registered, vat_reg_date, vat_place, fiscal_year_end, filings,
         has_prev_accountant, prev_accountant, contact_name, contact_position, contact_phone, contact_email,
-        shareholders, consent_at, consent_version, notes, raw
+        shareholders, consent_at, consent_version, signer_name, signature_path, signed_at, signed_ip, notes, raw
       ) values (
         ${found.link.id}, ${cols.name_th}, ${cols.name_en}, ${cols.name_th2}, ${cols.name_en2}, ${cols.juristic_id}, ${cols.reg_date},
         ${cols.capital_registered}, ${cols.capital_paid}, ${cols.business_desc},
         ${cols.addr_line}, ${cols.addr_moo}, ${cols.addr_soi}, ${cols.addr_road}, ${cols.addr_subdistrict}, ${cols.addr_district}, ${cols.addr_province}, ${cols.addr_postcode},
         ${cols.company_house_path}, ${cols.vat_registered}, ${cols.vat_reg_date}, ${cols.vat_place}, ${cols.fiscal_year_end}, ${cols.filings},
         ${cols.has_prev_accountant}, ${cols.prev_accountant}, ${cols.contact_name}, ${cols.contact_position}, ${cols.contact_phone}, ${cols.contact_email},
-        ${cols.shareholders}::jsonb, ${cols.consent_at}, ${cols.consent_version}, ${cols.notes}, ${cols.raw}::jsonb
+        ${cols.shareholders}::jsonb, ${cols.consent_at}, ${cols.consent_version}, ${cols.signer_name}, ${cols.signature_path}, ${cols.signed_at}, ${cols.signed_ip}, ${cols.notes}, ${cols.raw}::jsonb
       )`;
     }
   } catch (error) {

@@ -14,7 +14,7 @@ import {
 
 export const runtime = "nodejs";
 
-const KINDS = new Set(["company_house", "shareholder_id", "shareholder_house"]);
+const KINDS = new Set(["company_house", "shareholder_id", "shareholder_house", "signature"]);
 
 /**
  * Token-gated presigned upload for the public onboarding form. Files go straight

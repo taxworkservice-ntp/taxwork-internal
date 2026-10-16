@@ -162,6 +162,7 @@ export default function OnboardingPage() {
               { label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชน (${sh.name})`, path: sh.idCardPath || null },
               { label: `ผู้ถือหุ้น #${i + 1} ทะเบียนบ้าน (${sh.name})`, path: sh.houseRegPath || null },
             ]),
+            { label: `ลายเซ็น (${s.signer_name || "ผู้ลงนาม"})`, path: s.signature_path },
           ];
           return (
             <div key={s.id} className="card space-y-3">

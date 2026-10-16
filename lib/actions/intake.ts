@@ -196,6 +196,7 @@ export async function approveIntakeSubmission(
         await attach(sh.idCardPath, "shareholder-id");
         await attach(sh.houseRegPath, "shareholder-house");
       }
+      await attach(sub.signature_path, "signature");
     }
 
     await sql`update intake_submissions

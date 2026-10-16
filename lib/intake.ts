@@ -74,6 +74,10 @@ export type IntakeSubmission = {
   shareholders: IntakeShareholder[];
   consent_at: string | null;
   consent_version: string | null;
+  signer_name: string | null;
+  signature_path: string | null;
+  signed_at: string | null;
+  signed_ip: string | null;
   notes: string | null;
   client_id: string | null;
   reviewed_by: string | null;
@@ -103,6 +107,7 @@ export function toSubmission(row: Record<string, unknown>): IntakeSubmission {
     created_at: str(row.created_at) ?? "",
     reviewed_at: str(row.reviewed_at),
     consent_at: str(row.consent_at),
+    signed_at: str(row.signed_at),
   };
 }
 

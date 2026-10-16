@@ -126,6 +126,71 @@ function UploadBox({
   );
 }
 
+function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const drawing = useRef(false);
+
+  function point(e: React.PointerEvent<HTMLCanvasElement>) {
+    const c = ref.current!;
+    const r = c.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / r.width) * c.width,
+      y: ((e.clientY - r.top) / r.height) * c.height,
+    };
+  }
+  function start(e: React.PointerEvent<HTMLCanvasElement>) {
+    const c = ref.current;
+    if (!c) return;
+    drawing.current = true;
+    c.setPointerCapture(e.pointerId);
+    const ctx = c.getContext("2d")!;
+    ctx.strokeStyle = "#111827";
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    const { x, y } = point(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  }
+  function move(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!drawing.current) return;
+    const c = ref.current!;
+    const ctx = c.getContext("2d")!;
+    const { x, y } = point(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+  function end() {
+    if (!drawing.current) return;
+    drawing.current = false;
+    onChange(ref.current?.toDataURL("image/png") ?? "");
+  }
+  function clear() {
+    const c = ref.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    onChange("");
+  }
+  return (
+    <div className="space-y-1">
+      <canvas
+        ref={ref}
+        width={640}
+        height={160}
+        onPointerDown={start}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerLeave={end}
+        className="h-40 w-full touch-none rounded-lg border border-neutral-300 bg-white"
+        style={{ touchAction: "none" }}
+      />
+      <button type="button" className="btn text-xs" onClick={clear}>
+        ล้างลายเซ็น
+      </button>
+    </div>
+  );
+}
+
 export default function OnboardForm({
   token,
   branding,
@@ -188,6 +253,8 @@ export default function OnboardForm({
       : [newSh()]
   );
   const [consent, setConsent] = useState(Boolean(initial?.consent_at));
+  const [signerName, setSignerName] = useState(initial?.signer_name ?? "");
+  const [signatureDataUrl, setSignatureDataUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
@@ -197,23 +264,18 @@ export default function OnboardForm({
   const setSh = (key: string, patch: Partial<Sh>) =>
     setShs((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)));
 
-  async function upload(kind: string, file: File): Promise<string> {
+  async function upload(kind: string, blob: Blob, fileName: string, contentType: string): Promise<string> {
     const res = await fetch(`/api/onboard/${token}/upload-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind,
-        fileName: file.name,
-        contentType: mimeFor(file),
-        size: file.size,
-      }),
+      body: JSON.stringify({ kind, fileName, contentType, size: blob.size }),
     });
     const data = (await res.json().catch(() => ({}))) as { url?: string; path?: string; error?: string };
     if (!res.ok || !data.url || !data.path) throw new Error(data.error || "อัปโหลดไม่สำเร็จ");
     const put = await fetch(data.url, {
       method: "PUT",
-      headers: { "Content-Type": mimeFor(file) },
-      body: file,
+      headers: { "Content-Type": contentType },
+      body: blob,
     });
     if (!put.ok) throw new Error("อัปโหลดไปที่เซิร์ฟเวอร์ไม่สำเร็จ");
     return data.path;
@@ -223,7 +285,7 @@ export default function OnboardForm({
     setUploading("company");
     setError("");
     try {
-      const path = await upload("company_house", file);
+      const path = await upload("company_house", file, file.name, mimeFor(file));
       setCompanyHouse({ path, name: file.name });
     } catch (e) {
       setError(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
@@ -236,7 +298,7 @@ export default function OnboardForm({
     setUploading(`${sh.key}:${kind}`);
     setError("");
     try {
-      const path = await upload(kind, file);
+      const path = await upload(kind, file, file.name, mimeFor(file));
       if (kind === "shareholder_id") setSh(sh.key, { idCardPath: path, idCardName: file.name });
       else setSh(sh.key, { houseRegPath: path, houseRegName: file.name });
     } catch (e) {
@@ -248,8 +310,21 @@ export default function OnboardForm({
 
   async function submit() {
     setError("");
+    if (!signerName.trim()) {
+      setError("กรุณากรอกชื่อ–นามสกุลผู้ลงนาม");
+      return;
+    }
+    if (!signatureDataUrl && !initial?.signature_path) {
+      setError("กรุณาลงนามยืนยันข้อมูล");
+      return;
+    }
     setBusy(true);
     try {
+      let signaturePath = initial?.signature_path ?? "";
+      if (signatureDataUrl) {
+        const blob = await (await fetch(signatureDataUrl)).blob();
+        signaturePath = await upload("signature", blob, "signature.png", "image/png");
+      }
       const res = await fetch(`/api/onboard/${token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -268,6 +343,8 @@ export default function OnboardForm({
             houseRegPath: s.houseRegPath,
           })),
           consent,
+          signer_name: signerName,
+          signature_path: signaturePath,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -469,6 +546,18 @@ export default function OnboardForm({
             <Field label="โทรศัพท์" required value={f.contact_phone} onChange={(v) => set("contact_phone", v)} />
             <Field label="อีเมล" required value={f.contact_email} onChange={(v) => set("contact_email", v)} />
           </div>
+        </section>
+
+        <section className="card space-y-3">
+          <SectionTitle>6. ลงนามยืนยัน</SectionTitle>
+          <p className="text-xs text-neutral-500">
+            ข้าพเจ้าขอรับรองว่าข้อมูลข้างต้นถูกต้อง และลงนามเพื่อยืนยันการลงทะเบียน
+          </p>
+          {initial?.signature_path && !signatureDataUrl && (
+            <p className="text-xs text-emerald-600">✓ มีลายเซ็นที่บันทึกไว้แล้ว (วาดใหม่ได้หากต้องการแก้ไข)</p>
+          )}
+          <SignaturePad onChange={setSignatureDataUrl} />
+          <Field label="ชื่อ–นามสกุลผู้ลงนาม" required value={signerName} onChange={setSignerName} />
         </section>
 
         <section className="card space-y-3">
