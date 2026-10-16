@@ -14,6 +14,8 @@ export function sampleModel(overrides: Partial<ReportModel> = {}): ReportModel {
     periodLabel: "2026-08",
     issueDate: "22/09/2569",
     logoDataUri: null,
+    firmPhone: null,
+    firmLine: null,
     brandColor: null,
     client: {
       name: "บริษัท ทดสอบ จำกัด",

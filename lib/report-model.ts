@@ -69,6 +69,9 @@ export type ReportModel = {
   periodLabel: string;
   issueDate: string;
   logoDataUri: string | null;
+  /** Firm contact for the letterhead; null when unset. */
+  firmPhone: string | null;
+  firmLine: string | null;
   /** Firm brand colour (hex) for subtle PDF accents; null → neutral default. */
   brandColor: string | null;
   client: {
@@ -165,12 +168,17 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
   if (!report) throw new Error("ไม่พบรายงาน");
 
   const settingsRows = (await sql`
-    select firm_name, prepared_by, company_logo_path, brand_color from app_settings where id=1
+    select firm_name, prepared_by, company_logo_path, company_logo_file_name,
+           brand_color, firm_phone, firm_line
+    from app_settings where id=1
   `) as {
     firm_name: string | null;
     prepared_by: string | null;
     company_logo_path: string | null;
+    company_logo_file_name: string | null;
     brand_color: string | null;
+    firm_phone: string | null;
+    firm_line: string | null;
   }[];
   const settings = settingsRows[0];
 
@@ -333,7 +341,12 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     reportLabel: report.label == null ? null : String(report.label),
     periodLabel: String(report.period_label ?? ""),
     issueDate: thaiToday(),
-    logoDataUri: await toDataUri(settings?.company_logo_path ?? null),
+    logoDataUri: await toDataUri(
+      settings?.company_logo_path ?? null,
+      guessMimeFromPath(settings?.company_logo_file_name ?? "")
+    ),
+    firmPhone: settings?.firm_phone?.trim() || null,
+    firmLine: settings?.firm_line?.trim() || null,
     brandColor: settings?.brand_color?.trim() || null,
     client: {
       name: String(report.client_name ?? ""),

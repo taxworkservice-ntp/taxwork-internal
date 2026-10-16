@@ -270,6 +270,7 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .letterhead .brandlogo { max-height: 30pt; max-width: 120pt; object-fit: contain; }
 .letterhead .firm { display: flex; flex-direction: column; }
 .letterhead .firm-name { font-size: 12pt; font-weight: 700; }
+.letterhead .firm-sub { font-size: 8.5pt; color: #73737d; margin-top: 1pt; }
 .rule { border-bottom: 1pt solid var(--brand, #242428); margin-top: 12pt; }
 .title { font-size: 15pt; font-weight: 700; text-align: center; margin: 18pt 0 0; }
 .title-bar { width: 88pt; height: 2.5pt; background: var(--brand, #242428); margin: 6pt auto 18pt; }
@@ -343,13 +344,22 @@ function renderCoverSection(model: ReportModel): string {
   const logo = model.logoDataUri
     ? `<img class="brandlogo" src="${model.logoDataUri}" alt="" />`
     : "";
+  const firmContact = [
+    model.firmPhone ? `โทร ${model.firmPhone}` : "",
+    model.firmLine ? `LINE ${model.firmLine}` : "",
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
   const contact = [model.client.phone, model.client.email].filter(Boolean).join("  ·  ");
   const cards = model.filings.map((f, i) => renderCard(f, i)).join("");
   return `
     <section class="page cover" style="--brand:${brandHex(model.brandColor)}">
       <div class="letterhead">
         ${logo}
-        <div class="firm"><div class="firm-name">${escapeHtml(model.firmName)}</div></div>
+        <div class="firm">
+          <div class="firm-name">${escapeHtml(model.firmName)}</div>
+          ${firmContact ? `<div class="firm-sub">${escapeHtml(firmContact)}</div>` : ""}
+        </div>
       </div>
       <div class="rule"></div>
       <h1 class="title">${escapeHtml(title)}</h1>
