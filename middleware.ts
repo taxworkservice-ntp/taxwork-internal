@@ -13,8 +13,8 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (pathname.startsWith("/api/")) return NextResponse.next();
 
-  // Public, tokenized report share pages (client-facing, no session).
-  if (pathname.startsWith("/r/")) {
+  // Public, tokenized pages (report share + prospect onboarding), no session.
+  if (pathname.startsWith("/r/") || pathname.startsWith("/onboard/")) {
     const { ok, retryAfter } = rateLimit(clientKey(request.headers, "share"), 60, 60_000);
     if (!ok) {
       return new NextResponse("Too Many Requests", {

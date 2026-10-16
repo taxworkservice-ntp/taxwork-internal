@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { thaiBahtText } from "@/lib/thai-baht-text";
+import { checkTaxId, formatTaxId } from "@/lib/tax-id";
 import {
   RDX_FORMS,
   buildJsonZip,
@@ -934,18 +935,6 @@ export default function ToolsPage() {
   const bahtText = bahtInput.trim() === "" ? "" : thaiBahtText(bahtAmt);
 
   // --- Tax ID ---
-  function checkTaxId(raw: string) {
-    const digits = raw.replace(/\D/g, "");
-    if (digits.length !== 13) return { digits, ok: false, reason: "ต้องมี 13 หลัก" };
-    let sum = 0;
-    for (let i = 0; i < 12; i++) sum += parseInt(digits[i], 10) * (13 - i);
-    const check = (11 - (sum % 11)) % 10;
-    if (check !== parseInt(digits[12], 10)) return { digits, ok: false, reason: "checksum ไม่ผ่าน" };
-    return { digits, ok: true, reason: "" };
-  }
-  function formatTaxId(d: string) {
-    return `${d[0]}-${d.slice(1, 5)}-${d.slice(5, 10)}-${d.slice(10, 12)}-${d[12]}`;
-  }
   const taxRows = taxIds
     .split(/[\n,]+/)
     .map((s) => s.trim())
