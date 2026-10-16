@@ -96,21 +96,159 @@ function SubPreview({ raw }: { raw: string }) {
   );
 }
 
-function OtherTool({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
+const ICON_PROPS = {
+  width: 18,
+  height: 18,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.8,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+};
+
+const TOOL_ICONS: Record<string, React.ReactNode> = {
+  merge: (
+    <svg {...ICON_PROPS}>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <path d="M7 10v7a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-7" />
+    </svg>
+  ),
+  split: (
+    <svg {...ICON_PROPS}>
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="6" cy="18" r="2.5" />
+      <path d="M8.1 7.6 20 18M8.1 16.4 20 6" />
+    </svg>
+  ),
+  unlock: (
+    <svg {...ICON_PROPS}>
+      <rect x="4" y="10" width="16" height="10" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 7.5-2" />
+    </svg>
+  ),
+  fix: (
+    <svg {...ICON_PROPS}>
+      <path d="M21 12a9 9 0 1 1-3-6.7" />
+      <path d="M21 4v5h-5" />
+    </svg>
+  ),
+  rename: (
+    <svg {...ICON_PROPS}>
+      <path d="M20.6 13.4 12 22H4v-8L12.6 5.4a2 2 0 0 1 2.8 0l5.2 5.2a2 2 0 0 1 0 2.8Z" />
+      <path d="M14 8l2 2" />
+    </svg>
+  ),
+  vat: (
+    <svg {...ICON_PROPS}>
+      <path d="M19 5 5 19" />
+      <circle cx="7" cy="7" r="2.5" />
+      <circle cx="17" cy="17" r="2.5" />
+    </svg>
+  ),
+  taxid: (
+    <svg {...ICON_PROPS}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="9" cy="11" r="2" />
+      <path d="M5.5 16a2.5 2.5 0 0 1 5 0M14 9h4M14 13h4" />
+    </svg>
+  ),
+  subset: (
+    <svg {...ICON_PROPS}>
+      <path d="M6 4h12l-5 6v7l-2 1v-8L6 4Z" />
+    </svg>
+  ),
+  rdx: (
+    <svg {...ICON_PROPS}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 3v5h5M9 13h6M9 17h6" />
+    </svg>
+  ),
+};
+
+type ToolCategory = "pdf" | "tax" | "data";
+
+type ToolMeta = {
+  id: string;
+  category: ToolCategory;
+  title: string;
+  desc: string;
+  keywords: string;
+};
+
+const TOOLS: ToolMeta[] = [
+  { id: "merge", category: "pdf", title: "รวม PDF", desc: "รวมหลายไฟล์ PDF เป็นไฟล์เดียว", keywords: "merge รวม รวมไฟล์ combine" },
+  { id: "split", category: "pdf", title: "แยก PDF", desc: "แยกตามช่วงหน้า หรือทุกหน้าเป็น ZIP", keywords: "split แยก แบ่ง zip ทุกหน้า" },
+  { id: "unlock", category: "pdf", title: "ปลดล็อก PDF", desc: "ลบรหัสผ่านหลายไฟล์ → ZIP", keywords: "unlock password ปลดล็อก รหัสผ่าน ถอด" },
+  { id: "fix", category: "pdf", title: "หมุน / ลบ / จัดหน้า PDF", desc: "แก้สแกนเอียง ตัดหน้าว่าง จัดลำดับใหม่", keywords: "rotate หมุน ลบหน้า จัด ลำดับ reorder delete" },
+  { id: "rename", category: "pdf", title: "เปลี่ยนชื่อเป็นชุด → ZIP", desc: "ตั้งชื่อไฟล์ใหม่ตามลำดับ พร้อมนับหน้า", keywords: "rename เปลี่ยนชื่อ ลำดับ batch zip" },
+  { id: "vat", category: "tax", title: "VAT / หัก ณ ที่จ่าย / ตัวอักษร", desc: "คำนวณ VAT, ภาษีหัก ณ ที่จ่าย และแปลงจำนวนเงินเป็นตัวอักษร", keywords: "vat wht ภาษี หัก ณ ที่จ่าย ตัวอักษร baht" },
+  { id: "taxid", category: "tax", title: "เช็คเลขผู้เสียภาษี 13 หลัก", desc: "ตรวจ checksum หลายเลขพร้อมกัน", keywords: "tax id เลขผู้เสียภาษี checksum 13" },
+  { id: "subset", category: "tax", title: "จับคู่ยอดรวม", desc: "หาชุดยอดที่รวมได้ตรงหรือใกล้เป้าหมาย", keywords: "subset sum จับคู่ ยอดรวม กระทบยอด" },
+  { id: "rdx", category: "data", title: "RDPrep Excel → RDX", desc: "แปลง Excel/JSON เป็น RDX (PND3/PND53) — AES-256", keywords: "rdx rdprep excel pnd3 pnd53 ภงด json" },
+];
+
+const CATEGORIES: { key: "all" | ToolCategory; label: string }[] = [
+  { key: "all", label: "ทั้งหมด" },
+  { key: "pdf", label: "PDF" },
+  { key: "tax", label: "ภาษี & คำนวณ" },
+  { key: "data", label: "ข้อมูล & ส่งออก" },
+];
+
+function ChevronIcon({ open }: { open: boolean }) {
   return (
-    <details className="card group">
-      <summary className="cursor-pointer list-none">
-        <span className="flex items-center justify-between gap-2">
-          <span>
-            <span className="block font-medium">{title}</span>
-            <span className="block text-xs text-neutral-500">{desc}</span>
-          </span>
-          <span className="btn shrink-0 group-open:hidden">เปิด</span>
-          <span className="btn hidden shrink-0 group-open:inline-block">ปิด</span>
+    <svg
+      {...ICON_PROPS}
+      className={`transition-transform ${open ? "rotate-180" : ""}`}
+      width={16}
+      height={16}
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function ToolCard({
+  id,
+  title,
+  desc,
+  open,
+  onToggle,
+  children,
+}: {
+  id: string;
+  title: string;
+  desc: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      className={`card overflow-hidden p-0 transition-shadow ${
+        open ? "sm:col-span-2 ring-1 ring-neutral-900/5 shadow-sm" : "hover:shadow-sm"
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-start gap-3 p-4 text-left"
+      >
+        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-700">
+          {TOOL_ICONS[id]}
         </span>
-      </summary>
-      <div className="mt-3 border-t border-neutral-100 pt-3">{children}</div>
-    </details>
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium">{title}</span>
+          <span className="block text-xs text-neutral-500">{desc}</span>
+        </span>
+        <span className="mt-1 shrink-0 text-neutral-400">
+          <ChevronIcon open={open} />
+        </span>
+      </button>
+      {open && <div className="border-t border-neutral-100 p-4">{children}</div>}
+    </section>
   );
 }
 
@@ -181,6 +319,28 @@ export default function ToolsPage() {
   const [rdpResult, setRdpResult] = useState<ConvertResult | null>(null);
   const [rdpDragActive, setRdpDragActive] = useState(false);
   const rdpInputRef = useRef<HTMLInputElement>(null);
+  // --- Tool catalog UI ---
+  const [activeCat, setActiveCat] = useState<"all" | ToolCategory>("all");
+  const [query, setQuery] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  function toolVisible(id: string) {
+    const meta = TOOLS.find((t) => t.id === id);
+    if (!meta) return false;
+    if (activeCat !== "all" && meta.category !== activeCat) return false;
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return `${meta.title} ${meta.desc} ${meta.keywords}`.toLowerCase().includes(q);
+  }
+  function countFor(key: "all" | ToolCategory) {
+    const q = query.trim().toLowerCase();
+    return TOOLS.filter((t) => {
+      if (key !== "all" && t.category !== key) return false;
+      if (!q) return true;
+      return `${t.title} ${t.desc} ${t.keywords}`.toLowerCase().includes(q);
+    }).length;
+  }
+  const toggleTool = (id: string) => setOpenId((prev) => (prev === id ? null : id));
 
   function isPdf(f: File) {
     return f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
@@ -916,15 +1076,43 @@ export default function ToolsPage() {
 
   return (
     <>
-      <h1 className="mb-1 text-lg font-semibold">เครื่องมือ</h1>
-      <p className="mb-6 text-xs text-neutral-500">
-        ทุกอย่างประมวลผลในเบราว์เซอร์ของคุณ — ไฟล์จะไม่ถูกอัปโหลดไปที่ใด
-      </p>
+      <div className="mb-6 max-w-3xl">
+        <h1 className="mb-1 text-lg font-bold">เครื่องมือ</h1>
+        <p className="text-xs text-neutral-500">
+          ทุกอย่างประมวลผลในเบราว์เซอร์ของคุณ — ไฟล์จะไม่ถูกอัปโหลดไปที่ใด
+        </p>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-1.5">
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => setActiveCat(c.key)}
+                className={
+                  activeCat === c.key
+                    ? "rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white"
+                    : "rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 hover:border-neutral-400"
+                }
+              >
+                {c.label}
+                <span className={activeCat === c.key ? "ml-1 text-white/60" : "ml-1 text-neutral-400"}>
+                  {countFor(c.key)}
+                </span>
+              </button>
+            ))}
+          </div>
+          <input
+            className="input w-full sm:w-56"
+            placeholder="ค้นหาเครื่องมือ…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+      </div>
 
-      <div className="grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
-        <section className="card">
-          <h2 className="mb-1 font-medium">รวม PDF</h2>
-          <p className="mb-3 text-xs text-neutral-500">ลากไฟล์มาวาง จัดลำดับ แล้วรวมเป็นไฟล์เดียว</p>
+      <div className="grid max-w-3xl grid-cols-1 gap-4 sm:grid-cols-2">
+        {toolVisible("merge") && (
+        <ToolCard id="merge" title="รวม PDF" desc="ลากไฟล์มาวาง จัดลำดับ แล้วรวมเป็นไฟล์เดียว" open={openId === "merge"} onToggle={() => toggleTool("merge")}>
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -995,11 +1183,11 @@ export default function ToolsPage() {
               </button>
             )}
           </div>
-        </section>
+        </ToolCard>
+        )}
 
-        <section className="card">
-          <h2 className="mb-1 font-medium">แยก PDF</h2>
-          <p className="mb-3 text-xs text-neutral-500">แยกตามช่วงหน้า หรือแยกทุกหน้าเป็น ZIP</p>
+        {toolVisible("split") && (
+        <ToolCard id="split" title="แยก PDF" desc="แยกตามช่วงหน้า หรือแยกทุกหน้าเป็น ZIP" open={openId === "split"} onToggle={() => toggleTool("split")}>
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -1086,15 +1274,11 @@ export default function ToolsPage() {
           <button className="btn-primary" onClick={split} disabled={busy || !splitFile}>
             แยกไฟล์
           </button>
-        </section>
-      </div>
+        </ToolCard>
+        )}
 
-      <section className="card mt-6 max-w-3xl">
-        <h2 className="mb-1 font-medium">ปลดล็อก PDF (หลายไฟล์ → ZIP)</h2>
-        <p className="mb-3 text-xs text-neutral-500">
-          ลากไฟล์ PDF ที่ติดรหัสผ่านมาวาง แล้วใส่รหัสผ่าน ระบบจะปลดล็อกและรวมเป็น ZIP ให้ดาวน์โหลด
-        </p>
-
+      {toolVisible("unlock") && (
+      <ToolCard id="unlock" title="ปลดล็อก PDF" desc="ลากไฟล์ที่ติดรหัสผ่านมาวาง ระบบจะปลดล็อกและรวมเป็น ZIP ให้ดาวน์โหลด" open={openId === "unlock"} onToggle={() => toggleTool("unlock")}>
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -1214,13 +1398,11 @@ export default function ToolsPage() {
             ดาวน์โหลด ZIP ({okCount} ไฟล์)
           </button>
         </div>
-      </section>
+      </ToolCard>
+      )}
 
-      <section className="card mt-6 max-w-3xl">
-        <h2 className="mb-1 font-medium">จับคู่ยอดรวม (Subset Sum)</h2>
-        <p className="mb-3 text-xs text-neutral-500">
-          วางรายการหลายยอด + ยอดเป้าหมาย หาชุดที่รวมกันได้ตรง (หรือใกล้เคียง)
-        </p>
+      {toolVisible("subset") && (
+      <ToolCard id="subset" title="จับคู่ยอดรวม" desc="วางรายการหลายยอด + ยอดเป้าหมาย หาชุดที่รวมกันได้ตรง (หรือใกล้เคียง)" open={openId === "subset"} onToggle={() => toggleTool("subset")}>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label className="label">รายการยอดเงิน (บรรทัดละยอด หรือวางแถวจาก Excel)</label>
@@ -1369,14 +1551,11 @@ export default function ToolsPage() {
             )}
           </div>
         )}
-      </section>
+      </ToolCard>
+      )}
 
-      <h2 className="mb-3 mt-8 max-w-3xl font-medium text-neutral-600">เครื่องมืออื่น ๆ</h2>
-      <div className="grid max-w-3xl grid-cols-1 gap-4">
-        <OtherTool
-          title="RDPrep Excel → RDX (PND3/PND53)"
-          desc="แปลงไฟล์ Excel/JSON เป็น RDX เข้ารหัส AES-256 — ประมวลผลในเบราว์เซอร์"
-        >
+      {toolVisible("rdx") && (
+      <ToolCard id="rdx" title="RDPrep Excel → RDX" desc="แปลง Excel/JSON เป็น RDX (PND3/PND53) — AES-256" open={openId === "rdx"} onToggle={() => toggleTool("rdx")}>
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -1480,9 +1659,11 @@ export default function ToolsPage() {
             </div>
           )}
           {rdpStatus && <p className="mt-2 text-xs text-neutral-600">{rdpStatus}</p>}
-        </OtherTool>
+      </ToolCard>
+      )}
 
-        <OtherTool title="VAT / หัก ณ ที่จ่าย / ตัวอักษร" desc="คำนวณในเบราว์เซอร์ ไม่บันทึกข้อมูล">
+      {toolVisible("vat") && (
+      <ToolCard id="vat" title="VAT / หัก ณ ที่จ่าย / ตัวอักษร" desc="คำนวณในเบราว์เซอร์ ไม่บันทึกข้อมูล" open={openId === "vat"} onToggle={() => toggleTool("vat")}>
           <label className="label">ยอดเงิน</label>
           <input className="input mb-2" inputMode="decimal" placeholder="เช่น 10000" value={vatInput} onChange={(e) => setVatInput(e.target.value)} />
           <div className="mb-2 flex gap-2 text-sm">
@@ -1526,9 +1707,11 @@ export default function ToolsPage() {
           <label className="label">จำนวนเงิน → ตัวอักษร</label>
           <input className="input mb-1" inputMode="decimal" placeholder="เช่น 12345.50" value={bahtInput} onChange={(e) => setBahtInput(e.target.value)} />
           {bahtText && <p className="rounded bg-neutral-50 p-2 text-sm">{bahtText}</p>}
-        </OtherTool>
+      </ToolCard>
+      )}
 
-        <OtherTool title="เช็คเลขผู้เสียภาษี 13 หลัก" desc="วางได้หลายเลข (บรรทัดละเลข หรือคั่นด้วยจุลภาค)">
+      {toolVisible("taxid") && (
+      <ToolCard id="taxid" title="เช็คเลขผู้เสียภาษี 13 หลัก" desc="วางได้หลายเลข (บรรทัดละเลข หรือคั่นด้วยจุลภาค)" open={openId === "taxid"} onToggle={() => toggleTool("taxid")}>
           <textarea
             className="input mb-2 h-24 font-mono"
             placeholder={"1234567890123\n3100600123456"}
@@ -1564,9 +1747,11 @@ export default function ToolsPage() {
               </button>
             </>
           )}
-        </OtherTool>
+      </ToolCard>
+      )}
 
-        <OtherTool title="หมุน / ลบ / จัดหน้า PDF" desc="แก้สแกนเอียง ตัดหน้าว่าง แล้วบันทึกเป็นไฟล์เดียว">
+      {toolVisible("fix") && (
+      <ToolCard id="fix" title="หมุน / ลบ / จัดหน้า PDF" desc="แก้สแกนเอียง ตัดหน้าว่าง แล้วบันทึกเป็นไฟล์เดียว" open={openId === "fix"} onToggle={() => toggleTool("fix")}>
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -1627,9 +1812,11 @@ export default function ToolsPage() {
               </button>
             )}
           </div>
-        </OtherTool>
+      </ToolCard>
+      )}
 
-        <OtherTool title="เปลี่ยนชื่อเป็นชุด → ZIP" desc="ลากไฟล์หลายไฟล์ ดูนับหน้า แล้วส่งออกชื่อใหม่เป็น ZIP">
+      {toolVisible("rename") && (
+      <ToolCard id="rename" title="เปลี่ยนชื่อเป็นชุด → ZIP" desc="ลากไฟล์หลายไฟล์ ดูนับหน้า แล้วส่งออกชื่อใหม่เป็น ZIP" open={openId === "rename"} onToggle={() => toggleTool("rename")}>
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -1713,11 +1900,21 @@ export default function ToolsPage() {
               </button>
             )}
           </div>
-        </OtherTool>
-
+      </ToolCard>
+      )}
       </div>
 
-      {message && <p className="mt-4 text-sm">{message}</p>}
+      {countFor(activeCat) === 0 && (
+        <p className="mt-6 max-w-3xl text-sm text-neutral-500">
+          ไม่พบเครื่องมือที่ตรงกับการค้นหา
+        </p>
+      )}
+
+      {message && (
+        <p className="mt-4 max-w-3xl rounded border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700">
+          {message}
+        </p>
+      )}
     </>
   );
 }
