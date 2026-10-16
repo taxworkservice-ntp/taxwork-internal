@@ -26,6 +26,48 @@ export {
 /** Minutes within which a repeat send for the same round is treated as a dupe. */
 export const REPORT_EMAIL_DEDUPE_MINUTES = 2;
 
+const THAI_MONTHS_SHORT = [
+  "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+];
+
+function thaiTodayShort(): string {
+  const d = new Date();
+  return `${d.getDate()} ${THAI_MONTHS_SHORT[d.getMonth()]} ${d.getFullYear() + 543}`;
+}
+
+/**
+ * Small, self-contained logo for the email letterhead. Returns null when the
+ * logo is missing or larger than `maxBytes` — keeping the email tiny so it can
+ * never be clipped by Gmail.
+ */
+async function companyLogoDataUri(
+  storagePath: string | null,
+  maxBytes = 12000
+): Promise<string | null> {
+  if (!storagePath) return null;
+  try {
+    const obj = await r2.send(
+      new GetObjectCommand({ Bucket: R2_BUCKET, Key: storagePath })
+    );
+    const bytes = await obj.Body?.transformToByteArray();
+    if (!bytes || bytes.byteLength > maxBytes) return null;
+    let ct = obj.ContentType ?? "";
+    if (!ct || /octet-stream/i.test(ct)) {
+      const l = storagePath.toLowerCase();
+      ct =
+        l.endsWith(".jpg") || l.endsWith(".jpeg")
+          ? "image/jpeg"
+          : l.endsWith(".webp")
+            ? "image/webp"
+            : "image/png";
+    }
+    return `data:${ct};base64,${Buffer.from(bytes).toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 /** True when this round was already emailed successfully within `minutes`.
  *  When `sentBy` is given, only sends by that actor count (e.g. "client"), so a
  *  staff send never suppresses the client's own archive request. */
@@ -88,8 +130,15 @@ export async function loadReportEmailContext(
     return { ok: false, error: "รอบนี้ยังไม่มีรายการ จึงไม่ส่งอีเมล", status: 409 };
 
   const settings = (await sql`
-    select firm_name from app_settings where id=1
-  `) as { firm_name: string | null }[];
+    select firm_name, firm_phone, firm_line, brand_color, company_logo_path
+    from app_settings where id=1
+  `) as {
+    firm_name: string | null;
+    firm_phone: string | null;
+    firm_line: string | null;
+    brand_color: string | null;
+    company_logo_path: string | null;
+  }[];
   const s = settings[0];
 
   const itemRows = (await sql`
@@ -117,10 +166,15 @@ export async function loadReportEmailContext(
     attachmentName,
     email: {
       firmName: s?.firm_name?.trim() || "Taxwork",
+      firmPhone: s?.firm_phone?.trim() || null,
+      firmLine: s?.firm_line?.trim() || null,
+      brandColor: s?.brand_color?.trim() || null,
+      logoDataUri: await companyLogoDataUri(s?.company_logo_path ?? null),
       clientName: report.client_name,
       periodTh,
       reportLabel: label,
       reportNo: report.report_no?.trim() || null,
+      issueDateTh: thaiTodayShort(),
       items,
       total,
     },
