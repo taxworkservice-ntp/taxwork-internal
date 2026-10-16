@@ -1,9 +1,6 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { PDFDocument, degrees } from "pdf-lib";
-import { PDFDocument as SecurePDFDocument } from "@cantoo/pdf-lib";
-import JSZip from "jszip";
 import { thaiBahtText } from "@/lib/thai-baht-text";
 import {
   RDX_FORMS,
@@ -14,6 +11,14 @@ import {
   type ConvertResult,
   type RdxForm,
 } from "@/lib/rdprep/convert";
+
+// Heavy client libs are imported on demand (inside the handlers that use them)
+// so they never ship in the Tools page's initial bundle.
+type PdfLibModule = typeof import("pdf-lib");
+let _pdfLib: Promise<PdfLibModule> | null = null;
+const loadPdfLib = (): Promise<PdfLibModule> => (_pdfLib ??= import("pdf-lib"));
+const loadCantoo = () => import("@cantoo/pdf-lib");
+const loadJsZip = () => import("jszip");
 
 type UnlockItem = {
   id: string;
@@ -373,6 +378,7 @@ export default function ToolsPage() {
     }
     setBusy(true);
     try {
+      const { PDFDocument } = await loadPdfLib();
       const out = await PDFDocument.create();
       let ok = 0;
       const failed: string[] = [];
@@ -429,6 +435,7 @@ export default function ToolsPage() {
     setSplitTotal(null);
     if (!f) return;
     try {
+      const { PDFDocument } = await loadPdfLib();
       const src = await PDFDocument.load(await f.arrayBuffer(), { ignoreEncryption: true });
       setSplitTotal(src.getPageCount());
     } catch {
@@ -451,6 +458,7 @@ export default function ToolsPage() {
   }
 
   async function downloadZipBlob(files: { name: string; bytes: Uint8Array }[], zipName: string) {
+    const { default: JSZip } = await loadJsZip();
     const zip = new JSZip();
     for (const f of files) zip.file(f.name, f.bytes);
     const blob = await zip.generateAsync({ type: "blob" });
@@ -471,6 +479,7 @@ export default function ToolsPage() {
     }
     setBusy(true);
     try {
+      const { PDFDocument } = await loadPdfLib();
       const src = await PDFDocument.load(await splitFile.arrayBuffer(), { ignoreEncryption: true });
       const total = src.getPageCount();
       setSplitTotal(total);
@@ -597,8 +606,8 @@ export default function ToolsPage() {
     }
   }
 
-  function rdpTemplate() {
-    downloadBlob(buildTemplate(rdpForm), `rdx-template-${rdpForm.toLowerCase()}.xlsx`);
+  async function rdpTemplate() {
+    downloadBlob(await buildTemplate(rdpForm), `rdx-template-${rdpForm.toLowerCase()}.xlsx`);
     setRdpStatus(`สร้างเทมเพลต ${rdpForm} แล้ว — กรอกชีต Settings และ Payees`);
   }
 
@@ -640,6 +649,7 @@ export default function ToolsPage() {
       );
       try {
         const buf = await item.file.arrayBuffer();
+        const { PDFDocument: SecurePDFDocument } = await loadCantoo();
         let src = null as Awaited<ReturnType<typeof SecurePDFDocument.load>> | null;
         let lastErr: unknown = null;
         const candidates = item.password ? [item.password] : [""];
@@ -684,6 +694,7 @@ export default function ToolsPage() {
       setMessage("ยังไม่มีไฟล์ที่ปลดล็อกสำเร็จ");
       return;
     }
+    const { default: JSZip } = await loadJsZip();
     const zip = new JSZip();
     for (const it of okItems) {
       const base = it.file.name.replace(/\.pdf$/i, "");
@@ -948,6 +959,7 @@ export default function ToolsPage() {
     setFixTotal(null);
     if (!f) return;
     try {
+      const { PDFDocument } = await loadPdfLib();
       const src = await PDFDocument.load(await f.arrayBuffer(), { ignoreEncryption: true });
       setFixTotal(src.getPageCount());
     } catch {
@@ -979,6 +991,7 @@ export default function ToolsPage() {
     }
     setFixBusy(true);
     try {
+      const { PDFDocument, degrees } = await loadPdfLib();
       const src = await PDFDocument.load(await fixFile.arrayBuffer(), { ignoreEncryption: true });
       const total = src.getPageCount();
       const del = new Set(parsePageList(fixDeleteInput, total));
@@ -1020,6 +1033,7 @@ export default function ToolsPage() {
     arr.forEach(async (f, k) => {
       if (!isPdf(f)) return;
       try {
+        const { PDFDocument } = await loadPdfLib();
         const src = await PDFDocument.load(await f.arrayBuffer(), { ignoreEncryption: true });
         const n = src.getPageCount();
         setRenamePages((prev) => {

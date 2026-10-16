@@ -207,7 +207,8 @@ export type SendReportEmailResult =
 
 /**
  * Send (or log a failure for) the client-archival report email for one round.
- * Attaches the canonical stored PDF when available, else a fresh render.
+ * Attaches the canonical stored PDF. The report must be generated first —
+ * this path never renders (keeps Chromium out of the email functions).
  * Every attempt is logged to report_emails; failures never count toward quota.
  */
 export async function sendReportEmailForRound(opts: {
@@ -216,6 +217,16 @@ export async function sendReportEmailForRound(opts: {
 }): Promise<SendReportEmailResult> {
   const ctx = await loadReportEmailContext(opts.reportId);
   if (!ctx.ok) return { ok: false, error: ctx.error, status: ctx.status };
+
+  // Attachment-only: require the archived PDF (no headless-Chromium render here).
+  const bytes = await storedReportPdf(opts.reportId);
+  if (!bytes) {
+    return {
+      ok: false,
+      error: "ยังไม่มีไฟล์ PDF ของรอบนี้ กรุณากด \"ดาวน์โหลด PDF\" ก่อนส่งอีเมล",
+      status: 409,
+    };
+  }
 
   const built = buildReportEmail(ctx.email);
   const record = async (
@@ -234,14 +245,6 @@ export async function sendReportEmailForRound(opts: {
   };
 
   try {
-    // Render lazily so the heavy Chromium pipeline is never pulled into the
-    // lightweight server-action graph that also reads the quota.
-    let bytes = await storedReportPdf(opts.reportId);
-    if (!bytes) {
-      const { buildServerReportPdf } = await import("@/lib/report-pdf/server");
-      bytes = (await buildServerReportPdf(opts.reportId)).bytes;
-    }
-
     const { id } = await sendEmail({
       to: ctx.to,
       subject: built.subject,

@@ -115,7 +115,7 @@ describe("convertFile — JSON input", () => {
 
 describe("convertFile — Excel workbook input", () => {
   it("reads the generated template and formats its money/rate fields", async () => {
-    const blob = buildTemplate("PND3");
+    const blob = await buildTemplate("PND3");
     const file = new File([await blob.arrayBuffer()], "template.xlsx");
     const r = await convertFile(file, { formCode: "PND3", filingYear: 2569, filingMonth: 8 });
     expect(r.base).toBe("0275566001619V00000P032569080000");

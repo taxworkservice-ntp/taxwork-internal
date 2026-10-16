@@ -7,7 +7,10 @@
  * browser; nothing is uploaded.
  */
 
-import * as XLSX from "xlsx";
+import type { WorkSheet } from "xlsx";
+
+type XlsxModule = typeof import("xlsx");
+const loadXlsx = () => import("xlsx");
 
 export const RDX_PASSWORD = "AZ1298xYU1593kDrZjpi0";
 export const RDX_FORMS = ["PND3", "PND53"] as const;
@@ -197,7 +200,7 @@ export function serializeRdxJson(value: unknown): string {
 
 // --- workbook / JSON reading ---
 
-function rowsFromSheet(ws: XLSX.WorkSheet, title: string): Row[] {
+function rowsFromSheet(XLSX: XlsxModule, ws: WorkSheet, title: string): Row[] {
   const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, {
     header: 1,
     raw: true,
@@ -223,14 +226,14 @@ function rowsFromSheet(ws: XLSX.WorkSheet, title: string): Row[] {
   return rows;
 }
 
-function sheetRowsFromWorkbook(buffer: ArrayBuffer): SheetRows {
+function sheetRowsFromWorkbook(XLSX: XlsxModule, buffer: ArrayBuffer): SheetRows {
   const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true });
   if (!workbook.SheetNames.includes("Settings") || !workbook.SheetNames.includes("Payees")) {
     throw new Error("Workbook must contain Settings and Payees sheets");
   }
   return {
-    settings: rowsFromSheet(workbook.Sheets["Settings"], "Settings"),
-    payees: rowsFromSheet(workbook.Sheets["Payees"], "Payees"),
+    settings: rowsFromSheet(XLSX, workbook.Sheets["Settings"], "Settings"),
+    payees: rowsFromSheet(XLSX, workbook.Sheets["Payees"], "Payees"),
   };
 }
 
@@ -514,7 +517,8 @@ export async function convertFile(file: File, opts: ConvertOptions = {}): Promis
     return convert(settings, payees, opts, true);
   }
 
-  const { settings, payees } = sheetRowsFromWorkbook(await file.arrayBuffer());
+  const XLSX = await loadXlsx();
+  const { settings, payees } = sheetRowsFromWorkbook(XLSX, await file.arrayBuffer());
   if (settings.length !== 1) {
     throw new Error("Settings sheet must contain exactly one data row");
   }
@@ -547,7 +551,8 @@ export async function buildJsonZip(result: ConvertResult): Promise<Blob> {
 }
 
 /** Build the same starter workbook the desktop app's "Create template" produces. */
-export function buildTemplate(formCode: RdxForm = "PND3"): Blob {
+export async function buildTemplate(formCode: RdxForm = "PND3"): Promise<Blob> {
+  const XLSX = await loadXlsx();
   const settings = XLSX.utils.aoa_to_sheet([
     SETTINGS_HEADERS,
     [formCode, "0275566001619", "V", 0, 2569, 8, 0, 0, "N", 1, 0, 0],
