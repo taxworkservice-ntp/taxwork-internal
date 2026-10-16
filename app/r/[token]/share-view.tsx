@@ -594,17 +594,14 @@ export default function ShareView({
         )}
       </section>
 
-      {/* Receive the document: download + optional email (after the total) */}
-      {(hasPdf || hasEmail) && (
+      {/* Receive the document: download + optional email (after the total).
+          Only shown once a PDF exists, so the email action always works. */}
+      {hasPdf && (
         <section className="space-y-2">
           <SectionTitle>รับเอกสาร</SectionTitle>
           <div className="space-y-1">
-            {hasPdf && (
-              <ShareDownloadButton pdfUrl={`/r/${token}/pdf`} fileName={fileName} />
-            )}
-            {hasEmail && (
-              <ShareEmailButton emailUrl={`/r/${token}/email`} />
-            )}
+            <ShareDownloadButton pdfUrl={`/r/${token}/pdf`} fileName={fileName} />
+            {hasEmail && <ShareEmailButton emailUrl={`/r/${token}/email`} />}
             {expiryLabel && (
               <p className="text-center text-xs text-neutral-400">
                 ลิงก์นี้ใช้ได้ถึง {expiryLabel}

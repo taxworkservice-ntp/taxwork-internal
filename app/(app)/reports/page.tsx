@@ -33,6 +33,7 @@ import {
   listReportEmails,
   listReportFiles,
   listReportDocuments,
+  latestReportFile,
   loadFilings as loadFilingsAction,
   patchFiling as patchFilingAction,
   recordReportFile,
@@ -1472,6 +1473,13 @@ export default function ReportsPage() {
     setShareBusy(true);
     setStatus("");
     try {
+      // Ensure the archived PDF exists so the link's download + email always work.
+      setStatus("กำลังเตรียมไฟล์ PDF…");
+      const ready = await ensureArchivedPdf();
+      if (!ready) {
+        alert("ยังสร้างไฟล์ PDF ไม่สำเร็จ — กรุณากด 'ดาวน์โหลด PDF' ก่อนสร้างลิงก์");
+        return;
+      }
       const res = await createReportShareLink(activeReportId, 7);
       if (!res.ok) {
         alert(res.error);
@@ -1526,6 +1534,12 @@ export default function ReportsPage() {
     setEmailBusy(true);
     setStatus("");
     try {
+      // Ensure the archived PDF exists before emailing (the send is attachment-only).
+      const ready = await ensureArchivedPdf();
+      if (!ready) {
+        alert("ยังสร้างไฟล์ PDF ไม่สำเร็จ — กรุณากด 'ดาวน์โหลด PDF' ก่อนส่งอีเมล");
+        return;
+      }
       const res = await fetch("/api/reports/email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1610,6 +1624,31 @@ export default function ReportsPage() {
     listReportFiles(activeReportId)
       .then(setReportFiles)
       .catch(() => undefined);
+  }
+
+  /**
+   * Guarantee an archived PDF exists for the active round. Generates + archives
+   * one (client-side, via the render route) only when missing. Returns true on
+   * success, false if generation failed.
+   */
+  async function ensureArchivedPdf(): Promise<boolean> {
+    if (!activeReportId) return false;
+    try {
+      const existing = await latestReportFile(activeReportId);
+      if (existing) return true;
+    } catch {
+      // Ignore and try to generate below.
+    }
+    setGenerating(true);
+    try {
+      await buildAndArchiveReportPdf({ download: false });
+      return true;
+    } catch (err) {
+      setStatus(`สร้างไฟล์ PDF ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      return false;
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function generatePdf() {
@@ -2474,6 +2513,11 @@ export default function ReportsPage() {
                 <div className="text-xs text-neutral-500">
                   {filings.length} รายการ · เอกสาร {docs.length} ไฟล์
                 </div>
+                {reportLocked && reportFiles.length === 0 && (
+                  <div className="text-xs font-medium text-amber-600">
+                    ⚠ ยังไม่มีไฟล์ PDF — กด &quot;ดาวน์โหลด PDF&quot;
+                  </div>
+                )}
                 <div className="flex flex-col gap-2 pt-1">
                   <button
                     className="btn-primary"
