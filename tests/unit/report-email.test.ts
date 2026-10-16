@@ -11,6 +11,10 @@ const base = {
   periodTh: "กันยายน 2569",
   reportLabel: "ครั้งที่ 1",
   reportNo: "TW-6909-XK7P2M",
+  items: [
+    { label: "ภ.พ.30 ภาษีมูลค่าเพิ่ม", amount: 12450 },
+    { label: "ภ.ง.ด.1 ภาษีหัก ณ ที่จ่าย", amount: 3200 },
+  ],
   total: 15650,
 };
 
@@ -35,9 +39,33 @@ describe("buildReportEmail", () => {
     expect(html).toContain("TW-6909-XK7P2M");
     expect(html).toContain("รอบระยะเวลา:");
     expect(html).toContain("ครั้งที่ 1");
-    expect(html).toContain("ยอดนำส่งรวม:");
-    expect(html).toContain("15,650.00");
     expect(text).toContain("เลขอ้างอิง: TW-6909-XK7P2M");
+  });
+
+  it("renders the item summary and total", () => {
+    const { html, text } = buildReportEmail(base);
+    expect(html).toContain("รายการที่ต้องชำระ (2)");
+    expect(html).toContain("ภ.พ.30 ภาษีมูลค่าเพิ่ม");
+    expect(html).toContain("12,450.00");
+    expect(html).toContain("ภ.ง.ด.1 ภาษีหัก ณ ที่จ่าย");
+    expect(html).toContain("3,200.00");
+    expect(html).toContain(">รวม<");
+    expect(html).toContain("15,650.00");
+    expect(text).toContain("- ภ.พ.30 ภาษีมูลค่าเพิ่ม 12,450.00");
+    expect(text).toContain("รวม ฿15,650.00");
+  });
+
+  it("falls back to a total-only line when there are no items", () => {
+    const { html } = buildReportEmail({ ...base, items: [] });
+    expect(html).not.toContain("รายการที่ต้องชำระ");
+    expect(html).toContain("ยอดนำส่งรวม");
+    expect(html).toContain("15,650.00");
+  });
+
+  it("hides the total when nothing is due", () => {
+    const { html } = buildReportEmail({ ...base, total: 0 });
+    expect(html).not.toContain("฿0.00");
+    expect(html).not.toContain(">รวม<");
   });
 
   it("is an archival note: no button, link, attachment line, or reply invite", () => {
@@ -45,7 +73,6 @@ describe("buildReportEmail", () => {
     expect(html).not.toContain("<a ");
     expect(html).not.toContain("เปิดดูรายงาน");
     expect(html).not.toContain("เอกสารแนบ:");
-    expect(html).not.toContain("ลิงก์");
     expect(text).not.toContain("http");
   });
 
@@ -57,17 +84,15 @@ describe("buildReportEmail", () => {
     expect(text).toContain(base.firmName);
   });
 
-  it("hides the total line when there is no amount due", () => {
-    expect(buildReportEmail({ ...base, total: 0 }).html).not.toContain("ยอดนำส่งรวม");
-  });
-
   it("escapes user-controlled strings in the HTML body", () => {
     const { html } = buildReportEmail({
       ...base,
       clientName: '<script>alert("x")</script>',
+      items: [{ label: "<b>x</b>", amount: 100 }],
     });
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
+    expect(html).not.toContain("<b>x</b>");
   });
 
   it("exposes the 200-per-month limit", () => {

@@ -24,16 +24,20 @@ export {
  */
 
 /** Minutes within which a repeat send for the same round is treated as a dupe. */
-export const REPORT_EMAIL_DEDUPE_MINUTES = 10;
+export const REPORT_EMAIL_DEDUPE_MINUTES = 2;
 
-/** True when this round was already emailed successfully within `minutes`. */
+/** True when this round was already emailed successfully within `minutes`.
+ *  When `sentBy` is given, only sends by that actor count (e.g. "client"), so a
+ *  staff send never suppresses the client's own archive request. */
 export async function hasRecentSend(
   reportId: string,
-  minutes = REPORT_EMAIL_DEDUPE_MINUTES
+  minutes = REPORT_EMAIL_DEDUPE_MINUTES,
+  sentBy: string | null = null
 ): Promise<boolean> {
   const rows = (await sql`
     select 1 from report_emails
     where report_id=${reportId} and status='sent'
+      and (${sentBy}::text is null or sent_by = ${sentBy})
       and sent_at >= now() - make_interval(mins => ${minutes})
     limit 1
   `) as unknown[];
@@ -88,10 +92,18 @@ export async function loadReportEmailContext(
   `) as { firm_name: string | null }[];
   const s = settings[0];
 
-  const totals = (await sql`
-    select coalesce(sum(amount), 0)::float8 as total
-    from monthly_filings where report_id=${reportId}
-  `) as { total: number }[];
+  const itemRows = (await sql`
+    select form_code, description, amount from monthly_filings
+    where report_id=${reportId}
+    order by sort_order, created_at
+  `) as { form_code: string; description: string | null; amount: number }[];
+  const items = itemRows
+    .map((r) => ({
+      label: [r.form_code?.trim(), r.description?.trim()].filter(Boolean).join(" "),
+      amount: Number(r.amount ?? 0),
+    }))
+    .filter((it) => it.label || it.amount);
+  const total = items.reduce((sum, it) => sum + it.amount, 0);
 
   const periodTh = periodToThai(report.period_label);
   const label = report.label?.trim() || null;
@@ -109,7 +121,8 @@ export async function loadReportEmailContext(
       periodTh,
       reportLabel: label,
       reportNo: report.report_no?.trim() || null,
-      total: Number(totals[0]?.total ?? 0),
+      items,
+      total,
     },
   };
 }

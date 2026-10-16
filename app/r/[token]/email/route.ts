@@ -7,6 +7,7 @@ import { rateLimit, clientKey } from "@/lib/rate-limit";
 import {
   getReportEmailQuota,
   hasRecentSend,
+  REPORT_EMAIL_DEDUPE_MINUTES,
   sendReportEmailForRound,
 } from "@/lib/report-email";
 
@@ -45,7 +46,7 @@ export async function POST(
     );
   }
 
-  if (await hasRecentSend(resolved.reportId)) {
+  if (await hasRecentSend(resolved.reportId, REPORT_EMAIL_DEDUPE_MINUTES, "client")) {
     return NextResponse.json({ ok: true, deduped: true });
   }
 
