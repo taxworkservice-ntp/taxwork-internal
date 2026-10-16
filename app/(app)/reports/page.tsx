@@ -213,7 +213,7 @@ export default function ReportsPage() {
   const [firmLine, setFirmLine] = useState("");
   const [firmAddress, setFirmAddress] = useState("");
   const [coverStyle, setCoverStyle] = useState<"modern" | "classic">("modern");
-  const [reportRenderer, setReportRenderer] = useState<"legacy" | "server">("legacy");
+  const [reportRenderer, setReportRenderer] = useState<"legacy" | "server">("server");
   const [sharePreviewTitle, setSharePreviewTitle] = useState("");
   const [sharePreviewDescription, setSharePreviewDescription] = useState("");
   const [sharePreviewDetail, setSharePreviewDetail] = useState("amount");
@@ -627,7 +627,7 @@ export default function ReportsPage() {
         setFirmLine(data?.firm_line ?? "");
         setFirmAddress(data?.firm_address ?? "");
         setCoverStyle(data?.cover_style === "classic" ? "classic" : "modern");
-        setReportRenderer(data?.report_renderer === "server" ? "server" : "legacy");
+        setReportRenderer(data?.report_renderer === "legacy" ? "legacy" : "server");
         setSharePreviewTitle(data?.share_preview_title ?? "");
         setSharePreviewDescription(data?.share_preview_description ?? "");
         setSharePreviewDetail(data?.share_preview_detail ?? "amount");

@@ -245,7 +245,7 @@ function renderPaymentPage(
     0
   );
   return `
-    <section class="page">
+    <section class="page" style="--brand:${brandHex(model.brandColor)}">
       <h2 class="section-title">ช่องทางการชำระเงิน</h2>
       <p class="muted">สแกนด้วยแอปธนาคาร หรือบันทึกภาพแล้วเลือกสแกนจากอัลบั้ม</p>
       ${blocks}
@@ -266,11 +266,13 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .page { width: 210mm; min-height: 297mm; padding: 14mm 12mm; page-break-after: always; position: relative; }
 .page:last-child { page-break-after: auto; }
 .muted { color: #73737d; }
-.cover .logo { text-align: center; }
-.cover .logo img { max-height: 46pt; max-width: 141pt; }
-.rule { border-bottom: 1pt solid #242428; margin-top: 14pt; }
+.letterhead { display: flex; align-items: center; gap: 10pt; }
+.letterhead .brandlogo { max-height: 30pt; max-width: 120pt; object-fit: contain; }
+.letterhead .firm { display: flex; flex-direction: column; }
+.letterhead .firm-name { font-size: 12pt; font-weight: 700; }
+.rule { border-bottom: 1pt solid var(--brand, #242428); margin-top: 12pt; }
 .title { font-size: 15pt; font-weight: 700; text-align: center; margin: 18pt 0 0; }
-.title-bar { width: 88pt; height: 2.5pt; background: #242428; margin: 6pt auto 18pt; }
+.title-bar { width: 88pt; height: 2.5pt; background: var(--brand, #242428); margin: 6pt auto 18pt; }
 .client-card { background: #f7f7f8; border: 0.5pt solid #d1d1da; padding: 10pt 12pt; }
 .client-name { font-size: 12pt; font-weight: 700; }
 .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); background: #f4f4f5; border: 0.5pt solid #d1d1da; margin-top: 10pt; }
@@ -280,7 +282,7 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .mvalue { font-size: 9.5pt; font-weight: 700; }
 .section-title { font-size: 11pt; font-weight: 700; margin: 12pt 0 6pt; }
 
-.card { position: relative; border: 0.5pt solid #d1d1da; border-left: 2pt solid #242428; padding: 7pt 10pt; margin-bottom: 8pt; page-break-inside: avoid; }
+.card { position: relative; border: 0.5pt solid #d1d1da; border-left: 2pt solid var(--brand, #242428); padding: 7pt 10pt; margin-bottom: 8pt; page-break-inside: avoid; }
 .card .head { display: flex; justify-content: space-between; align-items: baseline; }
 .card .idx { color: #73737d; font-weight: 700; margin-right: 6pt; }
 .card .form { font-weight: 700; }
@@ -298,7 +300,7 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .paycard { display: flex; gap: 16pt; align-items: flex-start; border: 0.5pt solid #d1d1da; padding: 12pt; margin-bottom: 12pt; page-break-inside: avoid; }
 .paycard-info { flex: 1; min-width: 0; }
 .paycard-title { font-size: 11pt; font-weight: 700; display: flex; align-items: center; gap: 6pt; }
-.paycard-title img { height: 12pt; }
+.paycard-title img { height: 16pt; max-width: 72pt; object-fit: contain; }
 .paycard-line { margin-top: 2pt; }
 .paycard-items { list-style: none; padding: 0; margin: 8pt 0 0; border-top: 0.5pt solid #d1d1da; }
 .paycard-items li { display: flex; justify-content: space-between; padding: 3pt 0; }
@@ -327,6 +329,11 @@ ${body}
 </html>`;
 }
 
+function brandHex(value: string | null): string {
+  const v = value?.trim();
+  return v && /^#?[0-9a-fA-F]{6}$/.test(v) ? (v.startsWith("#") ? v : `#${v}`) : "#242428";
+}
+
 function renderCoverSection(model: ReportModel): string {
   const periodTh = periodToThai(model.periodLabel);
   const title = `รายงานสรุปการนำส่งภาษีประจำเดือน ${periodTh}${
@@ -334,13 +341,16 @@ function renderCoverSection(model: ReportModel): string {
   }`;
   const reportNo = model.reportNo?.trim() || `TW-${model.periodLabel.replace(/[^0-9]/g, "")}`;
   const logo = model.logoDataUri
-    ? `<div class="logo"><img src="${model.logoDataUri}" alt="" /></div>`
+    ? `<img class="brandlogo" src="${model.logoDataUri}" alt="" />`
     : "";
   const contact = [model.client.phone, model.client.email].filter(Boolean).join("  ·  ");
   const cards = model.filings.map((f, i) => renderCard(f, i)).join("");
   return `
-    <section class="page cover">
-      ${logo}
+    <section class="page cover" style="--brand:${brandHex(model.brandColor)}">
+      <div class="letterhead">
+        ${logo}
+        <div class="firm"><div class="firm-name">${escapeHtml(model.firmName)}</div></div>
+      </div>
       <div class="rule"></div>
       <h1 class="title">${escapeHtml(title)}</h1>
       <div class="title-bar"></div>

@@ -292,7 +292,8 @@ export type AppSettings = {
 export type ReportRenderer = "legacy" | "server";
 
 function normalizeRenderer(value: string | null | undefined): ReportRenderer {
-  return value === "server" ? "server" : "legacy";
+  // Server renderer is the default; "legacy" remains as an explicit opt-out.
+  return value === "legacy" ? "legacy" : "server";
 }
 
 export type AppSettingsResult =

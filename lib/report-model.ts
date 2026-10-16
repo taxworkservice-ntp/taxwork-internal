@@ -69,6 +69,8 @@ export type ReportModel = {
   periodLabel: string;
   issueDate: string;
   logoDataUri: string | null;
+  /** Firm brand colour (hex) for subtle PDF accents; null → neutral default. */
+  brandColor: string | null;
   client: {
     name: string;
     tax_id: string | null;
@@ -99,10 +101,35 @@ async function getBytes(
   }
 }
 
-async function toDataUri(storagePath: string | null): Promise<string | null> {
+function guessMimeFromPath(p: string): string | null {
+  const lower = p.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  return null;
+}
+
+function isGenericMime(ct: string | null | undefined): boolean {
+  if (!ct) return true;
+  const m = ct.toLowerCase();
+  return m === "application/octet-stream" || m === "binary/octet-stream" || m === "application/binary";
+}
+
+async function toDataUri(
+  storagePath: string | null,
+  fallbackMime: string | null = null
+): Promise<string | null> {
   const got = await getBytes(storagePath);
   if (!got) return null;
-  return `data:${got.contentType};base64,${Buffer.from(got.bytes).toString("base64")}`;
+  // R2 sometimes stores a generic/absent content type; fall back to the DB mime
+  // then the file extension so images always render in the PDF.
+  let ct = got.contentType;
+  if (isGenericMime(ct)) {
+    ct = fallbackMime || guessMimeFromPath(storagePath ?? "") || ct;
+  }
+  return `data:${ct};base64,${Buffer.from(got.bytes).toString("base64")}`;
 }
 
 function isImageMime(mime: string | null, storagePath: string): boolean {
@@ -138,8 +165,13 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
   if (!report) throw new Error("ไม่พบรายงาน");
 
   const settingsRows = (await sql`
-    select firm_name, prepared_by, company_logo_path from app_settings where id=1
-  `) as { firm_name: string | null; prepared_by: string | null; company_logo_path: string | null }[];
+    select firm_name, prepared_by, company_logo_path, brand_color from app_settings where id=1
+  `) as {
+    firm_name: string | null;
+    prepared_by: string | null;
+    company_logo_path: string | null;
+    brand_color: string | null;
+  }[];
   const settings = settingsRows[0];
 
   const filingRows = (await sql`
@@ -199,9 +231,12 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
       return null;
     }
     const [qrDataUri, logoDataUri, logoBottomDataUri] = await Promise.all([
-      toDataUri((b.qr_path as string) ?? null),
-      toDataUri((b.logo_path as string) ?? null),
-      toDataUri((b.logo_bottom_path as string) ?? null),
+      toDataUri((b.qr_path as string) ?? null, (b.qr_mime_type as string) ?? null),
+      toDataUri((b.logo_path as string) ?? null, (b.logo_mime_type as string) ?? null),
+      toDataUri(
+        (b.logo_bottom_path as string) ?? null,
+        (b.logo_bottom_mime_type as string) ?? null
+      ),
     ]);
     const resolved: ReportModelBank = {
       id: bankId,
@@ -299,6 +334,7 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     periodLabel: String(report.period_label ?? ""),
     issueDate: thaiToday(),
     logoDataUri: await toDataUri(settings?.company_logo_path ?? null),
+    brandColor: settings?.brand_color?.trim() || null,
     client: {
       name: String(report.client_name ?? ""),
       tax_id: report.tax_id == null ? null : String(report.tax_id),
