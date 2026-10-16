@@ -144,7 +144,7 @@ export default function Sidebar() {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-44 shrink-0 flex-col border-r border-neutral-200 bg-white p-4 md:flex">
+      <aside className="sticky top-0 hidden h-screen w-44 shrink-0 flex-col border-r border-neutral-200 bg-white p-4 md:flex print:hidden">
         <div className="mb-6 text-sm font-bold">Taxwork</div>
         {moreOpen && (
           <button
@@ -220,7 +220,7 @@ export default function Sidebar() {
           className="fixed inset-0 z-40 cursor-default bg-transparent md:hidden"
         />
       )}
-      <nav className="fixed inset-x-0 bottom-0 z-50 flex border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-50 flex border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden print:hidden">
         {mobileLinks.map((l) => (
           <Link
             key={l.href}

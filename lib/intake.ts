@@ -139,6 +139,17 @@ export async function loadIntakeByToken(
   return { link, submission: subs[0] ? toSubmission(subs[0]) : null };
 }
 
+/** Load a submission by id (for the staff print/preview view). */
+export async function loadIntakeSubmissionById(
+  id: string
+): Promise<IntakeSubmission | null> {
+  const rows = (await sql`select * from intake_submissions where id=${id} limit 1`) as Record<
+    string,
+    unknown
+  >[];
+  return rows[0] ? toSubmission(rows[0]) : null;
+}
+
 export function intakePathPrefix(linkId: string): string {
   return `intake/${linkId}/`;
 }

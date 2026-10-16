@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   approveIntakeSubmission,
   createIntakeLink,
@@ -219,7 +220,10 @@ export default function OnboardingPage() {
                       ))}
                   </div>
 
-                  <div className="flex gap-2 pt-1">
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Link href={`/onboarding/${s.id}`} className="btn text-xs">
+                      ดูแบบฟอร์ม / พิมพ์
+                    </Link>
                     <button className="btn-primary text-xs" onClick={() => approve(s.id)} disabled={busy}>
                       อนุมัติ → สร้างลูกค้า
                     </button>
