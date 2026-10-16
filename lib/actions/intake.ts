@@ -6,6 +6,8 @@ import { requireUser } from "@/lib/session";
 import { generatePublicId } from "@/lib/ids";
 import { appOrigin } from "@/lib/app-url";
 import { R2_BUCKET, signedUrl } from "@/lib/r2";
+import { sendEmail } from "@/lib/email/resend";
+import { buildIntakeApprovedEmail } from "@/lib/email/intake-email";
 import {
   INTAKE_LINK_TTL_DAYS,
   toSubmission,
@@ -199,6 +201,32 @@ export async function approveIntakeSubmission(
     await sql`update intake_submissions
       set status='approved', client_id=${clientId}, reviewed_by=${user.email}, reviewed_at=${new Date().toISOString()}
       where id=${id}`;
+
+    // Best-effort courtesy email to the prospect.
+    try {
+      if (sub.contact_email && process.env.REPORT_FROM_EMAIL) {
+        const settings = (await sql`
+          select firm_name, firm_phone, firm_line from app_settings where id=1
+        `) as { firm_name: string | null; firm_phone: string | null; firm_line: string | null }[];
+        const s = settings[0];
+        const built = buildIntakeApprovedEmail({
+          firmName: s?.firm_name?.trim() || "Taxwork",
+          contactName: sub.contact_name,
+          companyName: sub.name_th,
+          firmPhone: s?.firm_phone?.trim() || null,
+          firmLine: s?.firm_line?.trim() || null,
+        });
+        await sendEmail({
+          to: sub.contact_email,
+          subject: built.subject,
+          html: built.html,
+          text: built.text,
+        });
+      }
+    } catch (error) {
+      console.error("intake ack email failed:", error);
+    }
+
     return { ok: true, clientId, duplicate };
   } catch (error) {
     console.error("approveIntakeSubmission failed:", error);

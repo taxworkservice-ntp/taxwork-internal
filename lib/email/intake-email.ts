@@ -59,3 +59,61 @@ export function buildIntakeNotifyEmail(input: IntakeNotifyInput): IntakeNotifyEm
 
   return { subject, html, text };
 }
+
+export type IntakeApprovedInput = {
+  firmName: string;
+  contactName: string;
+  companyName: string;
+  firmPhone?: string | null;
+  firmLine?: string | null;
+};
+
+/** Courtesy "we received your registration" email sent to the prospect on approve. */
+export function buildIntakeApprovedEmail(
+  input: IntakeApprovedInput
+): IntakeNotifyEmail {
+  const firm = input.firmName.trim() || "Taxwork";
+  const contact = input.contactName.trim() || "ท่าน";
+  const company = input.companyName.trim() || "บริษัทของท่าน";
+  const contactLine = [
+    input.firmPhone ? `โทร ${input.firmPhone}` : "",
+    input.firmLine ? `LINE ${input.firmLine}` : "",
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
+
+  const subject = `${firm} — ได้รับการลงทะเบียนของ ${company} แล้ว`;
+
+  const html = `<!doctype html>
+<html lang="th"><head><meta charset="utf-8" /></head>
+<body style="margin:0;padding:24px;font-family:'Sarabun','Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;line-height:1.7;color:#111827;">
+  <p style="margin:0 0 16px;font-size:17px;font-weight:600;">เรียน คุณ${esc(contact)}</p>
+  <p style="margin:0 0 16px;color:#374151;">${esc(
+    firm
+  )} ได้รับข้อมูลการลงทะเบียนของ ${esc(
+    company
+  )} เรียบร้อยแล้ว ขอบคุณที่เลือกใช้บริการของเรา เจ้าหน้าที่จะติดต่อกลับเพื่อดำเนินการขั้นต่อไปโดยเร็ว</p>
+  ${
+    contactLine
+      ? `<p style="margin:0 0 20px;color:#6b7280;font-size:13px;">ติดต่อเรา: ${esc(contactLine)}</p>`
+      : ""
+  }
+  <p style="margin:0 0 4px;">จึงเรียนมาเพื่อโปรดทราบ</p>
+  <p style="margin:0 0 20px;font-weight:600;">${esc(firm)}</p>
+  <p style="margin:0;font-size:12px;color:#9ca3af;">อีเมลฉบับนี้ส่งโดยระบบอัตโนมัติ</p>
+</body></html>`;
+
+  const text = [
+    `เรียน คุณ${contact}`,
+    "",
+    `${firm} ได้รับข้อมูลการลงทะเบียนของ ${company} เรียบร้อยแล้ว ขอบคุณที่เลือกใช้บริการของเรา เจ้าหน้าที่จะติดต่อกลับเพื่อดำเนินการขั้นต่อไปโดยเร็ว`,
+    "",
+    ...(contactLine ? [`ติดต่อเรา: ${contactLine}`, ""] : []),
+    "จึงเรียนมาเพื่อโปรดทราบ",
+    firm,
+    "",
+    "อีเมลฉบับนี้ส่งโดยระบบอัตโนมัติ",
+  ].join("\n");
+
+  return { subject, html, text };
+}
