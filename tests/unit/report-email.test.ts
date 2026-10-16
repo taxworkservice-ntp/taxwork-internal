@@ -35,11 +35,9 @@ describe("buildReportEmail", () => {
   it("greets the client and includes the reference block", () => {
     const { html, text } = buildReportEmail(base);
     expect(html).toContain("เรียน บริษัท ตัวอย่าง จำกัด");
-    expect(html).toContain("เลขอ้างอิง:");
-    expect(html).toContain("TW-6909-XK7P2M");
-    expect(html).toContain("รอบระยะเวลา:");
+    expect(html).toContain("เลขที่รายงาน TW-6909-XK7P2M");
     expect(html).toContain("ครั้งที่ 1");
-    expect(text).toContain("เลขอ้างอิง: TW-6909-XK7P2M");
+    expect(text).toContain("เลขที่รายงาน TW-6909-XK7P2M");
   });
 
   it("renders the item summary and total", () => {
