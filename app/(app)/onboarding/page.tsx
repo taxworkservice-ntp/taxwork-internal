@@ -179,7 +179,8 @@ export default function OnboardingPage() {
                 <div className="min-w-0">
                   <div className="font-medium">{s.name_th}</div>
                   <div className="text-xs text-neutral-500">
-                    เลขทะเบียน {formatTaxId(s.juristic_id)} · ผู้ติดต่อ {s.contact_name} · {s.contact_phone}
+                    {s.juristic_id ? `เลขทะเบียน ${formatTaxId(s.juristic_id)}` : "รอจดทะเบียน"} · ผู้ติดต่อ{" "}
+                    {s.contact_name} · {s.contact_phone}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -342,7 +343,9 @@ export default function OnboardingPage() {
                 .map((s) => (
                   <tr key={s.id}>
                     <td>{s.name_th}</td>
-                    <td className="font-mono text-xs">{formatTaxId(s.juristic_id)}</td>
+                    <td className="font-mono text-xs">
+                      {s.juristic_id ? formatTaxId(s.juristic_id) : "—"}
+                    </td>
                     <td>{badge(s.status)}</td>
                     <td className="text-xs">{s.reviewed_by ?? "-"}</td>
                     <td className="text-xs">{s.reviewed_at ? new Date(s.reviewed_at).toLocaleString("th-TH") : "-"}</td>

@@ -171,11 +171,15 @@ export async function approveIntakeSubmission(
     if (!sub) return { ok: false, error: "ไม่พบคำขอ" };
     if (sub.status !== "submitted") return { ok: false, error: "คำขอนี้ถูกตรวจสอบแล้ว" };
 
-    const existing = (await sql`
-      select id from clients
-      where regexp_replace(coalesce(tax_id, ''), '\\D', '', 'g') = ${sub.juristic_id}
-      limit 1
-    `) as { id: string }[];
+    // No registration number is collected on the public form (companies are
+    // usually not yet registered), so de-dup only runs when one exists.
+    const existing = sub.juristic_id
+      ? ((await sql`
+          select id from clients
+          where regexp_replace(coalesce(tax_id, ''), '\\D', '', 'g') = ${sub.juristic_id}
+          limit 1
+        `) as { id: string }[])
+      : [];
 
     let clientId: string;
     let duplicate = false;
@@ -191,7 +195,7 @@ export async function approveIntakeSubmission(
 
       const inserted = (await sql`
         insert into clients (name, tax_id, email, phone, address, notes)
-        values (${sub.name_th}, ${sub.juristic_id}, ${sub.company_email || sub.contact_email}, ${sub.company_phone || sub.contact_phone},
+        values (${sub.name_th}, ${sub.juristic_id || null}, ${sub.company_email || sub.contact_email}, ${sub.company_phone || sub.contact_phone},
                 ${composeAddress(sub)}, ${notesParts.join("\n") || null})
         returning id
       `) as { id: string }[];

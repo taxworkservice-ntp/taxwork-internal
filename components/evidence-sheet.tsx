@@ -24,7 +24,7 @@ export type EvidenceData = {
   nameEn?: string | null;
   nameTh2?: string | null;
   nameEn2?: string | null;
-  juristicId: string;
+  juristicId?: string | null;
   regDate?: string | null;
   capitalRegistered?: string | number | null;
   capitalPaid?: string | number | null;
@@ -95,7 +95,10 @@ export default function EvidenceSheet({ data }: { data: EvidenceData }) {
       <Section title="1. ข้อมูลบริษัท">
         <Row label="ชื่อบริษัท (ไทย)" value={data.nameTh} />
         <Row label="ชื่อบริษัท (อังกฤษ)" value={data.nameEn} />
-        <Row label="เลขทะเบียนนิติบุคคล" value={maskTaxId(data.juristicId)} />
+        <Row
+          label="เลขทะเบียนนิติบุคคล"
+          value={data.juristicId ? maskTaxId(data.juristicId) : "— (รอจดทะเบียน)"}
+        />
         <Row label="อีเมลบริษัท" value={data.companyEmail} />
         <Row label="โทรศัพท์บริษัท" value={data.companyPhone} />
         {(data.regDate || data.capitalRegistered || data.businessDesc) && (

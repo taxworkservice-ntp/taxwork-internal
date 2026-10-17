@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
-import { isValidTaxId, formatTaxId } from "@/lib/tax-id";
 import { sendEmail } from "@/lib/email/resend";
 import { buildIntakeNotifyEmail } from "@/lib/email/intake-email";
 import { appOrigin } from "@/lib/app-url";
@@ -67,7 +66,6 @@ export async function POST(
 
   // --- required core ---
   const nameTh = clean(body.name_th);
-  const juristicId = clean(body.juristic_id).replace(/\D/g, "");
   const companyEmail = clean(body.company_email, 120);
   const companyPhone = clean(body.company_phone, 50);
   const companyHouse = clean(body.company_house_path, 400);
@@ -80,7 +78,6 @@ export async function POST(
   const signedIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null;
 
   if (!nameTh) return json("กรุณากรอกชื่อบริษัท (ไทย)", 400);
-  if (!isValidTaxId(juristicId)) return json("เลขทะเบียนนิติบุคคล 13 หลักไม่ถูกต้อง", 400);
   if (!isEmail(companyEmail)) return json("กรุณากรอกอีเมลบริษัทให้ถูกต้อง", 400);
   if (!companyPhone) return json("กรุณากรอกโทรศัพท์บริษัท", 400);
   if (!isValidIntakePath(companyHouse, found.link.id))
@@ -127,7 +124,7 @@ export async function POST(
     name_en: nullable(body.name_en),
     name_th2: nullable(body.name_th2),
     name_en2: nullable(body.name_en2),
-    juristic_id: juristicId,
+    juristic_id: "",
     reg_date: dateOrNull(body.reg_date),
     capital_registered: numOrNull(body.capital_registered),
     capital_paid: numOrNull(body.capital_paid),
@@ -158,7 +155,7 @@ export async function POST(
       id = found.submission.id;
       await sql`update intake_submissions set
         name_th=${v.name_th}, name_en=${v.name_en},
-        juristic_id=${v.juristic_id}, reg_date=${v.reg_date},
+        reg_date=${v.reg_date},
         capital_registered=${v.capital_registered}, capital_paid=${v.capital_paid}, business_desc=${v.business_desc},
         company_email=${v.company_email}, company_phone=${v.company_phone},
         company_house_path=${v.company_house_path}, company_map_path=${v.company_map_path}, company_map_desc=${v.company_map_desc},
@@ -204,7 +201,7 @@ export async function POST(
       const origin = await appOrigin();
       const built = buildIntakeNotifyEmail({
         name: v.name_th,
-        juristicId: formatTaxId(v.juristic_id),
+        juristicId: "— (รอจดทะเบียน)",
         contactName: v.contact_name,
         contactPhone: v.contact_phone,
         contactEmail: v.contact_email,

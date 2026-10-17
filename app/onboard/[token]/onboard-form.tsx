@@ -4,7 +4,6 @@ import { useRef, useState } from "react";
 import type { FirmBranding } from "@/lib/branding";
 import type { IntakeSubmission } from "@/lib/intake";
 import EvidenceSheet, { type EvidenceData } from "@/components/evidence-sheet";
-import { checkTaxId } from "@/lib/tax-id";
 import {
   INTAKE_TIMELINE_NOTE,
   INTAKE_MIN_SHAREHOLDERS,
@@ -207,7 +206,6 @@ export default function OnboardForm({
   const [f, setF] = useState({
     name_th: initial?.name_th ?? "",
     name_en: initial?.name_en ?? "",
-    juristic_id: initial?.juristic_id ?? "",
     company_email: initial?.company_email ?? "",
     company_phone: initial?.company_phone ?? "",
     reg_date: initial?.reg_date ?? "",
@@ -246,7 +244,6 @@ export default function OnboardForm({
     return [newSh(), newSh()];
   });
   const [consent, setConsent] = useState(Boolean(initial?.consent_at));
-  const [signerName, setSignerName] = useState(initial?.signer_name ?? "");
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState("");
@@ -265,7 +262,6 @@ export default function OnboardForm({
   const shsDocsOk = shs.length >= INTAKE_MIN_SHAREHOLDERS && shs.every((s) => s.idCardPath);
   const steps = [
     { label: "ชื่อบริษัท", done: Boolean(f.name_th.trim()) },
-    { label: "เลข 13 หลัก", done: checkTaxId(f.juristic_id).ok },
     { label: "ติดต่อบริษัท", done: emailOk(f.company_email) && Boolean(f.company_phone.trim()) },
     { label: "ทะเบียนบ้าน", done: Boolean(companyHouse.path) },
     { label: "แผนที่", done: Boolean(companyMap.path) },
@@ -277,11 +273,12 @@ export default function OnboardForm({
     },
     {
       label: "ลงนาม",
-      done: Boolean(signerName.trim()) && (Boolean(signatureDataUrl) || Boolean(initial?.signature_path)) && consent,
+      done: Boolean(f.contact_name.trim()) && (Boolean(signatureDataUrl) || Boolean(initial?.signature_path)) && consent,
     },
   ];
   const doneCount = steps.filter((s) => s.done).length;
   const allDone = doneCount === steps.length;
+
 
   async function upload(kind: string, blob: Blob, fileName: string, contentType: string): Promise<string> {
     const res = await fetch(`/api/onboard/${token}/upload-url`, {
@@ -329,8 +326,8 @@ export default function OnboardForm({
       setError(`กรุณากรอกข้อมูลผู้ถือหุ้นอย่างน้อย ${INTAKE_MIN_SHAREHOLDERS} ราย`);
       return;
     }
-    if (!signerName.trim()) {
-      setError("กรุณากรอกชื่อ–นามสกุลผู้ลงนาม");
+    if (!f.contact_name.trim()) {
+      setError("กรุณากรอกชื่อ–นามสกุล ผู้ติดต่อ (ใช้เป็นผู้ลงนาม)");
       return;
     }
     if (!signatureDataUrl && !initial?.signature_path) {
@@ -362,7 +359,7 @@ export default function OnboardForm({
             idCardPath: s.idCardPath,
           })),
           consent,
-          signer_name: signerName,
+          signer_name: f.contact_name,
           signature_path: signaturePath,
         }),
       });
@@ -390,7 +387,6 @@ export default function OnboardForm({
       submittedAt: submittedAt ?? new Date().toISOString(),
       nameTh: f.name_th,
       nameEn: f.name_en,
-      juristicId: f.juristic_id,
       regDate: f.reg_date,
       capitalRegistered: f.capital_registered,
       capitalPaid: f.capital_paid,
@@ -405,7 +401,7 @@ export default function OnboardForm({
       notes: f.notes,
       shareholders: shs,
       signatureSrc: signatureDataUrl || null,
-      signerName,
+      signerName: f.contact_name,
       signedAt: submittedAt,
       consentAt: consent ? submittedAt : null,
       docs: [
@@ -445,7 +441,9 @@ export default function OnboardForm({
         ) : null}
         <div>
           <h1 className="text-lg font-bold">ลงทะเบียนลูกค้าใหม่</h1>
-          <p className="text-xs text-neutral-500">{branding.firmName} · ใช้เวลาประมาณ 3 นาที</p>
+          <p className="text-xs text-neutral-500">
+            {branding.firmName} · ใช้เวลาประมาณ 3 นาที
+          </p>
         </div>
       </header>
 
@@ -453,7 +451,7 @@ export default function OnboardForm({
         <section className="card space-y-2">
           <p className="text-sm font-semibold">ก่อนเริ่ม — เตรียมไว้ 3 อย่าง</p>
           <ol className="list-inside list-decimal space-y-0.5 text-sm text-neutral-600">
-            <li>เลขทะเบียนนิติบุคคล 13 หลัก (ดูในหนังสือรับรอง)</li>
+            <li>ชื่อบริษัทที่ต้องการจด + อีเมล/โทรศัพท์บริษัท</li>
             <li>บัตรประชาชนของผู้ถือหุ้นทุกคน (อย่างน้อย 2 คน) + เบอร์/อีเมลของแต่ละคน</li>
             <li>ทะเบียนบ้านที่ตั้งบริษัท + ภาพแผนที่ (แคปจาก Google Maps)</li>
           </ol>
@@ -490,14 +488,6 @@ export default function OnboardForm({
             <Field label="ชื่อบริษัท (ไทย) *" required value={f.name_th} onChange={(v) => set("name_th", v)} hint="ตามหนังสือรับรอง / ชื่อที่ต้องการจด" placeholder="บริษัท ตัวอย่าง จำกัด" />
             <Field label="ชื่อบริษัท (อังกฤษ)" value={f.name_en} onChange={(v) => set("name_en", v)} hint="ถ้ามี" placeholder="EXAMPLE CO., LTD." />
           </div>
-          <Field
-            label="เลขทะเบียนนิติบุคคล (13 หลัก)"
-            required
-            value={f.juristic_id}
-            onChange={(v) => set("juristic_id", v.replace(/[^\d-]/g, ""))}
-            placeholder="0-0000-00000-00-0"
-            hint="ดูในหนังสือรับรองบริษัท — ระบบตรวจให้อัตโนมัติ"
-          />
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="อีเมลบริษัท" required value={f.company_email} onChange={(v) => set("company_email", v)} hint="ใช้ส่งเอกสาร/ใบแจ้งหนี้" placeholder="info@company.co.th" />
             <Field label="โทรศัพท์บริษัท" required value={f.company_phone} onChange={(v) => set("company_phone", v)} hint="ติดต่อเวลาทำการ" placeholder="02-000-0000" />
@@ -606,13 +596,14 @@ export default function OnboardForm({
           </div>
           <div>
             <span className="label">ลายเซ็นยืนยัน <span className="text-red-500">*</span></span>
-            <Hint>เซ็นในกรอบด้วยนิ้ว/เมาส์ แล้วพิมพ์ชื่อผู้ลงนามด้านล่าง</Hint>
+            <Hint>
+              เซ็นในกรอบด้วยนิ้ว/เมาส์ · ผู้ลงนามคือ “{f.contact_name || "ผู้ติดต่อที่กรอกด้านบน"}”
+            </Hint>
             {initial?.signature_path && !signatureDataUrl && (
               <p className="mt-1 text-xs text-emerald-600">✓ มีลายเซ็นที่บันทึกไว้แล้ว (วาดใหม่ได้หากต้องการแก้ไข)</p>
             )}
             <SignaturePad onChange={setSignatureDataUrl} />
           </div>
-          <Field label="ชื่อ–นามสกุล ผู้ลงนาม" required value={signerName} onChange={setSignerName} hint="ต้องตรงกับคนที่เซ็นด้านบน" />
           <label className="flex items-start gap-2 text-sm">
             <input type="checkbox" className="mt-1" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
             <span>
