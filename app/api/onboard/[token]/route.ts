@@ -157,7 +157,7 @@ export async function POST(
     if (found.submission) {
       id = found.submission.id;
       await sql`update intake_submissions set
-        name_th=${v.name_th}, name_en=${v.name_en}, name_th2=${v.name_th2}, name_en2=${v.name_en2},
+        name_th=${v.name_th}, name_en=${v.name_en},
         juristic_id=${v.juristic_id}, reg_date=${v.reg_date},
         capital_registered=${v.capital_registered}, capital_paid=${v.capital_paid}, business_desc=${v.business_desc},
         company_email=${v.company_email}, company_phone=${v.company_phone},

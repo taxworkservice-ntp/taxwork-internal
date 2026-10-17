@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import type { FirmBranding } from "@/lib/branding";
 import type { IntakeSubmission } from "@/lib/intake";
 import EvidenceSheet, { type EvidenceData } from "@/components/evidence-sheet";
+import { checkTaxId } from "@/lib/tax-id";
 import {
   INTAKE_TIMELINE_NOTE,
   INTAKE_MIN_SHAREHOLDERS,
@@ -206,8 +207,6 @@ export default function OnboardForm({
   const [f, setF] = useState({
     name_th: initial?.name_th ?? "",
     name_en: initial?.name_en ?? "",
-    name_th2: initial?.name_th2 ?? "",
-    name_en2: initial?.name_en2 ?? "",
     juristic_id: initial?.juristic_id ?? "",
     company_email: initial?.company_email ?? "",
     company_phone: initial?.company_phone ?? "",
@@ -258,6 +257,31 @@ export default function OnboardForm({
   const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
   const setSh = (key: string, patch: Partial<Sh>) =>
     setShs((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)));
+
+  const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  const shsInfoOk =
+    shs.length >= INTAKE_MIN_SHAREHOLDERS &&
+    shs.every((s) => s.name.trim() && s.phone.trim() && emailOk(s.email));
+  const shsDocsOk = shs.length >= INTAKE_MIN_SHAREHOLDERS && shs.every((s) => s.idCardPath);
+  const steps = [
+    { label: "ชื่อบริษัท", done: Boolean(f.name_th.trim()) },
+    { label: "เลข 13 หลัก", done: checkTaxId(f.juristic_id).ok },
+    { label: "ติดต่อบริษัท", done: emailOk(f.company_email) && Boolean(f.company_phone.trim()) },
+    { label: "ทะเบียนบ้าน", done: Boolean(companyHouse.path) },
+    { label: "แผนที่", done: Boolean(companyMap.path) },
+    { label: "ผู้ถือหุ้น", done: shsInfoOk },
+    { label: "บัตร ปชช.", done: shsDocsOk },
+    {
+      label: "ผู้ติดต่อ",
+      done: Boolean(f.contact_name.trim()) && Boolean(f.contact_phone.trim()) && emailOk(f.contact_email),
+    },
+    {
+      label: "ลงนาม",
+      done: Boolean(signerName.trim()) && (Boolean(signatureDataUrl) || Boolean(initial?.signature_path)) && consent,
+    },
+  ];
+  const doneCount = steps.filter((s) => s.done).length;
+  const allDone = doneCount === steps.length;
 
   async function upload(kind: string, blob: Blob, fileName: string, contentType: string): Promise<string> {
     const res = await fetch(`/api/onboard/${token}/upload-url`, {
@@ -366,8 +390,6 @@ export default function OnboardForm({
       submittedAt: submittedAt ?? new Date().toISOString(),
       nameTh: f.name_th,
       nameEn: f.name_en,
-      nameTh2: f.name_th2,
-      nameEn2: f.name_en2,
       juristicId: f.juristic_id,
       regDate: f.reg_date,
       capitalRegistered: f.capital_registered,
@@ -435,16 +457,38 @@ export default function OnboardForm({
             <li>บัตรประชาชนของผู้ถือหุ้นทุกคน (อย่างน้อย 2 คน) + เบอร์/อีเมลของแต่ละคน</li>
             <li>ทะเบียนบ้านที่ตั้งบริษัท + ภาพแผนที่ (แคปจาก Google Maps)</li>
           </ol>
+          <div className="mt-1 flex items-center gap-2">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-neutral-200">
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-all"
+                style={{ width: `${(doneCount / steps.length) * 100}%` }}
+              />
+            </div>
+            <span className="text-xs font-medium text-neutral-500">
+              {doneCount}/{steps.length}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {steps.map((s) => (
+              <span
+                key={s.label}
+                className={`rounded-full px-2 py-0.5 text-[11px] ${
+                  s.done ? "bg-emerald-50 text-emerald-700" : "bg-neutral-100 text-neutral-500"
+                }`}
+              >
+                {s.done ? "✓ " : ""}
+                {s.label}
+              </span>
+            ))}
+          </div>
           <p className="rounded bg-neutral-50 px-2 py-1.5 text-xs text-neutral-500">{INTAKE_TIMELINE_NOTE}</p>
         </section>
 
         <section className="card space-y-3">
           <SectionTitle step="1">ข้อมูลบริษัท</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="ชื่อบริษัท (ไทย) ตัวเลือก 1" required value={f.name_th} onChange={(v) => set("name_th", v)} hint="ตามหนังสือรับรอง / ชื่อที่ต้องการจด" placeholder="บริษัท ตัวอย่าง จำกัด" />
-            <Field label="ชื่อบริษัท (อังกฤษ) ตัวเลือก 1" value={f.name_en} onChange={(v) => set("name_en", v)} placeholder="EXAMPLE CO., LTD." />
-            <Field label="ชื่อบริษัท (ไทย) ตัวเลือก 2" value={f.name_th2} onChange={(v) => set("name_th2", v)} hint="ชื่อสำรองถ้าชื่อแรกซ้ำ" />
-            <Field label="ชื่อบริษัท (อังกฤษ) ตัวเลือก 2" value={f.name_en2} onChange={(v) => set("name_en2", v)} hint="ชื่อสำรองถ้าชื่อแรกซ้ำ" />
+            <Field label="ชื่อบริษัท (ไทย) *" required value={f.name_th} onChange={(v) => set("name_th", v)} hint="ตามหนังสือรับรอง / ชื่อที่ต้องการจด" placeholder="บริษัท ตัวอย่าง จำกัด" />
+            <Field label="ชื่อบริษัท (อังกฤษ)" value={f.name_en} onChange={(v) => set("name_en", v)} hint="ถ้ามี" placeholder="EXAMPLE CO., LTD." />
           </div>
           <Field
             label="เลขทะเบียนนิติบุคคล (13 หลัก)"
@@ -588,8 +632,16 @@ export default function OnboardForm({
           <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
         )}
 
-        <div className="sticky bottom-0 -mx-4 border-t border-neutral-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
-          <button type="button" className="btn-primary w-full sm:w-auto" onClick={submit} disabled={busy || Boolean(uploading) || !consent}>
+        <div className="sticky bottom-0 -mx-4 flex items-center justify-between gap-3 border-t border-neutral-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
+          <span className={`text-xs font-medium ${allDone ? "text-emerald-600" : "text-neutral-500"}`}>
+            {allDone ? "พร้อมส่ง ✓" : `ขาดอีก ${steps.length - doneCount} รายการ`}
+          </span>
+          <button
+            type="button"
+            className="btn-primary flex-1 sm:flex-none"
+            onClick={submit}
+            disabled={busy || Boolean(uploading) || !consent}
+          >
             {busy ? "กำลังส่ง…" : "ส่งข้อมูลลงทะเบียน"}
           </button>
         </div>

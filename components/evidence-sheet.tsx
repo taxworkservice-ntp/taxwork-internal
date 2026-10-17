@@ -93,10 +93,8 @@ export default function EvidenceSheet({ data }: { data: EvidenceData }) {
       </header>
 
       <Section title="1. ข้อมูลบริษัท">
-        <Row label="ชื่อบริษัท (ไทย) 1" value={data.nameTh} />
-        <Row label="ชื่อบริษัท (อังกฤษ) 1" value={data.nameEn} />
-        <Row label="ชื่อบริษัท (ไทย) 2" value={data.nameTh2} />
-        <Row label="ชื่อบริษัท (อังกฤษ) 2" value={data.nameEn2} />
+        <Row label="ชื่อบริษัท (ไทย)" value={data.nameTh} />
+        <Row label="ชื่อบริษัท (อังกฤษ)" value={data.nameEn} />
         <Row label="เลขทะเบียนนิติบุคคล" value={maskTaxId(data.juristicId)} />
         <Row label="อีเมลบริษัท" value={data.companyEmail} />
         <Row label="โทรศัพท์บริษัท" value={data.companyPhone} />

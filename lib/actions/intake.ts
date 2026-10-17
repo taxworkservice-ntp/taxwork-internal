@@ -186,7 +186,6 @@ export async function approveIntakeSubmission(
     } else {
       const notesParts: string[] = [];
       if (sub.business_desc) notesParts.push(sub.business_desc);
-      if (sub.name_th2) notesParts.push(`ชื่อสำรอง: ${sub.name_th2}`);
       if (sub.has_prev_accountant) notesParts.push(`สำนักบัญชีเดิม: ${sub.prev_accountant || "-"}`);
       if (sub.notes) notesParts.push(sub.notes);
 
