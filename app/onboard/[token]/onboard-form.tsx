@@ -45,11 +45,15 @@ function mimeFor(file: File): string {
   return "image/jpeg";
 }
 
-function SectionTitle({ step, children }: { step: string; children: React.ReactNode }) {
+function SectionTitle({ step, done, children }: { step: string; done?: boolean; children: React.ReactNode }) {
   return (
     <h2 className="flex items-center gap-2 text-sm font-semibold">
-      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900 text-[11px] text-white">
-        {step}
+      <span
+        className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] text-white ${
+          done ? "bg-emerald-500" : "bg-neutral-900"
+        }`}
+      >
+        {done ? "✓" : step}
       </span>
       {children}
     </h2>
@@ -278,6 +282,12 @@ export default function OnboardForm({
   ];
   const doneCount = steps.filter((s) => s.done).length;
   const allDone = doneCount === steps.length;
+  const secDone = [
+    steps[0].done && steps[1].done,
+    steps[2].done && steps[3].done,
+    steps[4].done && steps[5].done,
+    steps[6].done && steps[7].done,
+  ];
 
 
   async function upload(kind: string, blob: Blob, fileName: string, contentType: string): Promise<string> {
@@ -455,35 +465,22 @@ export default function OnboardForm({
             <li>บัตรประชาชนของผู้ถือหุ้นทุกคน (อย่างน้อย 2 คน) + เบอร์/อีเมลของแต่ละคน</li>
             <li>ทะเบียนบ้านที่ตั้งบริษัท + ภาพแผนที่ (แคปจาก Google Maps)</li>
           </ol>
-          <div className="mt-1 flex items-center gap-2">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-neutral-200">
+          <div className="mt-2 flex items-center gap-3">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-neutral-200">
               <div
                 className="h-full rounded-full bg-emerald-500 transition-all"
                 style={{ width: `${(doneCount / steps.length) * 100}%` }}
               />
             </div>
-            <span className="text-xs font-medium text-neutral-500">
-              {doneCount}/{steps.length}
+            <span className="shrink-0 text-[11px] font-medium text-neutral-500">
+              กรอกแล้ว {doneCount}/{steps.length}
             </span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {steps.map((s) => (
-              <span
-                key={s.label}
-                className={`rounded-full px-2 py-0.5 text-[11px] ${
-                  s.done ? "bg-emerald-50 text-emerald-700" : "bg-neutral-100 text-neutral-500"
-                }`}
-              >
-                {s.done ? "✓ " : ""}
-                {s.label}
-              </span>
-            ))}
           </div>
           <p className="rounded bg-neutral-50 px-2 py-1.5 text-xs text-neutral-500">{INTAKE_TIMELINE_NOTE}</p>
         </section>
 
         <section className="card space-y-3">
-          <SectionTitle step="1">ข้อมูลบริษัท</SectionTitle>
+          <SectionTitle step="1" done={secDone[0]}>ข้อมูลบริษัท</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="ชื่อบริษัท (ไทย) *" required value={f.name_th} onChange={(v) => set("name_th", v)} hint="ตามหนังสือรับรอง / ชื่อที่ต้องการจด" placeholder="บริษัท ตัวอย่าง จำกัด" />
             <Field label="ชื่อบริษัท (อังกฤษ)" value={f.name_en} onChange={(v) => set("name_en", v)} hint="ถ้ามี" placeholder="EXAMPLE CO., LTD." />
@@ -512,7 +509,7 @@ export default function OnboardForm({
         </section>
 
         <section className="card space-y-3">
-          <SectionTitle step="2">ที่ตั้งสำนักงานใหญ่</SectionTitle>
+          <SectionTitle step="2" done={secDone[1]}>ที่ตั้งสำนักงานใหญ่</SectionTitle>
           <p className="text-xs text-neutral-500">ไม่ต้องพิมพ์ที่อยู่ — แนบเอกสารให้ครบก็พอ</p>
           <UploadBox
             label="สำเนาทะเบียนบ้าน (ที่ตั้งบริษัท)"
@@ -542,7 +539,7 @@ export default function OnboardForm({
 
         <section className="card space-y-4">
           <div className="flex items-center justify-between">
-            <SectionTitle step="3">
+            <SectionTitle step="3" done={secDone[2]}>
               ผู้ถือหุ้น / กรรมการ <span className="text-xs font-normal text-neutral-400">({shs.length}/{INTAKE_MAX_SHAREHOLDERS})</span>
             </SectionTitle>
             {shs.length < INTAKE_MAX_SHAREHOLDERS && (
@@ -587,7 +584,7 @@ export default function OnboardForm({
         </section>
 
         <section className="card space-y-3">
-          <SectionTitle step="4">ติดต่อ & ลงนาม</SectionTitle>
+          <SectionTitle step="4" done={secDone[3]}>ติดต่อ & ลงนาม</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="ชื่อ–นามสกุล ผู้ติดต่อ" required value={f.contact_name} onChange={(v) => set("contact_name", v)} hint="คนที่เราประสานงานได้จริง" />
             <Field label="ตำแหน่ง" value={f.contact_position} onChange={(v) => set("contact_position", v)} />
