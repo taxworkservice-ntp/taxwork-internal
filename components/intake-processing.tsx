@@ -9,6 +9,7 @@ import {
   approveForFiling,
   createBookkeepingClient,
   rejectIntakeSubmission,
+  updateIntakeShareholderIds,
   updateIntakeSubmission,
   updateIssuedTaxId,
   type IntakeReviewPatch,
@@ -46,6 +47,7 @@ export default function IntakeProcessing({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [taxId, setTaxId] = useState(issuedTaxId ?? "");
+  const [shIds, setShIds] = useState<string[]>(evidence.shareholders.map((s) => s.idNo ?? ""));
   const [r, setR] = useState<IntakeReviewPatch>({
     address: defaults.address ?? "",
     vat_registered: defaults.vat_registered ?? null,
@@ -96,6 +98,9 @@ export default function IntakeProcessing({
   }
   async function saveTaxId() {
     await run(() => updateIssuedTaxId(id, taxId), "บันทึกเลขทะเบียนที่ออกแล้ว");
+  }
+  async function saveShIds() {
+    await run(() => updateIntakeShareholderIds(id, shIds), "บันทึกเลขบัตรผู้ถือหุ้นแล้ว");
   }
   async function convert() {
     if (!confirm("สร้างลูกค้าบัญชีจากคำขอนี้? (เฉพาะเมื่อบริษัทว่าจ้างทำบัญชี)")) return;
@@ -294,6 +299,33 @@ export default function IntakeProcessing({
                 );
               })}
             </div>
+          </div>
+          <div>
+            <span className="label">เลขบัตรประชาชนผู้ถือหุ้น (อ่านจากบัตรที่แนบ)</span>
+            <div className="space-y-2">
+              {evidence.shareholders.map((sh, i) => (
+                <label key={i} className="flex items-center gap-2 text-sm">
+                  <span className="w-40 shrink-0 truncate text-neutral-600">{sh.name}</span>
+                  <input
+                    className="input font-mono"
+                    disabled={!canEdit}
+                    maxLength={13}
+                    placeholder="13 หลัก"
+                    value={shIds[i] ?? ""}
+                    onChange={(e) =>
+                      setShIds((prev) => {
+                        const next = [...prev];
+                        next[i] = e.target.value.replace(/\D/g, "");
+                        return next;
+                      })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+            <button className="btn mt-2 text-xs" onClick={saveShIds} disabled={busy || !canEdit}>
+              บันทึกเลขบัตร
+            </button>
           </div>
         </section>
       )}

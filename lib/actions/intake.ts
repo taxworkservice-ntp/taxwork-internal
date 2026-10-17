@@ -12,6 +12,7 @@ import {
   INTAKE_LINK_TTL_DAYS,
   toSubmission,
   type IntakeLink,
+  type IntakeShareholder,
   type IntakeSubmission,
 } from "@/lib/intake";
 
@@ -307,9 +308,35 @@ export async function createBookkeepingClient(
 }
 
 /**
- * Fill in the 13-digit ID issued by DBD after a successful filing. Empty
- * clears it. Validated server-side (13 digits + checksum).
+ * Fill in shareholder ID numbers transcribed by staff from the uploaded ID
+ * cards. The public form no longer asks for them. Allowed while the record is
+ * still open (pending, or filed without a client yet).
  */
+export async function updateIntakeShareholderIds(
+  id: string,
+  ids: string[]
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const rows = (await sql`select shareholders from intake_submissions where id=${id}`) as {
+      shareholders: IntakeShareholder[];
+    }[];
+    const current = Array.isArray(rows[0]?.shareholders) ? rows[0].shareholders : [];
+    if (ids.length !== current.length)
+      return { ok: false, error: "จำนวนผู้ถือหุ้นไม่ตรงกับที่ส่งมา" };
+    const cleaned = ids.map((v) => String(v ?? "").replace(/\D/g, "").slice(0, 20));
+    for (const d of cleaned) {
+      if (d && d.length !== 13) return { ok: false, error: "เลขบัตรต้องมี 13 หลัก หรือเว้นว่าง" };
+    }
+    const next = current.map((sh, i) => ({ ...sh, idNo: cleaned[i] }));
+    await sql`update intake_submissions set shareholders=${JSON.stringify(next)}::jsonb
+      where id=${id} and (status='submitted' or (status='approved' and client_id is null))`;
+    return { ok: true };
+  } catch (error) {
+    console.error("updateIntakeShareholderIds failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
+}
 export async function updateIssuedTaxId(id: string, taxId: string): Promise<ActionResult> {
   try {
     await requireUser();

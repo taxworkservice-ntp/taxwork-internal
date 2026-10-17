@@ -78,7 +78,8 @@ export async function POST(
   const signaturePath = clean(body.signature_path, 400);
   const signedIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null;
 
-  if (!nameTh) return json("กรุณากรอกชื่อบริษัท (ไทย)", 400);
+  if (!nameTh) return json("กรุณากรอกชื่อบริษัท (ภาษาไทย)", 400);
+  if (!clean(body.name_en)) return json("กรุณากรอกชื่อบริษัท (ภาษาอังกฤษ)", 400);
   if (!isEmail(companyEmail)) return json("กรุณากรอกอีเมลบริษัทให้ถูกต้อง", 400);
   if (!companyPhone) return json("กรุณากรอกโทรศัพท์บริษัท", 400);
   if (!isValidIntakePath(companyHouse, found.link.id))

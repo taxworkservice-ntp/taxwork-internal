@@ -279,7 +279,7 @@ export default function OnboardForm({
     Math.abs(percentSum - 100) < 0.01;
   const shsDone = shsInfoOk && percentOk;
   const steps = [
-    { label: "ชื่อบริษัท", done: Boolean(f.name_th.trim()) },
+    { label: "ชื่อบริษัท", done: Boolean(f.name_th.trim()) && Boolean(f.name_en.trim()) },
     { label: "ติดต่อบริษัท", done: emailOk(f.company_email) && Boolean(f.company_phone.trim()) },
     { label: "ทะเบียนบ้าน", done: Boolean(companyHouse.path) },
     { label: "แผนที่", done: Boolean(companyMap.path) },
@@ -480,7 +480,7 @@ export default function OnboardForm({
         <section className="card space-y-2">
           <p className="text-sm font-semibold">ก่อนเริ่ม — โปรดเตรียมเอกสาร 3 รายการ</p>
           <ol className="list-inside list-decimal space-y-0.5 text-sm text-neutral-600">
-            <li>ชื่อบริษัทที่ประสงค์จะจดทะเบียน พร้อมอีเมลและหมายเลขโทรศัพท์ของบริษัท</li>
+            <li>ชื่อบริษัท (ไทยและอังกฤษ) ที่ประสงค์จะจดทะเบียน พร้อมอีเมลและหมายเลขโทรศัพท์ของบริษัท</li>
             <li>สำเนาบัตรประจำตัวประชาชนของผู้ถือหุ้นทุกท่าน (อย่างน้อย 2 ท่าน) พร้อมหมายเลขโทรศัพท์และอีเมลของแต่ละท่าน</li>
             <li>สำเนาทะเบียนบ้านของที่ตั้งสถานประกอบการ และภาพแผนที่จาก Google Maps</li>
           </ol>
@@ -507,7 +507,7 @@ export default function OnboardForm({
           <SectionTitle step="1" done={secDone[0]}>ส่วนที่ 1 — ข้อมูลนิติบุคคล</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="ชื่อบริษัท (ภาษาไทย)" required value={f.name_th} onChange={(v) => set("name_th", v)} placeholder="บริษัท ตัวอย่าง จำกัด" />
-            <Field label="ชื่อบริษัท (ภาษาอังกฤษ)" value={f.name_en} onChange={(v) => set("name_en", v)} placeholder="EXAMPLE CO., LTD." />
+            <Field label="ชื่อบริษัท (ภาษาอังกฤษ)" required value={f.name_en} onChange={(v) => set("name_en", v)} placeholder="EXAMPLE CO., LTD." />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="อีเมลของบริษัท" required value={f.company_email} onChange={(v) => set("company_email", v)} placeholder="info@company.co.th" />
@@ -582,7 +582,6 @@ export default function OnboardForm({
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="ชื่อ–นามสกุล" required value={s.name} onChange={(v) => setSh(s.key, { name: v })} />
-                <Field label="เลขบัตรประชาชน" value={s.idNo} onChange={(v) => setSh(s.key, { idNo: v })} />
                 <Field label="โทรศัพท์" required value={s.phone} onChange={(v) => setSh(s.key, { phone: v })} hint="DBD ส่งรหัสยืนยันไปเบอร์นี้" />
                 <Field label="อีเมล" required value={s.email} onChange={(v) => setSh(s.key, { email: v })} />
                 <Field label="สัดส่วนหุ้น (%)" required value={s.percent} onChange={(v) => setSh(s.key, { percent: v })} hint="รวมทุกคนต้องเป็น 100%" />
@@ -612,7 +611,6 @@ export default function OnboardForm({
           <SectionTitle step="4" done={secDone[3]}>ส่วนที่ 4 — ผู้ติดต่อและลายมือชื่อ</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="ชื่อ–นามสกุล ผู้ติดต่อ" required value={f.contact_name} onChange={(v) => set("contact_name", v)} hint="คนที่เราประสานงานได้จริง" />
-            <Field label="ตำแหน่ง" value={f.contact_position} onChange={(v) => set("contact_position", v)} />
             <Field label="โทรศัพท์" required value={f.contact_phone} onChange={(v) => set("contact_phone", v)} />
             <Field label="อีเมล" required value={f.contact_email} onChange={(v) => set("contact_email", v)} />
           </div>
