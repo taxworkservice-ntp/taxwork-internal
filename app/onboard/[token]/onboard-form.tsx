@@ -114,7 +114,7 @@ function UploadBox({
     <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-3">
       <div className="flex items-center gap-2">
         <button type="button" className="btn text-xs" onClick={() => ref.current?.click()} disabled={busy}>
-          {busy ? "กำลังอัปโหลด…" : "เลือกไฟล์"}
+          {busy ? "กำลังอัปโหลด…" : "แนบไฟล์"}
         </button>
         <span className="text-sm">
           {label} {required && <span className="text-red-500">*</span>}
@@ -192,7 +192,7 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void }) {
         style={{ touchAction: "none" }}
       />
       <button type="button" className="btn text-xs" onClick={clear}>
-        ล้างลายเซ็น
+        ล้างลายมือชื่อ
       </button>
     </div>
   );
@@ -297,7 +297,7 @@ export default function OnboardForm({
       body: JSON.stringify({ kind, fileName, contentType, size: blob.size }),
     });
     const data = (await res.json().catch(() => ({}))) as { url?: string; path?: string; error?: string };
-    if (!res.ok || !data.url || !data.path) throw new Error(data.error || "อัปโหลดไม่สำเร็จ");
+    if (!res.ok || !data.url || !data.path) throw new Error(data.error || "แนบไฟล์ไม่สำเร็จ");
     const put = await fetch(data.url, { method: "PUT", headers: { "Content-Type": contentType }, body: blob });
     if (!put.ok) throw new Error("อัปโหลดไปที่เซิร์ฟเวอร์ไม่สำเร็จ");
     return data.path;
@@ -311,7 +311,7 @@ export default function OnboardForm({
       if (kind === "company_house") setCompanyHouse({ path, name: file.name });
       else if (kind === "company_map") setCompanyMap({ path, name: file.name });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
+      setError(e instanceof Error ? e.message : "แนบไฟล์ไม่สำเร็จ");
     } finally {
       setUploading("");
     }
@@ -324,7 +324,7 @@ export default function OnboardForm({
       const path = await upload("shareholder_id", file, file.name, mimeFor(file));
       setSh(sh.key, { idCardPath: path, idCardName: file.name });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
+      setError(e instanceof Error ? e.message : "แนบไฟล์ไม่สำเร็จ");
     } finally {
       setUploading("");
     }
@@ -337,11 +337,11 @@ export default function OnboardForm({
       return;
     }
     if (!f.contact_name.trim()) {
-      setError("กรุณากรอกชื่อ–นามสกุล ผู้ติดต่อ (ใช้เป็นผู้ลงนาม)");
+      setError("กรุณาระบุชื่อ–นามสกุลของผู้ติดต่อ (ใช้เป็นผู้ลงนาม)");
       return;
     }
     if (!signatureDataUrl && !initial?.signature_path) {
-      setError("กรุณาลงนามยืนยันข้อมูล");
+      setError("กรุณาลงลายมือชื่อเพื่อยืนยันข้อมูล");
       return;
     }
     setBusy(true);
@@ -375,13 +375,13 @@ export default function OnboardForm({
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; ref?: string; submittedAt?: string };
       if (!res.ok) {
-        setError(data.error || "ส่งข้อมูลไม่สำเร็จ");
+        setError(data.error || "ส่งแบบฟอร์มไม่สำเร็จ");
         return;
       }
       setRef(data.ref ?? null);
       setSubmittedAt(data.submittedAt ?? new Date().toISOString());
     } catch {
-      setError("ส่งข้อมูลไม่สำเร็จ กรุณาลองใหม่");
+      setError("ส่งแบบฟอร์มไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     } finally {
       setBusy(false);
     }
@@ -450,20 +450,20 @@ export default function OnboardForm({
           <img src={branding.logoDataUri} alt={branding.firmName} className="h-9 max-w-[40%] object-contain" />
         ) : null}
         <div>
-          <h1 className="text-lg font-bold">ลงทะเบียนลูกค้าใหม่</h1>
+          <h1 className="text-lg font-bold">แบบฟอร์มลงทะเบียนใช้บริการ</h1>
           <p className="text-xs text-neutral-500">
-            {branding.firmName} · ใช้เวลาประมาณ 3 นาที
+            {branding.firmName} · ใช้เวลาประมาณ 3 นาที · ข้อมูลของท่านจะถูกเก็บเป็นความลับ
           </p>
         </div>
       </header>
 
       <div className="space-y-4">
         <section className="card space-y-2">
-          <p className="text-sm font-semibold">ก่อนเริ่ม — เตรียมไว้ 3 อย่าง</p>
+          <p className="text-sm font-semibold">ก่อนเริ่ม — โปรดเตรียมเอกสาร 3 รายการ</p>
           <ol className="list-inside list-decimal space-y-0.5 text-sm text-neutral-600">
-            <li>ชื่อบริษัทที่ต้องการจด + อีเมล/โทรศัพท์บริษัท</li>
-            <li>บัตรประชาชนของผู้ถือหุ้นทุกคน (อย่างน้อย 2 คน) + เบอร์/อีเมลของแต่ละคน</li>
-            <li>ทะเบียนบ้านที่ตั้งบริษัท + ภาพแผนที่ (แคปจาก Google Maps)</li>
+            <li>ชื่อบริษัทที่ประสงค์จะจดทะเบียน พร้อมอีเมลและหมายเลขโทรศัพท์ของบริษัท</li>
+            <li>สำเนาบัตรประจำตัวประชาชนของผู้ถือหุ้นทุกท่าน (อย่างน้อย 2 ท่าน) พร้อมหมายเลขโทรศัพท์และอีเมลของแต่ละท่าน</li>
+            <li>สำเนาทะเบียนบ้านของที่ตั้งสถานประกอบการ และภาพแผนที่จาก Google Maps</li>
           </ol>
           <div className="mt-2 flex items-center gap-3">
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-neutral-200">
@@ -480,14 +480,14 @@ export default function OnboardForm({
         </section>
 
         <section className="card space-y-3">
-          <SectionTitle step="1" done={secDone[0]}>ข้อมูลบริษัท</SectionTitle>
+          <SectionTitle step="1" done={secDone[0]}>ส่วนที่ 1 — ข้อมูลนิติบุคคล</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="ชื่อบริษัท (ไทย) *" required value={f.name_th} onChange={(v) => set("name_th", v)} hint="ตามหนังสือรับรอง / ชื่อที่ต้องการจด" placeholder="บริษัท ตัวอย่าง จำกัด" />
-            <Field label="ชื่อบริษัท (อังกฤษ)" value={f.name_en} onChange={(v) => set("name_en", v)} hint="ถ้ามี" placeholder="EXAMPLE CO., LTD." />
+            <Field label="ชื่อบริษัท (ภาษาไทย)" required value={f.name_th} onChange={(v) => set("name_th", v)} hint="โปรดระบุตามหนังสือรับรองบริษัท หรือชื่อที่ประสงค์จะจดทะเบียน" placeholder="บริษัท ตัวอย่าง จำกัด" />
+            <Field label="ชื่อบริษัท (ภาษาอังกฤษ)" value={f.name_en} onChange={(v) => set("name_en", v)} hint="หากมี" placeholder="EXAMPLE CO., LTD." />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="อีเมลบริษัท" required value={f.company_email} onChange={(v) => set("company_email", v)} hint="ใช้ส่งเอกสาร/ใบแจ้งหนี้" placeholder="info@company.co.th" />
-            <Field label="โทรศัพท์บริษัท" required value={f.company_phone} onChange={(v) => set("company_phone", v)} hint="ติดต่อเวลาทำการ" placeholder="02-000-0000" />
+            <Field label="อีเมลของบริษัท" required value={f.company_email} onChange={(v) => set("company_email", v)} hint="สำหรับจัดส่งเอกสารและใบแจ้งหนี้" placeholder="info@company.co.th" />
+            <Field label="หมายเลขโทรศัพท์ของบริษัท" required value={f.company_phone} onChange={(v) => set("company_phone", v)} hint="หมายเลขที่สามารถติดต่อได้ในเวลาทำการ" placeholder="02-000-0000" />
           </div>
           <details className="rounded-lg border border-neutral-200 p-3">
             <summary className="cursor-pointer text-xs text-neutral-500">ข้อมูลเพิ่มเติม (ถ้าทราบ)</summary>
@@ -509,12 +509,12 @@ export default function OnboardForm({
         </section>
 
         <section className="card space-y-3">
-          <SectionTitle step="2" done={secDone[1]}>ที่ตั้งสำนักงานใหญ่</SectionTitle>
-          <p className="text-xs text-neutral-500">ไม่ต้องพิมพ์ที่อยู่ — แนบเอกสารให้ครบก็พอ</p>
+          <SectionTitle step="2" done={secDone[1]}>ส่วนที่ 2 — ที่ตั้งสถานประกอบการ</SectionTitle>
+          <p className="text-xs text-neutral-500">ไม่จำเป็นต้องพิมพ์ที่อยู่ — กรุณาแนบเอกสารให้ครบถ้วน</p>
           <UploadBox
             label="สำเนาทะเบียนบ้าน (ที่ตั้งบริษัท)"
             required
-            hint="ถ่ายหน้าที่เห็นเลขที่บ้านชัดเจน (JPG/PNG/WebP/PDF ≤10MB)"
+            hint="กรุณาถ่ายหน้าที่แสดงเลขที่บ้านให้ชัดเจน (JPG/PNG/WebP/PDF ไม่เกิน 10MB)"
             accept="image/jpeg,image/png,image/webp,application/pdf"
             uploadedName={companyHouse.name}
             busy={uploading === "company_house"}
@@ -523,7 +523,7 @@ export default function OnboardForm({
           <UploadBox
             label="ภาพแผนที่ Google Maps"
             required
-            hint="เปิด Google Maps → ขยายให้เห็นตึก/ซอย → แคปหน้าจอ (รูปภาพ ≤10MB)"
+            hint="กรุณาเปิด Google Maps ขยายให้เห็นอาคารและซอย แล้วบันทึกภาพหน้าจอ (รูปภาพไม่เกิน 10MB)"
             accept="image/jpeg,image/png,image/webp"
             uploadedName={companyMap.name}
             busy={uploading === "company_map"}
@@ -531,7 +531,7 @@ export default function OnboardForm({
           />
           <label className="block">
             <span className="label">
-              อธิบายเส้นทางโดยสังเขป <span className="text-neutral-400">(ไม่บังคับ)</span>
+              คำอธิบายเส้นทางโดยสังเขป <span className="text-neutral-400">(ไม่บังคับ)</span>
             </span>
             <textarea className="input" rows={3} maxLength={500} value={mapDesc} onChange={(e) => setMapDesc(e.target.value)} placeholder="เช่น เข้าซอยสุขุมวิท 24 ตึกสีขาวชั้น 3 ใกล้ BTS พร้อมพงษ์" />
           </label>
@@ -540,7 +540,7 @@ export default function OnboardForm({
         <section className="card space-y-4">
           <div className="flex items-center justify-between">
             <SectionTitle step="3" done={secDone[2]}>
-              ผู้ถือหุ้น / กรรมการ <span className="text-xs font-normal text-neutral-400">({shs.length}/{INTAKE_MAX_SHAREHOLDERS})</span>
+              ข้อมูลผู้ถือหุ้นและกรรมการ <span className="text-xs font-normal text-neutral-400">({shs.length}/{INTAKE_MAX_SHAREHOLDERS})</span>
             </SectionTitle>
             {shs.length < INTAKE_MAX_SHAREHOLDERS && (
               <button type="button" className="btn text-xs" onClick={() => setShs((p) => [...p, newSh()])}>
@@ -548,7 +548,7 @@ export default function OnboardForm({
               </button>
             )}
           </div>
-          <p className="text-xs text-neutral-500">ใช้ยืนยันตัวตน DBD ออนไลน์ — แต่ละคนต้องมีเบอร์ + อีเมลของตัวเอง (อย่างน้อย {INTAKE_MIN_SHAREHOLDERS} คน)</p>
+          <p className="text-xs text-neutral-500">ใช้สำหรับยืนยันตัวตนกับกรมพัฒนาธุรกิจการค้า (DBD) — กรุณาระบุหมายเลขโทรศัพท์และอีเมลของแต่ละท่าน (อย่างน้อย {INTAKE_MIN_SHAREHOLDERS} ท่าน)</p>
           {shs.map((s, i) => (
             <div key={s.key} className="space-y-3 rounded-lg border border-neutral-200 p-3">
               <div className="flex items-center justify-between">
@@ -562,18 +562,18 @@ export default function OnboardForm({
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="ชื่อ–นามสกุล" required value={s.name} onChange={(v) => setSh(s.key, { name: v })} hint="ตามบัตรประชาชน" />
                 <Field label="เลขบัตรประชาชน" value={s.idNo} onChange={(v) => setSh(s.key, { idNo: v })} hint="13 หลัก (ไม่บังคับ)" />
-                <Field label="โทรศัพท์" required value={s.phone} onChange={(v) => setSh(s.key, { phone: v })} hint="ของเจ้าตัว — DBD ส่งรหัสยืนยันไปที่นี่" />
-                <Field label="อีเมล" required value={s.email} onChange={(v) => setSh(s.key, { email: v })} hint="ของเจ้าตัว" />
+                <Field label="โทรศัพท์" required value={s.phone} onChange={(v) => setSh(s.key, { phone: v })} hint="ของเจ้าของข้อมูล — กรมพัฒนาธุรกิจการค้าจะส่งรหัสยืนยันไปยังหมายเลขนี้" />
+                <Field label="อีเมล" required value={s.email} onChange={(v) => setSh(s.key, { email: v })} hint="ของเจ้าของข้อมูล" />
                 <Field label="สัดส่วนหุ้น (%)" value={s.percent} onChange={(v) => setSh(s.key, { percent: v })} hint="เช่น 50" />
               </div>
               <label className="flex items-center gap-1.5 text-sm">
                 <input type="checkbox" checked={s.isDirector} onChange={(e) => setSh(s.key, { isDirector: e.target.checked })} />
-                เป็นกรรมการ / ผู้มีอำนาจลงนาม
+                เป็นกรรมการ / ผู้มีอำนาจลงนามแทนนิติบุคคล
               </label>
               <UploadBox
                 label="บัตรประชาชน"
                 required
-                hint="ถ่ายหน้าบัตรให้ชัด (JPG/PNG/WebP/PDF ≤10MB)"
+                hint="กรุณาถ่ายด้านหน้าบัตรให้ชัดเจน (JPG/PNG/WebP/PDF ไม่เกิน 10MB)"
                 accept="image/jpeg,image/png,image/webp,application/pdf"
                 uploadedName={s.idCardName}
                 busy={uploading === `${s.key}:id`}
@@ -584,7 +584,7 @@ export default function OnboardForm({
         </section>
 
         <section className="card space-y-3">
-          <SectionTitle step="4" done={secDone[3]}>ติดต่อ & ลงนาม</SectionTitle>
+          <SectionTitle step="4" done={secDone[3]}>ส่วนที่ 4 — ผู้ติดต่อและลายมือชื่อ</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="ชื่อ–นามสกุล ผู้ติดต่อ" required value={f.contact_name} onChange={(v) => set("contact_name", v)} hint="คนที่เราประสานงานได้จริง" />
             <Field label="ตำแหน่ง" value={f.contact_position} onChange={(v) => set("contact_position", v)} />
@@ -592,9 +592,9 @@ export default function OnboardForm({
             <Field label="อีเมล" required value={f.contact_email} onChange={(v) => set("contact_email", v)} />
           </div>
           <div>
-            <span className="label">ลายเซ็นยืนยัน <span className="text-red-500">*</span></span>
+            <span className="label">ลายมือชื่อยืนยัน <span className="text-red-500">*</span></span>
             <Hint>
-              เซ็นในกรอบด้วยนิ้ว/เมาส์ · ผู้ลงนามคือ “{f.contact_name || "ผู้ติดต่อที่กรอกด้านบน"}”
+              กรุณาลงลายมือชื่อในกรอบโดยใช้นิ้วหรือเมาส์ · ผู้ลงนามคือ “{f.contact_name || "ผู้ติดต่อที่กรอกด้านบน"}”
             </Hint>
             {initial?.signature_path && !signatureDataUrl && (
               <p className="mt-1 text-xs text-emerald-600">✓ มีลายเซ็นที่บันทึกไว้แล้ว (วาดใหม่ได้หากต้องการแก้ไข)</p>
@@ -622,7 +622,7 @@ export default function OnboardForm({
 
         <div className="sticky bottom-0 -mx-4 flex items-center justify-between gap-3 border-t border-neutral-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
           <span className={`text-xs font-medium ${allDone ? "text-emerald-600" : "text-neutral-500"}`}>
-            {allDone ? "พร้อมส่ง ✓" : `ขาดอีก ${steps.length - doneCount} รายการ`}
+            {allDone ? "พร้อมส่งแบบฟอร์ม ✓" : `ยังขาดอีก ${steps.length - doneCount} รายการ`}
           </span>
           <button
             type="button"
@@ -630,7 +630,7 @@ export default function OnboardForm({
             onClick={submit}
             disabled={busy || Boolean(uploading) || !consent}
           >
-            {busy ? "กำลังส่ง…" : "ส่งข้อมูลลงทะเบียน"}
+            {busy ? "กำลังส่งแบบฟอร์ม…" : "ส่งแบบฟอร์มลงทะเบียน"}
           </button>
         </div>
       </div>
