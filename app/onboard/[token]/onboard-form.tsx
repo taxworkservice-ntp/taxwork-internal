@@ -469,7 +469,7 @@ export default function OnboardForm({
           <img src={branding.logoDataUri} alt={branding.firmName} className="h-9 max-w-[40%] object-contain" />
         ) : null}
         <div>
-          <h1 className="text-lg font-bold">แบบฟอร์มลงทะเบียนใช้บริการ</h1>
+          <h1 className="text-lg font-bold">แบบฟอร์มจดทะเบียนบริษัท</h1>
           <p className="text-xs text-neutral-500">
             {branding.firmName} · ใช้เวลาประมาณ 3 นาที · ข้อมูลของท่านจะถูกเก็บเป็นความลับ
           </p>

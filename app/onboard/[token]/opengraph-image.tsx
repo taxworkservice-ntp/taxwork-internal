@@ -6,7 +6,7 @@ import { contrastText, normalizeHex } from "@/lib/client-avatar";
 // Edge runtime keeps the image generation cheap. Static-safe text only
 // (no stacked Thai marks that Satori mis-renders).
 export const runtime = "edge";
-export const alt = "ลงทะเบียนใช้บริการ";
+export const alt = "จดทะเบียนบริษัท";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -83,7 +83,7 @@ export default async function Image() {
 
         <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ fontSize: "84px", fontWeight: 700, color: "#111827", lineHeight: 1.15 }}>
-            ลงทะเบียนใช้บริการ
+            จดทะเบียนบริษัท
           </div>
           <div style={{ marginTop: "16px", fontSize: "34px", color: "#6b7280" }}>
             ใช้เวลาประมาณ 3 นาที

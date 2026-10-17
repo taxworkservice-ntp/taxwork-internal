@@ -103,6 +103,7 @@ export default async function IntakeRecordPage({
       clientId={sub.client_id}
       clientName={clientName}
       linkLabel={null}
+      issuedTaxId={sub.tax_id_issued}
       defaults={{
         address: addressText || "",
         vat_registered: sub.vat_registered,

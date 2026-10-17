@@ -169,9 +169,9 @@ export default function OnboardingPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold">ลงทะเบียนลูกค้า</h1>
+          <h1 className="text-lg font-bold">จดทะเบียนบริษัท</h1>
           <p className="text-xs text-neutral-500">
-            ส่งลิงก์ให้ผู้สนใจกรอกข้อมูลบริษัท แล้วตรวจสอบเพื่อสร้างเป็นลูกค้า
+            ส่งลิงก์ให้ผู้สนใจกรอกข้อมูล แล้วใช้จดทะเบียนบริษัทกับ DBD
           </p>
         </div>
         <button className="btn-primary" onClick={makeLink} disabled={busy}>
@@ -205,7 +205,7 @@ export default function OnboardingPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {badge(s.status, Boolean(s.client_id))}
+                  {badge(s.status, Boolean(s.client_id), Boolean(s.tax_id_issued))}
                   <span className="text-xs text-neutral-400">เปิด →</span>
                 </div>
               </div>
@@ -253,7 +253,7 @@ export default function OnboardingPage() {
                     <td className="font-mono text-xs">
                       {s.juristic_id ? formatTaxId(s.juristic_id) : "—"}
                     </td>
-                    <td>{badge(s.status, Boolean(s.client_id))}</td>
+                    <td>{badge(s.status, Boolean(s.client_id), Boolean(s.tax_id_issued))}</td>
                     <td className="text-xs">{s.reviewed_by ?? "-"}</td>
                     <td className="text-xs">{s.reviewed_at ? new Date(s.reviewed_at).toLocaleString("th-TH") : "-"}</td>
                   </tr>

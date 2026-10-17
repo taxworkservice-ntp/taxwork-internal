@@ -6,10 +6,11 @@ import { useRouter } from "next/navigation";
 import EvidenceSheet, { type EvidenceData } from "@/components/evidence-sheet";
 import CopyButton from "@/components/copy-button";
 import {
-  approveIntakeSubmission,
-  markIntakeProspect,
+  approveForFiling,
+  createBookkeepingClient,
   rejectIntakeSubmission,
   updateIntakeSubmission,
+  updateIssuedTaxId,
   type IntakeReviewPatch,
 } from "@/lib/actions/intake";
 
@@ -17,7 +18,7 @@ const FILINGS = ["ภ.พ.30", "ภ.ง.ด.1", "ภ.ง.ด.3", "ภ.ง.ด.53
 
 const STATUS_LABEL: Record<string, string> = {
   submitted: "รอตรวจสอบ",
-  approved: "อนุมัติแล้ว",
+  approved: "ยื่นจดทะเบียนแล้ว",
   rejected: "ปฏิเสธ",
 };
 
@@ -28,6 +29,7 @@ export default function IntakeProcessing({
   clientId,
   clientName,
   linkLabel,
+  issuedTaxId,
   defaults,
 }: {
   id: string;
@@ -36,12 +38,14 @@ export default function IntakeProcessing({
   clientId: string | null;
   clientName: string | null;
   linkLabel: string | null;
+  issuedTaxId: string | null;
   defaults: IntakeReviewPatch;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<"data" | "review">("data");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [taxId, setTaxId] = useState(issuedTaxId ?? "");
   const [r, setR] = useState<IntakeReviewPatch>({
     address: defaults.address ?? "",
     vat_registered: defaults.vat_registered ?? null,
@@ -52,8 +56,11 @@ export default function IntakeProcessing({
   });
 
   const editable = status === "submitted";
-  // Prospect rows (accepted, no client yet) can still be converted to a client.
-  const canAct = editable || (status === "approved" && !clientId);
+  const filed = status === "approved";
+  // Prospect rows (filed, no bookkeeping client yet) can still be edited and
+  // converted — only converted-with-client and rejected rows lock.
+  const canEdit = editable || (filed && !clientId);
+  const canConvert = filed && !clientId;
   const checks = [
     { label: "ชื่อบริษัท", ok: Boolean(evidence.nameTh) },
     { label: "ที่อยู่จดทะเบียน", ok: Boolean((r.address ?? "").trim()) },
@@ -61,7 +68,7 @@ export default function IntakeProcessing({
     { label: "เอกสาร", ok: evidence.docs.length >= 3 },
     { label: "ลายเซ็น", ok: Boolean(evidence.signatureSrc) },
   ];
-  const readyToApprove = checks[0].ok && checks[1].ok && checks[2].ok && checks[4].ok;
+  const readyToFile = checks[0].ok && checks[1].ok && checks[2].ok && checks[4].ok;
 
   async function run(fn: () => Promise<{ ok: true } | { ok: false; error: string }>, okMsg: string) {
     setBusy(true);
@@ -84,20 +91,26 @@ export default function IntakeProcessing({
     await run(() => updateIntakeSubmission(id, r), "บันทึกข้อมูลที่กรอกเพิ่มแล้ว");
   }
   async function approve() {
-    const res = await approveIntakeSubmission(id, r);
-    if (!res.ok) {
-      setMessage(res.error);
-      return;
-    }
-    if (res.duplicate) {
-      setMessage("มีลูกค้าเดิมอยู่แล้ว — เชื่อมโยงการลงทะเบียนนี้กับลูกค้าเดิมแล้ว");
-      router.refresh();
-      return;
-    }
-    router.push(`/clients/${res.clientId}`);
+    const ok = await run(() => approveForFiling(id, r), "อนุมัติเพื่อยื่นจดทะเบียนแล้ว");
+    if (ok) router.refresh();
   }
-  async function mark() {
-    await run(() => markIntakeProspect(id), "บันทึกเป็นผู้สนใจแล้ว");
+  async function saveTaxId() {
+    await run(() => updateIssuedTaxId(id, taxId), "บันทึกเลขทะเบียนที่ออกแล้ว");
+  }
+  async function convert() {
+    if (!confirm("สร้างลูกค้าบัญชีจากคำขอนี้? (เฉพาะเมื่อบริษัทว่าจ้างทำบัญชี)")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const res = await createBookkeepingClient(id);
+      if (!res.ok) {
+        setMessage(res.error);
+        return;
+      }
+      router.push(`/clients/${res.clientId}`);
+    } finally {
+      setBusy(false);
+    }
   }
   async function reject() {
     if (!confirm("ปฏิเสธคำขอนี้?")) return;
@@ -116,11 +129,12 @@ export default function IntakeProcessing({
     <div className="mx-auto max-w-4xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link href="/onboarding" className="text-sm text-neutral-500 hover:underline">
-          ← ลงทะเบียนลูกค้า
+          ← จดทะเบียนบริษัท
         </Link>
         <div className="flex items-center gap-2 text-xs">
           <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-medium text-neutral-600">
-            {clientId ? "เป็นลูกค้าแล้ว" : status === "approved" ? "ผู้สนใจ" : STATUS_LABEL[status]}
+            {clientId ? "ลูกค้าบัญชีแล้ว" : filed ? "ยื่นจดทะเบียนแล้ว" : STATUS_LABEL[status]}
+            {filed && !clientId && !issuedTaxId ? " · รอเลขทะเบียน" : ""}
           </span>
           {linkLabel && <span className="text-neutral-400">ลิงก์: {linkLabel}</span>}
         </div>
@@ -145,9 +159,24 @@ export default function IntakeProcessing({
             ))}
           </div>
         )}
+        {filed && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">
+            <span className="text-xs text-neutral-500">เลขทะเบียนที่ออก (กรอกหลัง DBD อนุมัติ):</span>
+            <input
+              className="input w-52 font-mono text-xs"
+              value={taxId}
+              disabled={!canEdit && !filed}
+              placeholder="0-0000-00000-00-0"
+              onChange={(e) => setTaxId(e.target.value)}
+            />
+            <button className="btn text-xs" onClick={saveTaxId} disabled={busy}>
+              บันทึกเลขทะเบียน
+            </button>
+          </div>
+        )}
         {clientId && clientName && (
           <p className="text-xs">
-            ลูกค้าที่สร้าง:{" "}
+            ลูกค้าบัญชี:{" "}
             <Link href={`/clients/${clientId}`} className="text-blue-600 hover:underline">
               {clientName} →
             </Link>
@@ -169,7 +198,7 @@ export default function IntakeProcessing({
           onClick={() => setTab("review")}
           className={tab === "review" ? "rounded-full bg-neutral-900 px-3 py-1 text-xs text-white" : "rounded-full border border-neutral-200 px-3 py-1 text-xs text-neutral-600"}
         >
-          ตรวจ/แก้ก่อนอนุมัติ
+          ตรวจ/แก้ก่อนยื่นจด
         </button>
         <button
           type="button"
@@ -193,7 +222,7 @@ export default function IntakeProcessing({
               className="input"
               rows={2}
               value={r.address ?? ""}
-              disabled={!editable}
+              disabled={!canEdit}
               onChange={(e) => setR((p) => ({ ...p, address: e.target.value }))}
             />
           </label>
@@ -202,7 +231,7 @@ export default function IntakeProcessing({
               <span className="label">VAT</span>
               <select
                 className="input"
-                disabled={!editable}
+                disabled={!canEdit}
                 value={r.vat_registered == null ? "" : r.vat_registered ? "yes" : "no"}
                 onChange={(e) =>
                   setR((p) => ({ ...p, vat_registered: e.target.value === "" ? null : e.target.value === "yes" }))
@@ -218,7 +247,7 @@ export default function IntakeProcessing({
               <input
                 type="date"
                 className="input"
-                disabled={!editable}
+                disabled={!canEdit}
                 value={r.vat_reg_date ?? ""}
                 onChange={(e) => setR((p) => ({ ...p, vat_reg_date: e.target.value }))}
               />
@@ -227,7 +256,7 @@ export default function IntakeProcessing({
               <span className="label">วันสิ้นสุดรอบบัญชี</span>
               <input
                 className="input"
-                disabled={!editable}
+                disabled={!canEdit}
                 value={r.fiscal_year_end ?? ""}
                 onChange={(e) => setR((p) => ({ ...p, fiscal_year_end: e.target.value }))}
               />
@@ -237,7 +266,7 @@ export default function IntakeProcessing({
             <span className="label">สถานที่ประกอบการ VAT</span>
             <input
               className="input"
-              disabled={!editable}
+              disabled={!canEdit}
               value={r.vat_place ?? ""}
               onChange={(e) => setR((p) => ({ ...p, vat_place: e.target.value }))}
             />
@@ -251,7 +280,7 @@ export default function IntakeProcessing({
                   <label key={code} className="flex items-center gap-1.5">
                     <input
                       type="checkbox"
-                      disabled={!editable}
+                      disabled={!canEdit}
                       checked={sel}
                       onChange={(e) => {
                         const cur = new Set(r.filings ?? []);
@@ -269,25 +298,31 @@ export default function IntakeProcessing({
         </section>
       )}
 
-      {canAct && (
+      {(editable || canConvert) && (
         <div className="flex flex-wrap gap-2 print:hidden">
-          <button className="btn" onClick={save} disabled={busy || !editable}>
-            บันทึกที่กรอกเพิ่ม
-          </button>
-          <button
-            className="btn-primary"
-            onClick={approve}
-            disabled={busy || !readyToApprove}
-            title={readyToApprove ? "" : "ต้องมีชื่อ + ที่อยู่ + ผู้ถือหุ้น ≥2 + ลายเซ็น ก่อนอนุมัติ"}
-          >
-            อนุมัติเป็นลูกค้า
-          </button>
-          <button className="btn" onClick={mark} disabled={busy || !editable}>
-            เก็บเป็นผู้สนใจ
-          </button>
-          <button className="btn-danger" onClick={reject} disabled={busy || !editable}>
-            ปฏิเสธ
-          </button>
+          {editable && (
+            <>
+              <button className="btn" onClick={save} disabled={busy}>
+                บันทึกที่กรอกเพิ่ม
+              </button>
+              <button
+                className="btn-primary"
+                onClick={approve}
+                disabled={busy || !readyToFile}
+                title={readyToFile ? "" : "ต้องมีชื่อ + ที่อยู่ + ผู้ถือหุ้น ≥2 + ลายเซ็น ก่อนอนุมัติ"}
+              >
+                อนุมัติเพื่อยื่นจดทะเบียน
+              </button>
+              <button className="btn-danger" onClick={reject} disabled={busy}>
+                ปฏิเสธ
+              </button>
+            </>
+          )}
+          {canConvert && (
+            <button className="btn-primary" onClick={convert} disabled={busy}>
+              สร้างเป็นลูกค้าบัญชี
+            </button>
+          )}
         </div>
       )}
     </div>

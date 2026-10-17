@@ -84,7 +84,7 @@ export default function EvidenceSheet({ data }: { data: EvidenceData }) {
           ) : null}
           <div className="text-base font-bold">{data.firmName}</div>
         </div>
-        <h1 className="mt-2 text-lg font-bold">แบบฟอร์มลงทะเบียนลูกค้า</h1>
+        <h1 className="mt-2 text-lg font-bold">แบบฟอร์มจดทะเบียนบริษัท</h1>
         <div className="mt-1 text-xs text-neutral-500">
           {data.ref ? `เลขที่อ้างอิง ${data.ref} · ` : ""}
           {data.statusLabel ? `${data.statusLabel} · ` : ""}

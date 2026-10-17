@@ -88,6 +88,8 @@ export type IntakeSubmission = {
   signature_path: string | null;
   signed_at: string | null;
   signed_ip: string | null;
+  /** 13-digit ID issued by DBD after filing; filled manually by staff. */
+  tax_id_issued: string | null;
   notes: string | null;
   client_id: string | null;
   reviewed_by: string | null;

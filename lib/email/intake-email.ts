@@ -26,7 +26,7 @@ function esc(value: string): string {
 
 export function buildIntakeNotifyEmail(input: IntakeNotifyInput): IntakeNotifyEmail {
   const name = input.name.trim() || "(ไม่ระบุชื่อ)";
-  const subject = `[ลงทะเบียนลูกค้า] ${name} — ${input.juristicId}`;
+  const subject = `[จดทะเบียนบริษัท] ${name} — ${input.juristicId}`;
   const row = (label: string, value: string) =>
     `<div style="margin:0 0 4px;font-size:13px;color:#6b7280;">${esc(label)} <span style="color:#111827;">${esc(
       value
@@ -35,7 +35,7 @@ export function buildIntakeNotifyEmail(input: IntakeNotifyInput): IntakeNotifyEm
   const html = `<!doctype html>
 <html lang="th"><head><meta charset="utf-8" /></head>
 <body style="margin:0;padding:24px;font-family:'Sarabun','Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;line-height:1.7;color:#111827;">
-  <p style="margin:0 0 16px;font-weight:600;">มีผู้สนใจใช้บริการลงทะเบียนใหม่</p>
+  <p style="margin:0 0 16px;font-weight:600;">มีผู้ขอจดทะเบียนบริษัทใหม่</p>
   <div style="margin:0 0 16px;padding:14px 16px;background:#f9fafb;border:1px solid #eef0f2;border-radius:8px;">
     ${row("ชื่อบริษัท:", name)}
     ${row("เลขทะเบียนนิติบุคคล:", input.juristicId)}
@@ -48,7 +48,7 @@ export function buildIntakeNotifyEmail(input: IntakeNotifyInput): IntakeNotifyEm
 </body></html>`;
 
   const text = [
-    "มีผู้สนใจใช้บริการลงทะเบียนใหม่",
+    "มีผู้ขอจดทะเบียนบริษัทใหม่",
     "",
     `ชื่อบริษัท: ${name}`,
     `เลขทะเบียนนิติบุคคล: ${input.juristicId}`,
@@ -84,7 +84,7 @@ export function buildIntakeApprovedEmail(
     .filter(Boolean)
     .join("  ·  ");
 
-  const subject = `${firm} — ได้รับการลงทะเบียนของ ${company} แล้ว`;
+  const subject = `${firm} — ได้รับข้อมูลจดทะเบียนบริษัทของ ${company} แล้ว`;
 
   const html = `<!doctype html>
 <html lang="th"><head><meta charset="utf-8" /></head>
@@ -92,9 +92,9 @@ export function buildIntakeApprovedEmail(
   <p style="margin:0 0 16px;font-size:17px;font-weight:600;">เรียน คุณ${esc(contact)}</p>
   <p style="margin:0 0 16px;color:#374151;">${esc(
     firm
-  )} ได้รับข้อมูลการลงทะเบียนของ ${esc(
+  )} ได้รับข้อมูลเพื่อดำเนินการจดทะเบียนบริษัทของ ${esc(
     company
-  )} เรียบร้อยแล้ว ขอบคุณที่เลือกใช้บริการของเรา เจ้าหน้าที่จะติดต่อกลับเพื่อดำเนินการขั้นต่อไปโดยเร็ว</p>
+  )} เรียบร้อยแล้ว ขอบคุณที่ไว้วางใจใช้บริการของเรา เจ้าหน้าที่จะติดต่อกลับเพื่อดำเนินการขั้นต่อไปโดยเร็ว</p>
   ${
     contactLine
       ? `<p style="margin:0 0 12px;color:#6b7280;font-size:13px;">ติดต่อเรา: ${esc(contactLine)}</p>`
@@ -109,7 +109,7 @@ export function buildIntakeApprovedEmail(
   const text = [
     `เรียน คุณ${contact}`,
     "",
-    `${firm} ได้รับข้อมูลการลงทะเบียนของ ${company} เรียบร้อยแล้ว ขอบคุณที่เลือกใช้บริการของเรา เจ้าหน้าที่จะติดต่อกลับเพื่อดำเนินการขั้นต่อไปโดยเร็ว`,
+    `${firm} ได้รับข้อมูลเพื่อดำเนินการจดทะเบียนบริษัทของ ${company} เรียบร้อยแล้ว ขอบคุณที่ไว้วางใจใช้บริการของเรา เจ้าหน้าที่จะติดต่อกลับเพื่อดำเนินการขั้นต่อไปโดยเร็ว`,
     "",
     ...(contactLine ? [`ติดต่อเรา: ${contactLine}`, ""] : []),
     INTAKE_TIMELINE_NOTE,

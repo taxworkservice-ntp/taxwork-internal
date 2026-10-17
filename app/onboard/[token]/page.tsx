@@ -8,9 +8,9 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
   const branding = await getFirmBranding();
-  const title = `ลงทะเบียนใช้บริการ | ${branding.firmName}`;
+  const title = `จดทะเบียนบริษัท | ${branding.firmName}`;
   const description =
-    "กรอกแบบฟอร์มลงทะเบียนใช้บริการ (ประมาณ 3 นาที) — ข้อมูลของท่านจะถูกเก็บเป็นความลับ";
+    "กรอกแบบฟอร์มจดทะเบียนบริษัท (ประมาณ 3 นาที) — ข้อมูลของท่านจะถูกเก็บเป็นความลับ";
   return {
     title,
     description,

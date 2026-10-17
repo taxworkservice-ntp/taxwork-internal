@@ -12,7 +12,7 @@ function isImagePath(path: string): boolean {
 
 export type IntakeDoc = { label: string; path: string | null; url?: string | null };
 
-export function badge(status: string | null, hasClient = false) {
+export function badge(status: string | null, hasClient = false, hasTaxId = false) {
   const map: Record<string, string> = {
     submitted: "bg-amber-50 text-amber-700",
     approved: hasClient ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700",
@@ -20,7 +20,7 @@ export function badge(status: string | null, hasClient = false) {
   };
   const label: Record<string, string> = {
     submitted: "รอตรวจสอบ",
-    approved: hasClient ? "เป็นลูกค้าแล้ว" : "ผู้สนใจ",
+    approved: hasClient ? "ลูกค้าบัญชี" : hasTaxId ? "จดสำเร็จ" : "รอจดทะเบียน",
     rejected: "ปฏิเสธ",
   };
   if (!status)
@@ -94,7 +94,7 @@ export default function IntakeModal({
           <div className="min-w-0">
             <div className="truncate font-semibold">{sub.name_th}</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-              {badge(sub.status, Boolean(sub.client_id))}
+              {badge(sub.status, Boolean(sub.client_id), Boolean((sub as { tax_id_issued?: string | null }).tax_id_issued))}
               <span>
                 {sub.juristic_id ? `เลขทะเบียน ${formatTaxId(sub.juristic_id)}` : "รอจดทะเบียน"}
               </span>

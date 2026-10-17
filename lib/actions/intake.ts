@@ -142,26 +142,32 @@ export type IntakeReviewPatch = {
   filings?: string[] | null;
 };
 
-export async function approveIntakeSubmission(
+async function applyReviewPatch(id: string, review?: IntakeReviewPatch): Promise<void> {
+  if (!review) return;
+  const addr = review.address?.trim() || null;
+  await sql`update intake_submissions set
+    addr_line=${addr}, addr_moo=null, addr_soi=null, addr_road=null,
+    addr_subdistrict=null, addr_district=null, addr_province=null, addr_postcode=null,
+    vat_registered=${review.vat_registered ?? null},
+    vat_reg_date=${review.vat_reg_date?.trim() || null},
+    vat_place=${review.vat_place?.trim() || null},
+    fiscal_year_end=${review.fiscal_year_end?.trim() || null},
+    filings=${review.filings ?? []}
+    where id=${id}`;
+}
+
+/**
+ * Approve a submission for DBD filing (registration pipeline). Marks it
+ * reviewed WITHOUT creating a `clients` row — the company does not exist as a
+ * bookkeeping client until it is explicitly created later.
+ */
+export async function approveForFiling(
   id: string,
   review?: IntakeReviewPatch
-): Promise<{ ok: true; clientId: string; duplicate: boolean } | { ok: false; error: string }> {
+): Promise<ActionResult> {
   try {
     const user = await requireUser();
-
-    // Staff-transcribed fields (address + tax) are applied before mapping.
-    if (review) {
-      const addr = review.address?.trim() || null;
-      await sql`update intake_submissions set
-        addr_line=${addr}, addr_moo=null, addr_soi=null, addr_road=null,
-        addr_subdistrict=null, addr_district=null, addr_province=null, addr_postcode=null,
-        vat_registered=${review.vat_registered ?? null},
-        vat_reg_date=${review.vat_reg_date?.trim() || null},
-        vat_place=${review.vat_place?.trim() || null},
-        fiscal_year_end=${review.fiscal_year_end?.trim() || null},
-        filings=${review.filings ?? []}
-        where id=${id}`;
-    }
+    await applyReviewPatch(id, review);
 
     const rows = (await sql`select * from intake_submissions where id=${id}`) as Record<
       string,
@@ -169,20 +175,72 @@ export async function approveIntakeSubmission(
     >[];
     const sub = rows[0] ? toSubmission(rows[0]) : null;
     if (!sub) return { ok: false, error: "ไม่พบคำขอ" };
-    // Convertible states: pending review, or an accepted prospect (approved with
-    // no client yet). Already-converted and rejected rows stay locked.
-    const convertible =
-      sub.status === "submitted" || (sub.status === "approved" && !sub.client_id);
-    if (!convertible) return { ok: false, error: "คำขอนี้ถูกตรวจสอบแล้ว" };
+    if (sub.status !== "submitted") return { ok: false, error: "คำขอนี้ถูกตรวจสอบแล้ว" };
     if (!composeAddress(sub).trim())
       return { ok: false, error: "กรุณากรอกที่อยู่จดทะเบียน (จากทะเบียนบ้าน) ก่อนอนุมัติ" };
 
-    // No registration number is collected on the public form (companies are
-    // usually not yet registered), so de-dup only runs when one exists.
-    const existing = sub.juristic_id
+    await sql`update intake_submissions
+      set status='approved', reviewed_by=${user.email}, reviewed_at=${new Date().toISOString()}
+      where id=${id}`;
+
+    // Best-effort courtesy email to the prospect.
+    try {
+      if (sub.contact_email && process.env.REPORT_FROM_EMAIL) {
+        const settings = (await sql`
+          select firm_name, firm_phone, firm_line from app_settings where id=1
+        `) as { firm_name: string | null; firm_phone: string | null; firm_line: string | null }[];
+        const s = settings[0];
+        const built = buildIntakeApprovedEmail({
+          firmName: s?.firm_name?.trim() || "Taxwork",
+          contactName: sub.contact_name,
+          companyName: sub.name_th,
+          firmPhone: s?.firm_phone?.trim() || null,
+          firmLine: s?.firm_line?.trim() || null,
+        });
+        await sendEmail({
+          to: sub.contact_email,
+          subject: built.subject,
+          html: built.html,
+          text: built.text,
+        });
+      }
+    } catch (error) {
+      console.error("intake ack email failed:", error);
+    }
+
+    return { ok: true };
+  } catch (error) {
+    console.error("approveForFiling failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
+}
+
+/**
+ * Create the bookkeeping client for an already-filed registration. This is a
+ * separate, explicit step taken only when the company hires the bookkeeping
+ * service — never implicitly on filing approval.
+ */
+export async function createBookkeepingClient(
+  id: string
+): Promise<{ ok: true; clientId: string; duplicate: boolean } | { ok: false; error: string }> {
+  try {
+    const user = await requireUser();
+    const rows = (await sql`select * from intake_submissions where id=${id}`) as Record<
+      string,
+      unknown
+    >[];
+    const sub = rows[0] ? toSubmission(rows[0]) : null;
+    if (!sub) return { ok: false, error: "ไม่พบคำขอ" };
+    if (sub.status !== "approved" || sub.client_id)
+      return { ok: false, error: "คำขอนี้สร้างเป็นลูกค้าแล้ว หรือยังไม่ผ่านการอนุมัติยื่นจดทะเบียน" };
+    if (!composeAddress(sub).trim())
+      return { ok: false, error: "กรุณากรอกที่อยู่จดทะเบียนก่อนสร้างลูกค้า" };
+
+    const taxId = sub.tax_id_issued || sub.juristic_id || null;
+    const existing = taxId
       ? ((await sql`
           select id from clients
-          where regexp_replace(coalesce(tax_id, ''), '\\D', '', 'g') = ${sub.juristic_id}
+          where regexp_replace(coalesce(tax_id, ''), '\\D', '', 'g') = ${taxId}
           limit 1
         `) as { id: string }[])
       : [];
@@ -201,7 +259,7 @@ export async function approveIntakeSubmission(
 
       const inserted = (await sql`
         insert into clients (name, tax_id, email, phone, address, notes)
-        values (${sub.name_th}, ${sub.juristic_id || null}, ${sub.company_email || sub.contact_email}, ${sub.company_phone || sub.contact_phone},
+        values (${sub.name_th}, ${taxId}, ${sub.company_email || sub.contact_email}, ${sub.company_phone || sub.contact_phone},
                 ${composeAddress(sub)}, ${notesParts.join("\n") || null})
         returning id
       `) as { id: string }[];
@@ -238,37 +296,32 @@ export async function approveIntakeSubmission(
     }
 
     await sql`update intake_submissions
-      set status='approved', client_id=${clientId}, reviewed_by=${user.email}, reviewed_at=${new Date().toISOString()}
+      set client_id=${clientId}, reviewed_by=${user.email}, reviewed_at=${new Date().toISOString()}
       where id=${id}`;
-
-    // Best-effort courtesy email to the prospect.
-    try {
-      if (sub.contact_email && process.env.REPORT_FROM_EMAIL) {
-        const settings = (await sql`
-          select firm_name, firm_phone, firm_line from app_settings where id=1
-        `) as { firm_name: string | null; firm_phone: string | null; firm_line: string | null }[];
-        const s = settings[0];
-        const built = buildIntakeApprovedEmail({
-          firmName: s?.firm_name?.trim() || "Taxwork",
-          contactName: sub.contact_name,
-          companyName: sub.name_th,
-          firmPhone: s?.firm_phone?.trim() || null,
-          firmLine: s?.firm_line?.trim() || null,
-        });
-        await sendEmail({
-          to: sub.contact_email,
-          subject: built.subject,
-          html: built.html,
-          text: built.text,
-        });
-      }
-    } catch (error) {
-      console.error("intake ack email failed:", error);
-    }
 
     return { ok: true, clientId, duplicate };
   } catch (error) {
-    console.error("approveIntakeSubmission failed:", error);
+    console.error("createBookkeepingClient failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
+}
+
+/**
+ * Fill in the 13-digit ID issued by DBD after a successful filing. Empty
+ * clears it. Validated server-side (13 digits + checksum).
+ */
+export async function updateIssuedTaxId(id: string, taxId: string): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const digits = taxId.replace(/\D/g, "");
+    if (digits) {
+      const { checkTaxId } = await import("@/lib/tax-id");
+      if (!checkTaxId(digits).ok) return { ok: false, error: "เลขทะเบียน 13 หลักไม่ถูกต้อง" };
+    }
+    await sql`update intake_submissions set tax_id_issued=${digits || null} where id=${id}`;
+    return { ok: true };
+  } catch (error) {
+    console.error("updateIssuedTaxId failed:", error);
     return { ok: false, error: actionError(error) };
   }
 }
@@ -287,8 +340,9 @@ export async function rejectIntakeSubmission(id: string): Promise<ActionResult> 
 }
 
 /**
- * Save staff-transcribed address + tax fields on a still-pending submission.
- * Staging only — nothing reaches `clients` until approval.
+ * Save staff-transcribed address + tax fields. Staging only — nothing reaches
+ * `clients` until the bookkeeping client is explicitly created. Allowed while
+ * the record is still open (pending, or filed without a client yet).
  */
 export async function updateIntakeSubmission(
   id: string,
@@ -305,27 +359,10 @@ export async function updateIntakeSubmission(
       vat_place=${review.vat_place?.trim() || null},
       fiscal_year_end=${review.fiscal_year_end?.trim() || null},
       filings=${review.filings ?? []}
-      where id=${id} and status='submitted'`;
+      where id=${id} and (status='submitted' or (status='approved' and client_id is null))`;
     return { ok: true };
   } catch (error) {
     console.error("updateIntakeSubmission failed:", error);
-    return { ok: false, error: actionError(error) };
-  }
-}
-
-/**
- * Accept a submission as a "prospect" (interested, not yet a bookkeeping
- * client) — marks it reviewed without creating a `clients` row.
- */
-export async function markIntakeProspect(id: string): Promise<ActionResult> {
-  try {
-    const user = await requireUser();
-    await sql`update intake_submissions
-      set status='approved', reviewed_by=${user.email}, reviewed_at=${new Date().toISOString()}
-      where id=${id} and status='submitted'`;
-    return { ok: true };
-  } catch (error) {
-    console.error("markIntakeProspect failed:", error);
     return { ok: false, error: actionError(error) };
   }
 }
