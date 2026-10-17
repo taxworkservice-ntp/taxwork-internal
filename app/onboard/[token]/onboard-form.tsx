@@ -506,19 +506,19 @@ export default function OnboardForm({
         <section className="card space-y-3">
           <SectionTitle step="1" done={secDone[0]}>ส่วนที่ 1 — ข้อมูลนิติบุคคล</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="ชื่อบริษัท (ภาษาไทย)" required value={f.name_th} onChange={(v) => set("name_th", v)} hint="โปรดระบุตามหนังสือรับรองบริษัท หรือชื่อที่ประสงค์จะจดทะเบียน" placeholder="บริษัท ตัวอย่าง จำกัด" />
-            <Field label="ชื่อบริษัท (ภาษาอังกฤษ)" value={f.name_en} onChange={(v) => set("name_en", v)} hint="หากมี" placeholder="EXAMPLE CO., LTD." />
+            <Field label="ชื่อบริษัท (ภาษาไทย)" required value={f.name_th} onChange={(v) => set("name_th", v)} placeholder="บริษัท ตัวอย่าง จำกัด" />
+            <Field label="ชื่อบริษัท (ภาษาอังกฤษ)" value={f.name_en} onChange={(v) => set("name_en", v)} placeholder="EXAMPLE CO., LTD." />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="อีเมลของบริษัท" required value={f.company_email} onChange={(v) => set("company_email", v)} hint="สำหรับจัดส่งเอกสารและใบแจ้งหนี้" placeholder="info@company.co.th" />
-            <Field label="หมายเลขโทรศัพท์ของบริษัท" required value={f.company_phone} onChange={(v) => set("company_phone", v)} hint="หมายเลขที่สามารถติดต่อได้ในเวลาทำการ" placeholder="02-000-0000" />
+            <Field label="อีเมลของบริษัท" required value={f.company_email} onChange={(v) => set("company_email", v)} placeholder="info@company.co.th" />
+            <Field label="หมายเลขโทรศัพท์ของบริษัท" required value={f.company_phone} onChange={(v) => set("company_phone", v)} placeholder="02-000-0000" />
           </div>
           <details className="rounded-lg border border-neutral-200 p-3">
             <summary className="cursor-pointer text-xs text-neutral-500">ข้อมูลเพิ่มเติม (ถ้าทราบ)</summary>
             <div className="mt-2 grid gap-3 sm:grid-cols-3">
-              <Field label="วันที่จดทะเบียน" type="date" value={f.reg_date} onChange={(v) => set("reg_date", v)} hint="ดูในหนังสือรับรอง" />
-              <Field label="ทุนจดทะเบียน" value={f.capital_registered} onChange={(v) => set("capital_registered", v)} hint="ตัวเลข เช่น 1000000" />
-              <Field label="ทุนชำระแล้ว" value={f.capital_paid} onChange={(v) => set("capital_paid", v)} hint="ตัวเลข" />
+              <Field label="วันที่จดทะเบียน" type="date" value={f.reg_date} onChange={(v) => set("reg_date", v)} />
+              <Field label="ทุนจดทะเบียน" value={f.capital_registered} onChange={(v) => set("capital_registered", v)} placeholder="เช่น 1000000" />
+              <Field label="ทุนชำระแล้ว" value={f.capital_paid} onChange={(v) => set("capital_paid", v)} />
             </div>
             <div className="mt-3">
               <Field
@@ -526,7 +526,6 @@ export default function OnboardForm({
                 value={f.business_desc}
                 onChange={(v) => set("business_desc", v)}
                 placeholder="เช่น ขายของออนไลน์"
-                hint="พิมพ์สั้น ๆ — นักบัญชีจัดหมวดให้"
               />
             </div>
           </details>
@@ -534,11 +533,10 @@ export default function OnboardForm({
 
         <section className="card space-y-3">
           <SectionTitle step="2" done={secDone[1]}>ส่วนที่ 2 — ที่ตั้งสถานประกอบการ</SectionTitle>
-          <p className="text-xs text-neutral-500">ไม่จำเป็นต้องพิมพ์ที่อยู่ — กรุณาแนบเอกสารให้ครบถ้วน</p>
+          <p className="text-xs text-neutral-500">แนบเอกสารให้ครบก็พอ — ไม่ต้องพิมพ์ที่อยู่ · รับ JPG/PNG/WebP/PDF ไม่เกิน 10MB</p>
           <UploadBox
             label="สำเนาทะเบียนบ้าน (ที่ตั้งบริษัท)"
             required
-            hint="กรุณาถ่ายหน้าที่แสดงเลขที่บ้านให้ชัดเจน (JPG/PNG/WebP/PDF ไม่เกิน 10MB)"
             accept="image/jpeg,image/png,image/webp,application/pdf"
             uploadedName={companyHouse.name}
             busy={uploading === "company_house"}
@@ -547,7 +545,7 @@ export default function OnboardForm({
           <UploadBox
             label="ภาพแผนที่ Google Maps"
             required
-            hint="กรุณาเปิด Google Maps ขยายให้เห็นอาคารและซอย แล้วบันทึกภาพหน้าจอ (รูปภาพไม่เกิน 10MB)"
+            hint="เปิด Maps ขยายให้เห็นอาคารและซอย แล้วแคปหน้าจอ"
             accept="image/jpeg,image/png,image/webp"
             uploadedName={companyMap.name}
             busy={uploading === "company_map"}
@@ -571,7 +569,7 @@ export default function OnboardForm({
               </button>
             )}
           </div>
-          <p className="text-xs text-neutral-500">ใช้สำหรับยืนยันตัวตนกับกรมพัฒนาธุรกิจการค้า (DBD) — กรุณาระบุหมายเลขโทรศัพท์และอีเมลของแต่ละท่าน (อย่างน้อย {INTAKE_MIN_SHAREHOLDERS} ท่าน)</p>
+          <p className="text-xs text-neutral-500">ใช้ยืนยันตัวตน DBD (อย่างน้อย {INTAKE_MIN_SHAREHOLDERS} ท่าน)</p>
           {shs.map((s, i) => (
             <div key={s.key} className="space-y-3 rounded-lg border border-neutral-200 p-3">
               <div className="flex items-center justify-between">
@@ -583,11 +581,11 @@ export default function OnboardForm({
                 )}
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="ชื่อ–นามสกุล" required value={s.name} onChange={(v) => setSh(s.key, { name: v })} hint="ตามบัตรประชาชน" />
-                <Field label="เลขบัตรประชาชน" value={s.idNo} onChange={(v) => setSh(s.key, { idNo: v })} hint="13 หลัก (ไม่บังคับ)" />
-                <Field label="โทรศัพท์" required value={s.phone} onChange={(v) => setSh(s.key, { phone: v })} hint="ของเจ้าของข้อมูล — กรมพัฒนาธุรกิจการค้าจะส่งรหัสยืนยันไปยังหมายเลขนี้" />
-                <Field label="อีเมล" required value={s.email} onChange={(v) => setSh(s.key, { email: v })} hint="ของเจ้าของข้อมูล" />
-                <Field label="สัดส่วนหุ้น (%)" required value={s.percent} onChange={(v) => setSh(s.key, { percent: v })} hint="ตัวเลข 0–100 เช่น 50 — รวมทุกคนต้องเป็น 100%" />
+                <Field label="ชื่อ–นามสกุล" required value={s.name} onChange={(v) => setSh(s.key, { name: v })} />
+                <Field label="เลขบัตรประชาชน" value={s.idNo} onChange={(v) => setSh(s.key, { idNo: v })} />
+                <Field label="โทรศัพท์" required value={s.phone} onChange={(v) => setSh(s.key, { phone: v })} hint="DBD ส่งรหัสยืนยันไปเบอร์นี้" />
+                <Field label="อีเมล" required value={s.email} onChange={(v) => setSh(s.key, { email: v })} />
+                <Field label="สัดส่วนหุ้น (%)" required value={s.percent} onChange={(v) => setSh(s.key, { percent: v })} hint="รวมทุกคนต้องเป็น 100%" />
               </div>
               <label className="flex items-center gap-1.5 text-sm">
                 <input type="checkbox" checked={s.isDirector} onChange={(e) => setSh(s.key, { isDirector: e.target.checked })} />
@@ -596,7 +594,6 @@ export default function OnboardForm({
               <UploadBox
                 label="บัตรประชาชน"
                 required
-                hint="กรุณาถ่ายด้านหน้าบัตรให้ชัดเจน (JPG/PNG/WebP/PDF ไม่เกิน 10MB)"
                 accept="image/jpeg,image/png,image/webp,application/pdf"
                 uploadedName={s.idCardName}
                 busy={uploading === `${s.key}:id`}
