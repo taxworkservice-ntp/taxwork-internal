@@ -14,7 +14,13 @@ import {
 
 export const runtime = "nodejs";
 
-const KINDS = new Set(["company_house", "shareholder_id", "shareholder_house", "signature"]);
+const KINDS = new Set([
+  "company_house",
+  "company_map",
+  "shareholder_id",
+  "shareholder_house",
+  "signature",
+]);
 
 /**
  * Token-gated presigned upload for the public onboarding form. Files go straight
@@ -49,6 +55,9 @@ export async function POST(
   if (!KINDS.has(kind)) return NextResponse.json({ error: "ไม่รู้จักชนิดไฟล์" }, { status: 400 });
   if (!INTAKE_ALLOWED_MIME.includes(contentType)) {
     return NextResponse.json({ error: "ชนิดไฟล์ไม่รองรับ (JPG/PNG/WebP/PDF)" }, { status: 400 });
+  }
+  if ((kind === "company_map" || kind === "signature") && contentType === "application/pdf") {
+    return NextResponse.json({ error: "ไฟล์นี้ต้องเป็นรูปภาพ (JPG/PNG/WebP)" }, { status: 400 });
   }
   if (!(size > 0) || size > INTAKE_MAX_FILE_BYTES) {
     return NextResponse.json({ error: "ไฟล์ใหญ่เกินไป (สูงสุด 10 MB)" }, { status: 400 });

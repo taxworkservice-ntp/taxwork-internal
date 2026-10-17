@@ -2,6 +2,8 @@
  * Pure builder for the internal "new intake submission" notification email.
  */
 
+import { INTAKE_TIMELINE_NOTE } from "@/lib/intake-shared";
+
 export type IntakeNotifyInput = {
   name: string;
   juristicId: string;
@@ -95,9 +97,10 @@ export function buildIntakeApprovedEmail(
   )} เรียบร้อยแล้ว ขอบคุณที่เลือกใช้บริการของเรา เจ้าหน้าที่จะติดต่อกลับเพื่อดำเนินการขั้นต่อไปโดยเร็ว</p>
   ${
     contactLine
-      ? `<p style="margin:0 0 20px;color:#6b7280;font-size:13px;">ติดต่อเรา: ${esc(contactLine)}</p>`
+      ? `<p style="margin:0 0 12px;color:#6b7280;font-size:13px;">ติดต่อเรา: ${esc(contactLine)}</p>`
       : ""
   }
+  <p style="margin:0 0 20px;color:#6b7280;font-size:13px;">${esc(INTAKE_TIMELINE_NOTE)}</p>
   <p style="margin:0 0 4px;">จึงเรียนมาเพื่อโปรดทราบ</p>
   <p style="margin:0 0 20px;font-weight:600;">${esc(firm)}</p>
   <p style="margin:0;font-size:12px;color:#9ca3af;">อีเมลฉบับนี้ส่งโดยระบบอัตโนมัติ</p>
@@ -109,6 +112,8 @@ export function buildIntakeApprovedEmail(
     `${firm} ได้รับข้อมูลการลงทะเบียนของ ${company} เรียบร้อยแล้ว ขอบคุณที่เลือกใช้บริการของเรา เจ้าหน้าที่จะติดต่อกลับเพื่อดำเนินการขั้นต่อไปโดยเร็ว`,
     "",
     ...(contactLine ? [`ติดต่อเรา: ${contactLine}`, ""] : []),
+    INTAKE_TIMELINE_NOTE,
+    "",
     "จึงเรียนมาเพื่อโปรดทราบ",
     firm,
     "",

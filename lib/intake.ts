@@ -15,7 +15,13 @@ export const INTAKE_ALLOWED_MIME = [
   "image/webp",
   "application/pdf",
 ];
-export const INTAKE_CONSENT_VERSION = "2026-10";
+
+export {
+  INTAKE_CONSENT_VERSION,
+  INTAKE_TIMELINE_NOTE,
+  INTAKE_MIN_SHAREHOLDERS,
+  INTAKE_MAX_SHAREHOLDERS,
+} from "@/lib/intake-shared";
 
 export type IntakeShareholder = {
   name: string;
@@ -60,7 +66,11 @@ export type IntakeSubmission = {
   addr_province: string | null;
   addr_postcode: string | null;
   company_house_path: string | null;
-  vat_registered: boolean;
+  company_map_path: string | null;
+  company_map_desc: string | null;
+  company_email: string | null;
+  company_phone: string | null;
+  vat_registered: boolean | null;
   vat_reg_date: string | null;
   vat_place: string | null;
   fiscal_year_end: string | null;

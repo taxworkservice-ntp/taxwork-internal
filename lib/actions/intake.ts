@@ -133,11 +133,36 @@ function mimeFromName(name: string): string | null {
  * attach the uploaded documents to the client's files. Duplicate-guards by the
  * 13-digit registration number.
  */
+export type IntakeReviewPatch = {
+  address?: string | null;
+  vat_registered?: boolean | null;
+  vat_reg_date?: string | null;
+  vat_place?: string | null;
+  fiscal_year_end?: string | null;
+  filings?: string[] | null;
+};
+
 export async function approveIntakeSubmission(
-  id: string
+  id: string,
+  review?: IntakeReviewPatch
 ): Promise<{ ok: true; clientId: string; duplicate: boolean } | { ok: false; error: string }> {
   try {
     const user = await requireUser();
+
+    // Staff-transcribed fields (address + tax) are applied before mapping.
+    if (review) {
+      const addr = review.address?.trim() || null;
+      await sql`update intake_submissions set
+        addr_line=${addr}, addr_moo=null, addr_soi=null, addr_road=null,
+        addr_subdistrict=null, addr_district=null, addr_province=null, addr_postcode=null,
+        vat_registered=${review.vat_registered ?? null},
+        vat_reg_date=${review.vat_reg_date?.trim() || null},
+        vat_place=${review.vat_place?.trim() || null},
+        fiscal_year_end=${review.fiscal_year_end?.trim() || null},
+        filings=${review.filings ?? []}
+        where id=${id}`;
+    }
+
     const rows = (await sql`select * from intake_submissions where id=${id}`) as Record<
       string,
       unknown
@@ -167,7 +192,7 @@ export async function approveIntakeSubmission(
 
       const inserted = (await sql`
         insert into clients (name, tax_id, email, phone, address, notes)
-        values (${sub.name_th}, ${sub.juristic_id}, ${sub.contact_email}, ${sub.contact_phone},
+        values (${sub.name_th}, ${sub.juristic_id}, ${sub.company_email || sub.contact_email}, ${sub.company_phone || sub.contact_phone},
                 ${composeAddress(sub)}, ${notesParts.join("\n") || null})
         returning id
       `) as { id: string }[];
@@ -192,6 +217,7 @@ export async function approveIntakeSubmission(
           values (${clientId}, ${path}, ${name}, ${0}, ${mimeFromName(name)}, ${category})`;
       };
       await attach(sub.company_house_path, "company-house");
+      await attach(sub.company_map_path, "company-map");
       for (const sh of sub.shareholders) {
         await attach(sh.idCardPath, "shareholder-id");
         await attach(sh.houseRegPath, "shareholder-house");

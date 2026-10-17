@@ -3,9 +3,12 @@
 import { useRef, useState } from "react";
 import type { FirmBranding } from "@/lib/branding";
 import type { IntakeSubmission } from "@/lib/intake";
-
-const FILINGS = ["ภ.พ.30", "ภ.ง.ด.1", "ภ.ง.ด.3", "ภ.ง.ด.53", "ภ.ง.ด.50/51", "ประกันสังคม"];
-const MAX_SHAREHOLDERS = 10;
+import EvidenceSheet, { type EvidenceData } from "@/components/evidence-sheet";
+import {
+  INTAKE_TIMELINE_NOTE,
+  INTAKE_MIN_SHAREHOLDERS,
+  INTAKE_MAX_SHAREHOLDERS,
+} from "@/lib/intake-shared";
 
 type Sh = {
   key: string;
@@ -17,8 +20,6 @@ type Sh = {
   email: string;
   idCardPath: string;
   idCardName: string;
-  houseRegPath: string;
-  houseRegName: string;
 };
 
 function newSh(): Sh {
@@ -32,8 +33,6 @@ function newSh(): Sh {
     email: "",
     idCardPath: "",
     idCardName: "",
-    houseRegPath: "",
-    houseRegName: "",
   };
 }
 
@@ -46,8 +45,19 @@ function mimeFor(file: File): string {
   return "image/jpeg";
 }
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="mb-2 mt-1 text-sm font-semibold text-neutral-800">{children}</h2>;
+function SectionTitle({ step, children }: { step: string; children: React.ReactNode }) {
+  return (
+    <h2 className="flex items-center gap-2 text-sm font-semibold">
+      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900 text-[11px] text-white">
+        {step}
+      </span>
+      {children}
+    </h2>
+  );
+}
+
+function Hint({ children }: { children: React.ReactNode }) {
+  return <p className="mt-0.5 text-xs text-neutral-500">{children}</p>;
 }
 
 function Field({
@@ -56,29 +66,24 @@ function Field({
   value,
   onChange,
   placeholder,
+  hint,
   type = "text",
-  className,
 }: {
   label: string;
   required?: boolean;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  hint?: React.ReactNode;
   type?: string;
-  className?: string;
 }) {
   return (
-    <label className={`block ${className ?? ""}`}>
+    <label className="block">
       <span className="label">
-        {label} {required && <span className="text-red-500">*</span>}
+        {label} {required ? <span className="text-red-500">*</span> : <span className="text-neutral-400">(ไม่บังคับ)</span>}
       </span>
-      <input
-        className="input"
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <input className="input" type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+      {hint && <Hint>{hint}</Hint>}
     </label>
   );
 }
@@ -86,23 +91,35 @@ function Field({
 function UploadBox({
   label,
   required,
+  hint,
   uploadedName,
-  onPick,
   busy,
+  accept,
+  onPick,
 }: {
   label: string;
   required?: boolean;
+  hint?: React.ReactNode;
   uploadedName: string;
-  onPick: (file: File) => void;
   busy: boolean;
+  accept: string;
+  onPick: (file: File) => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
-    <div className="flex items-center gap-2">
+    <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-3">
+      <div className="flex items-center gap-2">
+        <button type="button" className="btn text-xs" onClick={() => ref.current?.click()} disabled={busy}>
+          {busy ? "กำลังอัปโหลด…" : "เลือกไฟล์"}
+        </button>
+        <span className="text-sm">
+          {label} {required && <span className="text-red-500">*</span>}
+        </span>
+      </div>
       <input
         ref={ref}
         type="file"
-        accept="image/jpeg,image/png,image/webp,application/pdf"
+        accept={accept}
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -110,18 +127,8 @@ function UploadBox({
           e.target.value = "";
         }}
       />
-      <button
-        type="button"
-        className="btn text-xs"
-        onClick={() => ref.current?.click()}
-        disabled={busy}
-      >
-        {busy ? "กำลังอัปโหลด…" : "เลือกไฟล์"}
-      </button>
-      <span className="truncate text-xs">
-        {label} {required && <span className="text-red-500">*</span>}
-        {uploadedName && <span className="ml-1 text-emerald-600">✓ {uploadedName}</span>}
-      </span>
+      {hint && <Hint>{hint}</Hint>}
+      {uploadedName && <p className="mt-1 text-xs text-emerald-600">✓ {uploadedName}</p>}
     </div>
   );
 }
@@ -133,10 +140,7 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void }) {
   function point(e: React.PointerEvent<HTMLCanvasElement>) {
     const c = ref.current!;
     const r = c.getBoundingClientRect();
-    return {
-      x: ((e.clientX - r.left) / r.width) * c.width,
-      y: ((e.clientY - r.top) / r.height) * c.height,
-    };
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
   }
   function start(e: React.PointerEvent<HTMLCanvasElement>) {
     const c = ref.current;
@@ -154,8 +158,7 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void }) {
   }
   function move(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!drawing.current) return;
-    const c = ref.current!;
-    const ctx = c.getContext("2d")!;
+    const ctx = ref.current!.getContext("2d")!;
     const { x, y } = point(e);
     ctx.lineTo(x, y);
     ctx.stroke();
@@ -176,12 +179,12 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void }) {
       <canvas
         ref={ref}
         width={640}
-        height={160}
+        height={150}
         onPointerDown={start}
         onPointerMove={move}
         onPointerUp={end}
         onPointerLeave={end}
-        className="h-40 w-full touch-none rounded-lg border border-neutral-300 bg-white"
+        className="h-36 w-full touch-none rounded-lg border border-neutral-300 bg-white"
         style={{ touchAction: "none" }}
       />
       <button type="button" className="btn text-xs" onClick={clear}>
@@ -206,61 +209,53 @@ export default function OnboardForm({
     name_th2: initial?.name_th2 ?? "",
     name_en2: initial?.name_en2 ?? "",
     juristic_id: initial?.juristic_id ?? "",
+    company_email: initial?.company_email ?? "",
+    company_phone: initial?.company_phone ?? "",
     reg_date: initial?.reg_date ?? "",
     capital_registered: initial?.capital_registered != null ? String(initial.capital_registered) : "",
     capital_paid: initial?.capital_paid != null ? String(initial.capital_paid) : "",
     business_desc: initial?.business_desc ?? "",
-    addr_line: initial?.addr_line ?? "",
-    addr_moo: initial?.addr_moo ?? "",
-    addr_soi: initial?.addr_soi ?? "",
-    addr_road: initial?.addr_road ?? "",
-    addr_subdistrict: initial?.addr_subdistrict ?? "",
-    addr_district: initial?.addr_district ?? "",
-    addr_province: initial?.addr_province ?? "",
-    addr_postcode: initial?.addr_postcode ?? "",
-    vat_registered: initial?.vat_registered ?? false,
-    vat_reg_date: initial?.vat_reg_date ?? "",
-    vat_place: initial?.vat_place ?? "",
-    fiscal_year_end: initial?.fiscal_year_end ?? "31 ธันวาคม",
-    has_prev_accountant: initial?.has_prev_accountant ?? false,
-    prev_accountant: initial?.prev_accountant ?? "",
     contact_name: initial?.contact_name ?? "",
     contact_position: initial?.contact_position ?? "",
     contact_phone: initial?.contact_phone ?? "",
     contact_email: initial?.contact_email ?? "",
     notes: initial?.notes ?? "",
   });
-  const [filings, setFilings] = useState<string[]>(initial?.filings ?? []);
   const [companyHouse, setCompanyHouse] = useState({
     path: initial?.company_house_path ?? "",
     name: initial?.company_house_path ? "แนบแล้ว" : "",
   });
-  const [shs, setShs] = useState<Sh[]>(
-    initial?.shareholders?.length
-      ? initial.shareholders.map((s) => ({
-          key: Math.random().toString(36).slice(2),
-          name: s.name ?? "",
-          idNo: s.idNo ?? "",
-          percent: s.percent ?? "",
-          isDirector: Boolean(s.isDirector),
-          phone: s.phone ?? "",
-          email: s.email ?? "",
-          idCardPath: s.idCardPath ?? "",
-          idCardName: s.idCardPath ? "แนบแล้ว" : "",
-          houseRegPath: s.houseRegPath ?? "",
-          houseRegName: s.houseRegPath ? "แนบแล้ว" : "",
-        }))
-      : [newSh()]
-  );
+  const [companyMap, setCompanyMap] = useState({
+    path: initial?.company_map_path ?? "",
+    name: initial?.company_map_path ? "แนบแล้ว" : "",
+  });
+  const [mapDesc, setMapDesc] = useState(initial?.company_map_desc ?? "");
+  const [shs, setShs] = useState<Sh[]>(() => {
+    if (initial?.shareholders?.length) {
+      return initial.shareholders.map((s) => ({
+        key: Math.random().toString(36).slice(2),
+        name: s.name ?? "",
+        idNo: s.idNo ?? "",
+        percent: s.percent ?? "",
+        isDirector: Boolean(s.isDirector),
+        phone: s.phone ?? "",
+        email: s.email ?? "",
+        idCardPath: s.idCardPath ?? "",
+        idCardName: s.idCardPath ? "แนบแล้ว" : "",
+      }));
+    }
+    return [newSh(), newSh()];
+  });
   const [consent, setConsent] = useState(Boolean(initial?.consent_at));
   const [signerName, setSignerName] = useState(initial?.signer_name ?? "");
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState("");
   const [error, setError] = useState("");
-  const [done, setDone] = useState(false);
-  const [uploading, setUploading] = useState<string>("");
+  const [ref, setRef] = useState<string | null>(null);
+  const [submittedAt, setSubmittedAt] = useState<string | null>(null);
 
-  const set = (k: keyof typeof f, v: string | boolean) => setF((p) => ({ ...p, [k]: v }));
+  const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
   const setSh = (key: string, patch: Partial<Sh>) =>
     setShs((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)));
 
@@ -272,21 +267,18 @@ export default function OnboardForm({
     });
     const data = (await res.json().catch(() => ({}))) as { url?: string; path?: string; error?: string };
     if (!res.ok || !data.url || !data.path) throw new Error(data.error || "อัปโหลดไม่สำเร็จ");
-    const put = await fetch(data.url, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: blob,
-    });
+    const put = await fetch(data.url, { method: "PUT", headers: { "Content-Type": contentType }, body: blob });
     if (!put.ok) throw new Error("อัปโหลดไปที่เซิร์ฟเวอร์ไม่สำเร็จ");
     return data.path;
   }
 
-  async function pickCompanyHouse(file: File) {
-    setUploading("company");
+  async function pick(kind: string, file: File) {
+    setUploading(kind);
     setError("");
     try {
-      const path = await upload("company_house", file, file.name, mimeFor(file));
-      setCompanyHouse({ path, name: file.name });
+      const path = await upload(kind, file, file.name, mimeFor(file));
+      if (kind === "company_house") setCompanyHouse({ path, name: file.name });
+      else if (kind === "company_map") setCompanyMap({ path, name: file.name });
     } catch (e) {
       setError(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
     } finally {
@@ -294,13 +286,12 @@ export default function OnboardForm({
     }
   }
 
-  async function pickShFile(sh: Sh, kind: "shareholder_id" | "shareholder_house", file: File) {
-    setUploading(`${sh.key}:${kind}`);
+  async function pickShFile(sh: Sh, file: File) {
+    setUploading(`${sh.key}:id`);
     setError("");
     try {
-      const path = await upload(kind, file, file.name, mimeFor(file));
-      if (kind === "shareholder_id") setSh(sh.key, { idCardPath: path, idCardName: file.name });
-      else setSh(sh.key, { houseRegPath: path, houseRegName: file.name });
+      const path = await upload("shareholder_id", file, file.name, mimeFor(file));
+      setSh(sh.key, { idCardPath: path, idCardName: file.name });
     } catch (e) {
       setError(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
     } finally {
@@ -310,6 +301,10 @@ export default function OnboardForm({
 
   async function submit() {
     setError("");
+    if (shs.length < INTAKE_MIN_SHAREHOLDERS) {
+      setError(`กรุณากรอกข้อมูลผู้ถือหุ้นอย่างน้อย ${INTAKE_MIN_SHAREHOLDERS} ราย`);
+      return;
+    }
     if (!signerName.trim()) {
       setError("กรุณากรอกชื่อ–นามสกุลผู้ลงนาม");
       return;
@@ -330,8 +325,9 @@ export default function OnboardForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...f,
-          filings,
           company_house_path: companyHouse.path,
+          company_map_path: companyMap.path,
+          company_map_desc: mapDesc,
           shareholders: shs.map((s) => ({
             name: s.name,
             idNo: s.idNo,
@@ -340,19 +336,19 @@ export default function OnboardForm({
             phone: s.phone,
             email: s.email,
             idCardPath: s.idCardPath,
-            houseRegPath: s.houseRegPath,
           })),
           consent,
           signer_name: signerName,
           signature_path: signaturePath,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      const data = (await res.json().catch(() => ({}))) as { error?: string; ref?: string; submittedAt?: string };
       if (!res.ok) {
         setError(data.error || "ส่งข้อมูลไม่สำเร็จ");
         return;
       }
-      setDone(true);
+      setRef(data.ref ?? null);
+      setSubmittedAt(data.submittedAt ?? new Date().toISOString());
     } catch {
       setError("ส่งข้อมูลไม่สำเร็จ กรุณาลองใหม่");
     } finally {
@@ -360,161 +356,184 @@ export default function OnboardForm({
     }
   }
 
-  if (done) {
+  // ---- evidence view after submit --------------------------------------
+  if (ref) {
+    const evidence: EvidenceData = {
+      firmName: branding.firmName,
+      logoDataUri: branding.logoDataUri,
+      ref,
+      statusLabel: "รอตรวจสอบ",
+      submittedAt: submittedAt ?? new Date().toISOString(),
+      nameTh: f.name_th,
+      nameEn: f.name_en,
+      nameTh2: f.name_th2,
+      nameEn2: f.name_en2,
+      juristicId: f.juristic_id,
+      regDate: f.reg_date,
+      capitalRegistered: f.capital_registered,
+      capitalPaid: f.capital_paid,
+      businessDesc: f.business_desc,
+      companyEmail: f.company_email,
+      companyPhone: f.company_phone,
+      mapDesc,
+      contactName: f.contact_name,
+      contactPosition: f.contact_position,
+      contactPhone: f.contact_phone,
+      contactEmail: f.contact_email,
+      notes: f.notes,
+      shareholders: shs,
+      signatureSrc: signatureDataUrl || null,
+      signerName,
+      signedAt: submittedAt,
+      consentAt: consent ? submittedAt : null,
+      docs: [
+        companyHouse.name ? { label: "ทะเบียนบ้าน (ที่ตั้งบริษัท)" } : { label: "" },
+        companyMap.name ? { label: "ภาพแผนที่ Google Maps" } : { label: "" },
+        ...shs.map((s) => ({ label: `บัตรประชาชน — ${s.name || "ผู้ถือหุ้น"}` })),
+      ].filter((d) => d.label),
+      timelineNote: INTAKE_TIMELINE_NOTE,
+    };
     return (
-      <main className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-4 px-4 py-12 text-center">
-        <div className="card w-full space-y-2 py-8">
-          <p className="text-base font-semibold text-emerald-700">ส่งข้อมูลเรียบร้อยแล้ว ✓</p>
-          <p className="text-sm text-neutral-500">
-            เราได้รับข้อมูลของท่านแล้ว และจะติดต่อกลับโดยเร็ว ขอบคุณค่ะ
-          </p>
+      <main className="mx-auto max-w-3xl space-y-4 px-4 py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            ✓ ส่งข้อมูลเรียบร้อยแล้ว — เก็บหลักฐานนี้ไว้ได้เลย
+          </div>
+          <div className="flex gap-2">
+            <button className="btn-primary" onClick={() => window.print()}>
+              ดาวน์โหลด PDF
+            </button>
+            <button className="btn" onClick={() => setRef(null)}>
+              แก้ไขข้อมูล
+            </button>
+          </div>
         </div>
+        <EvidenceSheet data={evidence} />
       </main>
     );
   }
 
+  // ---- form -------------------------------------------------------------
   return (
     <main className="mx-auto max-w-2xl px-4 py-8">
-      <header className="mb-6 flex items-center gap-3">
+      <header className="mb-4 flex items-center gap-3">
         {branding.logoDataUri ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={branding.logoDataUri} alt={branding.firmName} className="h-9 max-w-[40%] object-contain" />
         ) : null}
         <div>
           <h1 className="text-lg font-bold">ลงทะเบียนลูกค้าใหม่</h1>
-          <p className="text-xs text-neutral-500">{branding.firmName}</p>
+          <p className="text-xs text-neutral-500">{branding.firmName} · ใช้เวลาประมาณ 3 นาที</p>
         </div>
       </header>
 
-      <div className="space-y-5">
+      <div className="space-y-4">
+        <section className="card space-y-2">
+          <p className="text-sm font-semibold">ก่อนเริ่ม — เตรียมไว้ 3 อย่าง</p>
+          <ol className="list-inside list-decimal space-y-0.5 text-sm text-neutral-600">
+            <li>เลขทะเบียนนิติบุคคล 13 หลัก (ดูในหนังสือรับรอง)</li>
+            <li>บัตรประชาชนของผู้ถือหุ้นทุกคน (อย่างน้อย 2 คน) + เบอร์/อีเมลของแต่ละคน</li>
+            <li>ทะเบียนบ้านที่ตั้งบริษัท + ภาพแผนที่ (แคปจาก Google Maps)</li>
+          </ol>
+          <p className="rounded bg-neutral-50 px-2 py-1.5 text-xs text-neutral-500">{INTAKE_TIMELINE_NOTE}</p>
+        </section>
+
         <section className="card space-y-3">
-          <SectionTitle>1. ข้อมูลบริษัท</SectionTitle>
+          <SectionTitle step="1">ข้อมูลบริษัท</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="ชื่อบริษัท (ไทย) ตัวเลือก 1" required value={f.name_th} onChange={(v) => set("name_th", v)} />
-            <Field label="ชื่อบริษัท (อังกฤษ) ตัวเลือก 1" value={f.name_en} onChange={(v) => set("name_en", v)} />
-            <Field label="ชื่อบริษัท (ไทย) ตัวเลือก 2" value={f.name_th2} onChange={(v) => set("name_th2", v)} />
-            <Field label="ชื่อบริษัท (อังกฤษ) ตัวเลือก 2" value={f.name_en2} onChange={(v) => set("name_en2", v)} />
+            <Field label="ชื่อบริษัท (ไทย) ตัวเลือก 1" required value={f.name_th} onChange={(v) => set("name_th", v)} hint="ตามหนังสือรับรอง / ชื่อที่ต้องการจด" placeholder="บริษัท ตัวอย่าง จำกัด" />
+            <Field label="ชื่อบริษัท (อังกฤษ) ตัวเลือก 1" value={f.name_en} onChange={(v) => set("name_en", v)} placeholder="EXAMPLE CO., LTD." />
+            <Field label="ชื่อบริษัท (ไทย) ตัวเลือก 2" value={f.name_th2} onChange={(v) => set("name_th2", v)} hint="ชื่อสำรองถ้าชื่อแรกซ้ำ" />
+            <Field label="ชื่อบริษัท (อังกฤษ) ตัวเลือก 2" value={f.name_en2} onChange={(v) => set("name_en2", v)} hint="ชื่อสำรองถ้าชื่อแรกซ้ำ" />
           </div>
           <Field
             label="เลขทะเบียนนิติบุคคล (13 หลัก)"
             required
             value={f.juristic_id}
-            onChange={(v) => set("juristic_id", v)}
+            onChange={(v) => set("juristic_id", v.replace(/[^\d-]/g, ""))}
             placeholder="0-0000-00000-00-0"
+            hint="ดูในหนังสือรับรองบริษัท — ระบบตรวจให้อัตโนมัติ"
           />
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="วันที่จดทะเบียน" type="date" value={f.reg_date} onChange={(v) => set("reg_date", v)} />
-            <Field label="ทุนจดทะเบียน (บาท)" value={f.capital_registered} onChange={(v) => set("capital_registered", v)} />
-            <Field label="ทุนชำระแล้ว (บาท)" value={f.capital_paid} onChange={(v) => set("capital_paid", v)} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="อีเมลบริษัท" required value={f.company_email} onChange={(v) => set("company_email", v)} hint="ใช้ส่งเอกสาร/ใบแจ้งหนี้" placeholder="info@company.co.th" />
+            <Field label="โทรศัพท์บริษัท" required value={f.company_phone} onChange={(v) => set("company_phone", v)} hint="ติดต่อเวลาทำการ" placeholder="02-000-0000" />
           </div>
-          <label className="block">
-            <span className="label">ประเภทธุรกิจ / วัตถุประสงค์</span>
-            <textarea className="input h-20" value={f.business_desc} onChange={(e) => set("business_desc", e.target.value)} />
-          </label>
+          <details className="rounded-lg border border-neutral-200 p-3">
+            <summary className="cursor-pointer text-xs text-neutral-500">ข้อมูลเพิ่มเติม (ถ้าทราบ)</summary>
+            <div className="mt-2 grid gap-3 sm:grid-cols-3">
+              <Field label="วันที่จดทะเบียน" type="date" value={f.reg_date} onChange={(v) => set("reg_date", v)} hint="ดูในหนังสือรับรอง" />
+              <Field label="ทุนจดทะเบียน" value={f.capital_registered} onChange={(v) => set("capital_registered", v)} hint="ตัวเลข เช่น 1000000" />
+              <Field label="ทุนชำระแล้ว" value={f.capital_paid} onChange={(v) => set("capital_paid", v)} hint="ตัวเลข" />
+            </div>
+            <div className="mt-3">
+              <Field
+                label="ประเภทธุรกิจ / วัตถุประสงค์"
+                value={f.business_desc}
+                onChange={(v) => set("business_desc", v)}
+                placeholder="เช่น ขายของออนไลน์"
+                hint="พิมพ์สั้น ๆ — นักบัญชีจัดหมวดให้"
+              />
+            </div>
+          </details>
         </section>
 
         <section className="card space-y-3">
-          <SectionTitle>2. ที่ตั้งสำนักงานใหญ่</SectionTitle>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="เลขที่ / อาคาร / ห้อง" required value={f.addr_line} onChange={(v) => set("addr_line", v)} />
-            <Field label="หมู่" value={f.addr_moo} onChange={(v) => set("addr_moo", v)} />
-            <Field label="ซอย" value={f.addr_soi} onChange={(v) => set("addr_soi", v)} />
-            <Field label="ถนน" value={f.addr_road} onChange={(v) => set("addr_road", v)} />
-            <Field label="แขวง / ตำบล" required value={f.addr_subdistrict} onChange={(v) => set("addr_subdistrict", v)} />
-            <Field label="เขต / อำเภอ" required value={f.addr_district} onChange={(v) => set("addr_district", v)} />
-            <Field label="จังหวัด" required value={f.addr_province} onChange={(v) => set("addr_province", v)} />
-            <Field label="รหัสไปรษณีย์" required value={f.addr_postcode} onChange={(v) => set("addr_postcode", v)} />
-          </div>
+          <SectionTitle step="2">ที่ตั้งสำนักงานใหญ่</SectionTitle>
+          <p className="text-xs text-neutral-500">ไม่ต้องพิมพ์ที่อยู่ — แนบเอกสารให้ครบก็พอ</p>
           <UploadBox
             label="สำเนาทะเบียนบ้าน (ที่ตั้งบริษัท)"
             required
+            hint="ถ่ายหน้าที่เห็นเลขที่บ้านชัดเจน (JPG/PNG/WebP/PDF ≤10MB)"
+            accept="image/jpeg,image/png,image/webp,application/pdf"
             uploadedName={companyHouse.name}
-            busy={uploading === "company"}
-            onPick={pickCompanyHouse}
+            busy={uploading === "company_house"}
+            onPick={(file) => pick("company_house", file)}
           />
-        </section>
-
-        <section className="card space-y-3">
-          <SectionTitle>3. ภาษี & รอบบัญชี</SectionTitle>
-          <div className="flex flex-wrap items-center gap-4 text-sm">
-            <label className="flex items-center gap-1.5">
-              <input type="radio" checked={f.vat_registered} onChange={() => set("vat_registered", true)} />
-              จดทะเบียน VAT
-            </label>
-            <label className="flex items-center gap-1.5">
-              <input type="radio" checked={!f.vat_registered} onChange={() => set("vat_registered", false)} />
-              ไม่ได้จด VAT
-            </label>
-          </div>
-          {f.vat_registered && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="วันจดทะเบียน VAT" type="date" value={f.vat_reg_date} onChange={(v) => set("vat_reg_date", v)} />
-              <Field label="สถานที่ประกอบการ" value={f.vat_place} onChange={(v) => set("vat_place", v)} />
-            </div>
-          )}
-          <Field label="วันสิ้นสุดรอบปีบัญชี" value={f.fiscal_year_end} onChange={(v) => set("fiscal_year_end", v)} />
-          <div>
-            <span className="label">แบบที่ต้องยื่น (ถ้าทราบ)</span>
-            <div className="flex flex-wrap gap-3 text-sm">
-              {FILINGS.map((code) => (
-                <label key={code} className="flex items-center gap-1.5">
-                  <input
-                    type="checkbox"
-                    checked={filings.includes(code)}
-                    onChange={(e) =>
-                      setFilings((prev) => (e.target.checked ? [...prev, code] : prev.filter((x) => x !== code)))
-                    }
-                  />
-                  {code}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-4 text-sm">
-            <span className="label mb-0">เคยมีสำนักบัญชีเดิม</span>
-            <label className="flex items-center gap-1.5">
-              <input type="radio" checked={f.has_prev_accountant} onChange={() => set("has_prev_accountant", true)} />
-              มี
-            </label>
-            <label className="flex items-center gap-1.5">
-              <input type="radio" checked={!f.has_prev_accountant} onChange={() => set("has_prev_accountant", false)} />
-              ไม่มี
-            </label>
-          </div>
-          {f.has_prev_accountant && (
-            <Field label="ชื่อสำนักบัญชีเดิม" value={f.prev_accountant} onChange={(v) => set("prev_accountant", v)} />
-          )}
+          <UploadBox
+            label="ภาพแผนที่ Google Maps"
+            required
+            hint="เปิด Google Maps → ขยายให้เห็นตึก/ซอย → แคปหน้าจอ (รูปภาพ ≤10MB)"
+            accept="image/jpeg,image/png,image/webp"
+            uploadedName={companyMap.name}
+            busy={uploading === "company_map"}
+            onPick={(file) => pick("company_map", file)}
+          />
+          <label className="block">
+            <span className="label">
+              อธิบายเส้นทางโดยสังเขป <span className="text-neutral-400">(ไม่บังคับ)</span>
+            </span>
+            <textarea className="input" rows={3} maxLength={500} value={mapDesc} onChange={(e) => setMapDesc(e.target.value)} placeholder="เช่น เข้าซอยสุขุมวิท 24 ตึกสีขาวชั้น 3 ใกล้ BTS พร้อมพงษ์" />
+          </label>
         </section>
 
         <section className="card space-y-4">
           <div className="flex items-center justify-between">
-            <SectionTitle>4. ผู้ถือหุ้น / กรรมการ</SectionTitle>
-            {shs.length < MAX_SHAREHOLDERS && (
+            <SectionTitle step="3">
+              ผู้ถือหุ้น / กรรมการ <span className="text-xs font-normal text-neutral-400">({shs.length}/{INTAKE_MAX_SHAREHOLDERS})</span>
+            </SectionTitle>
+            {shs.length < INTAKE_MAX_SHAREHOLDERS && (
               <button type="button" className="btn text-xs" onClick={() => setShs((p) => [...p, newSh()])}>
                 + เพิ่มรายชื่อ
               </button>
             )}
           </div>
+          <p className="text-xs text-neutral-500">ใช้ยืนยันตัวตน DBD ออนไลน์ — แต่ละคนต้องมีเบอร์ + อีเมลของตัวเอง (อย่างน้อย {INTAKE_MIN_SHAREHOLDERS} คน)</p>
           {shs.map((s, i) => (
             <div key={s.key} className="space-y-3 rounded-lg border border-neutral-200 p-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-neutral-500">ผู้ถือหุ้น #{i + 1}</span>
-                {shs.length > 1 && (
-                  <button
-                    type="button"
-                    className="text-xs text-neutral-400 hover:text-red-600"
-                    onClick={() => setShs((p) => p.filter((x) => x.key !== s.key))}
-                  >
+                {shs.length > INTAKE_MIN_SHAREHOLDERS && (
+                  <button type="button" className="text-xs text-neutral-400 hover:text-red-600" onClick={() => setShs((p) => p.filter((x) => x.key !== s.key))}>
                     ลบ
                   </button>
                 )}
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="ชื่อ–นามสกุล" required value={s.name} onChange={(v) => setSh(s.key, { name: v })} />
-                <Field label="เลขบัตรประชาชน / ผู้เสียภาษี" value={s.idNo} onChange={(v) => setSh(s.key, { idNo: v })} />
-                <Field label="สัดส่วนหุ้น (%)" value={s.percent} onChange={(v) => setSh(s.key, { percent: v })} />
-                <Field label="โทรศัพท์" required value={s.phone} onChange={(v) => setSh(s.key, { phone: v })} />
-                <Field label="อีเมล" required value={s.email} onChange={(v) => setSh(s.key, { email: v })} />
+                <Field label="ชื่อ–นามสกุล" required value={s.name} onChange={(v) => setSh(s.key, { name: v })} hint="ตามบัตรประชาชน" />
+                <Field label="เลขบัตรประชาชน" value={s.idNo} onChange={(v) => setSh(s.key, { idNo: v })} hint="13 หลัก (ไม่บังคับ)" />
+                <Field label="โทรศัพท์" required value={s.phone} onChange={(v) => setSh(s.key, { phone: v })} hint="ของเจ้าตัว — DBD ส่งรหัสยืนยันไปที่นี่" />
+                <Field label="อีเมล" required value={s.email} onChange={(v) => setSh(s.key, { email: v })} hint="ของเจ้าตัว" />
+                <Field label="สัดส่วนหุ้น (%)" value={s.percent} onChange={(v) => setSh(s.key, { percent: v })} hint="เช่น 50" />
               </div>
               <label className="flex items-center gap-1.5 text-sm">
                 <input type="checkbox" checked={s.isDirector} onChange={(e) => setSh(s.key, { isDirector: e.target.checked })} />
@@ -523,44 +542,33 @@ export default function OnboardForm({
               <UploadBox
                 label="บัตรประชาชน"
                 required
+                hint="ถ่ายหน้าบัตรให้ชัด (JPG/PNG/WebP/PDF ≤10MB)"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
                 uploadedName={s.idCardName}
-                busy={uploading === `${s.key}:shareholder_id`}
-                onPick={(file) => pickShFile(s, "shareholder_id", file)}
-              />
-              <UploadBox
-                label="สำเนาทะเบียนบ้าน"
-                required
-                uploadedName={s.houseRegName}
-                busy={uploading === `${s.key}:shareholder_house`}
-                onPick={(file) => pickShFile(s, "shareholder_house", file)}
+                busy={uploading === `${s.key}:id`}
+                onPick={(file) => pickShFile(s, file)}
               />
             </div>
           ))}
         </section>
 
         <section className="card space-y-3">
-          <SectionTitle>5. ผู้ติดต่อ</SectionTitle>
+          <SectionTitle step="4">ติดต่อ & ลงนาม</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="ชื่อ–นามสกุล" required value={f.contact_name} onChange={(v) => set("contact_name", v)} />
+            <Field label="ชื่อ–นามสกุล ผู้ติดต่อ" required value={f.contact_name} onChange={(v) => set("contact_name", v)} hint="คนที่เราประสานงานได้จริง" />
             <Field label="ตำแหน่ง" value={f.contact_position} onChange={(v) => set("contact_position", v)} />
             <Field label="โทรศัพท์" required value={f.contact_phone} onChange={(v) => set("contact_phone", v)} />
             <Field label="อีเมล" required value={f.contact_email} onChange={(v) => set("contact_email", v)} />
           </div>
-        </section>
-
-        <section className="card space-y-3">
-          <SectionTitle>6. ลงนามยืนยัน</SectionTitle>
-          <p className="text-xs text-neutral-500">
-            ข้าพเจ้าขอรับรองว่าข้อมูลข้างต้นถูกต้อง และลงนามเพื่อยืนยันการลงทะเบียน
-          </p>
-          {initial?.signature_path && !signatureDataUrl && (
-            <p className="text-xs text-emerald-600">✓ มีลายเซ็นที่บันทึกไว้แล้ว (วาดใหม่ได้หากต้องการแก้ไข)</p>
-          )}
-          <SignaturePad onChange={setSignatureDataUrl} />
-          <Field label="ชื่อ–นามสกุลผู้ลงนาม" required value={signerName} onChange={setSignerName} />
-        </section>
-
-        <section className="card space-y-3">
+          <div>
+            <span className="label">ลายเซ็นยืนยัน <span className="text-red-500">*</span></span>
+            <Hint>เซ็นในกรอบด้วยนิ้ว/เมาส์ แล้วพิมพ์ชื่อผู้ลงนามด้านล่าง</Hint>
+            {initial?.signature_path && !signatureDataUrl && (
+              <p className="mt-1 text-xs text-emerald-600">✓ มีลายเซ็นที่บันทึกไว้แล้ว (วาดใหม่ได้หากต้องการแก้ไข)</p>
+            )}
+            <SignaturePad onChange={setSignatureDataUrl} />
+          </div>
+          <Field label="ชื่อ–นามสกุล ผู้ลงนาม" required value={signerName} onChange={setSignerName} hint="ต้องตรงกับคนที่เซ็นด้านบน" />
           <label className="flex items-start gap-2 text-sm">
             <input type="checkbox" className="mt-1" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
             <span>
@@ -569,20 +577,19 @@ export default function OnboardForm({
             </span>
           </label>
           <label className="block">
-            <span className="label">หมายเหตุเพิ่มเติม</span>
+            <span className="label">
+              หมายเหตุเพิ่มเติม <span className="text-neutral-400">(ไม่บังคับ)</span>
+            </span>
             <textarea className="input h-16" value={f.notes} onChange={(e) => set("notes", e.target.value)} />
           </label>
         </section>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && (
+          <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+        )}
 
-        <div className="pb-16">
-          <button
-            type="button"
-            className="btn-primary w-full sm:w-auto"
-            onClick={submit}
-            disabled={busy || Boolean(uploading) || !consent}
-          >
+        <div className="sticky bottom-0 -mx-4 border-t border-neutral-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
+          <button type="button" className="btn-primary w-full sm:w-auto" onClick={submit} disabled={busy || Boolean(uploading) || !consent}>
             {busy ? "กำลังส่ง…" : "ส่งข้อมูลลงทะเบียน"}
           </button>
         </div>

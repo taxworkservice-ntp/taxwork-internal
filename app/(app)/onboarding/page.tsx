@@ -11,9 +11,12 @@ import {
   rejectIntakeSubmission,
   revokeIntakeLink,
   type IntakeLinkRow,
+  type IntakeReviewPatch,
   type IntakeSubmissionRow,
 } from "@/lib/actions/intake";
 import { formatTaxId } from "@/lib/tax-id";
+
+const FILINGS = ["ภ.พ.30", "ภ.ง.ด.1", "ภ.ง.ด.3", "ภ.ง.ด.53", "ภ.ง.ด.50/51", "ประกันสังคม"];
 
 function badge(status: string | null) {
   const map: Record<string, string> = {
@@ -41,6 +44,9 @@ export default function OnboardingPage() {
   const [message, setMessage] = useState("");
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState<Record<string, IntakeReviewPatch>>({});
+  const setDraftField = (id: string, patch: IntakeReviewPatch) =>
+    setDraft((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
 
   const load = useCallback(async () => {
     const [l, s] = await Promise.all([listIntakeLinks(), listIntakeSubmissions()]);
@@ -106,7 +112,7 @@ export default function OnboardingPage() {
     setBusy(true);
     setMessage("");
     try {
-      const res = await approveIntakeSubmission(id);
+      const res = await approveIntakeSubmission(id, draft[id]);
       if (!res.ok) {
         setMessage(res.error);
         return;
@@ -159,12 +165,14 @@ export default function OnboardingPage() {
           const open = openSub === s.id;
           const docs: { label: string; path: string | null }[] = [
             { label: "ทะเบียนบ้าน (ที่ตั้งบริษัท)", path: s.company_house_path },
-            ...s.shareholders.flatMap((sh, i) => [
-              { label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชน (${sh.name})`, path: sh.idCardPath || null },
-              { label: `ผู้ถือหุ้น #${i + 1} ทะเบียนบ้าน (${sh.name})`, path: sh.houseRegPath || null },
-            ]),
+            { label: "แผนที่ Google Maps", path: s.company_map_path },
+            ...s.shareholders.map((sh, i) => ({
+              label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชน (${sh.name})`,
+              path: sh.idCardPath || null,
+            })),
             { label: `ลายเซ็น (${s.signer_name || "ผู้ลงนาม"})`, path: s.signature_path },
           ];
+          const d = draft[s.id] ?? {};
           return (
             <div key={s.id} className="card space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -183,20 +191,94 @@ export default function OnboardingPage() {
               </div>
 
               {open && (
-                <div className="space-y-2 border-t border-neutral-100 pt-3 text-sm">
+                <div className="space-y-3 border-t border-neutral-100 pt-3 text-sm">
                   <div className="grid gap-1 sm:grid-cols-2">
                     <div>ชื่ออังกฤษ: {s.name_en || "-"}</div>
                     <div>ชื่อสำรอง: {s.name_th2 || "-"}</div>
-                    <div>จด VAT: {s.vat_registered ? "ใช่" : "ไม่ใช่"}</div>
-                    <div>รอบบัญชี: {s.fiscal_year_end || "-"}</div>
-                    <div className="sm:col-span-2">
-                      ที่อยู่:{" "}
-                      {[s.addr_line, s.addr_moo, s.addr_soi, s.addr_road, s.addr_subdistrict, s.addr_district, s.addr_province, s.addr_postcode]
-                        .filter(Boolean)
-                        .join(" ") || "-"}
-                    </div>
+                    <div>อีเมลบริษัท: {s.company_email || "-"}</div>
+                    <div>โทรบริษัท: {s.company_phone || "-"}</div>
                     <div className="sm:col-span-2">ประเภทธุรกิจ: {s.business_desc || "-"}</div>
-                    {s.filings.length > 0 && <div className="sm:col-span-2">แบบที่ยื่น: {s.filings.join(", ")}</div>}
+                  </div>
+
+                  <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                    <div className="mb-2 text-xs font-medium text-neutral-500">
+                      กรอกเพิ่มโดยเจ้าหน้าที่ (ก่อนอนุมัติ)
+                    </div>
+                    <label className="block">
+                      <span className="label">ที่อยู่จดทะเบียน (พิมพ์จากทะเบียนบ้าน)</span>
+                      <textarea
+                        className="input"
+                        rows={2}
+                        value={d.address ?? ""}
+                        onChange={(e) => setDraftField(s.id, { address: e.target.value })}
+                      />
+                    </label>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                      <label className="block">
+                        <span className="label">VAT</span>
+                        <select
+                          className="input"
+                          value={d.vat_registered === undefined || d.vat_registered === null ? "" : d.vat_registered ? "yes" : "no"}
+                          onChange={(e) =>
+                            setDraftField(s.id, {
+                              vat_registered: e.target.value === "" ? null : e.target.value === "yes",
+                            })
+                          }
+                        >
+                          <option value="">ไม่ทราบ</option>
+                          <option value="yes">จด</option>
+                          <option value="no">ไม่จด</option>
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="label">วันจด VAT</span>
+                        <input
+                          type="date"
+                          className="input"
+                          value={d.vat_reg_date ?? ""}
+                          onChange={(e) => setDraftField(s.id, { vat_reg_date: e.target.value })}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="label">วันสิ้นสุดรอบบัญชี</span>
+                        <input
+                          className="input"
+                          value={d.fiscal_year_end ?? ""}
+                          onChange={(e) => setDraftField(s.id, { fiscal_year_end: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                    <label className="mt-2 block">
+                      <span className="label">สถานที่ประกอบการ VAT</span>
+                      <input
+                        className="input"
+                        value={d.vat_place ?? ""}
+                        onChange={(e) => setDraftField(s.id, { vat_place: e.target.value })}
+                      />
+                    </label>
+                    <div className="mt-2">
+                      <span className="label">แบบที่ต้องยื่น</span>
+                      <div className="flex flex-wrap gap-3 text-sm">
+                        {FILINGS.map((code) => {
+                          const sel = (d.filings ?? []).includes(code);
+                          return (
+                            <label key={code} className="flex items-center gap-1.5">
+                              <input
+                                type="checkbox"
+                                checked={sel}
+                                onChange={(e) => {
+                                  const cur = new Set(d.filings ?? []);
+                                  if (e.target.checked) cur.add(code);
+                                  else cur.delete(code);
+                                  setDraftField(s.id, { filings: [...cur] });
+                                }}
+                              />
+                              {code}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -212,10 +294,10 @@ export default function OnboardingPage() {
 
                   <div className="flex flex-wrap gap-2">
                     {docs
-                      .filter((d) => d.path)
-                      .map((d, i) => (
-                        <button key={i} className="btn text-xs" onClick={() => preview(d.path!)}>
-                          เปิด: {d.label}
+                      .filter((x) => x.path)
+                      .map((x, i) => (
+                        <button key={i} className="btn text-xs" onClick={() => preview(x.path!)}>
+                          เปิด: {x.label}
                         </button>
                       ))}
                   </div>
