@@ -394,6 +394,30 @@ export async function updateIntakeSubmission(
   }
 }
 
+/** Push a test LINE message to all configured admin recipients. */
+export async function sendTestLineNotify(): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const { adminLineRecipients, pushLineText } = await import("@/lib/line");
+    const to = adminLineRecipients();
+    if (!to.length)
+      return { ok: false, error: "ยังไม่ได้ตั้งค่า ADMIN_LINE_USER_IDS" };
+    const errors: string[] = [];
+    for (const recipient of to) {
+      const res = await pushLineText({
+        to: recipient,
+        text: "ทดสอบแจ้งเตือน LINE จากระบบ Taxwork (กรุณาเพิกเฉย)",
+      });
+      if (!res.ok) errors.push(`${recipient}: ${res.error}`);
+    }
+    if (errors.length) return { ok: false, error: `ส่งไม่สำเร็จ — ${errors.join("; ")}` };
+    return { ok: true };
+  } catch (error) {
+    console.error("sendTestLineNotify failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
+}
+
 /** Short-lived signed URL to preview an uploaded intake document. */
 export async function getIntakeFileUrl(path: string): Promise<string | null> {
   await requireUser();

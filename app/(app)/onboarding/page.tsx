@@ -8,6 +8,7 @@ import {
   listIntakeSubmissions,
   rejectIntakeSubmission,
   revokeIntakeLink,
+  sendTestLineNotify,
   type IntakeLinkRow,
   type IntakeSubmissionRow,
 } from "@/lib/actions/intake";
@@ -111,6 +112,17 @@ export default function OnboardingPage() {
     window.open(url, "_blank", "noopener");
   }
 
+  async function testLine() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const res = await sendTestLineNotify();
+      setMessage(res.ok ? "ส่งข้อความทดสอบไป LINE แล้ว — ตรวจสอบในแอป LINE" : res.error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function reject(id: string) {
     if (!confirm("ปฏิเสธคำขอนี้?")) return;
     setBusy(true);
@@ -174,9 +186,14 @@ export default function OnboardingPage() {
             ส่งลิงก์ให้ผู้สนใจกรอกข้อมูล แล้วใช้จดทะเบียนบริษัทกับ DBD
           </p>
         </div>
-        <button className="btn-primary" onClick={makeLink} disabled={busy}>
-          สร้างลิงก์ลงทะเบียน
-        </button>
+        <div className="flex gap-2">
+          <button className="btn" onClick={testLine} disabled={busy} title="ส่งข้อความทดสอบไปยัง LINE ของผู้ดูแล">
+            ทดสอบแจ้งเตือน LINE
+          </button>
+          <button className="btn-primary" onClick={makeLink} disabled={busy}>
+            สร้างลิงก์ลงทะเบียน
+          </button>
+        </div>
       </div>
 
       {message && (
