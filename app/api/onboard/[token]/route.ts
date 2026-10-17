@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
-import { sendEmail } from "@/lib/email/resend";
-import { adminLineRecipients, buildIntakeLineText, pushLineText } from "@/lib/line";
-import { buildIntakeNotifyEmail } from "@/lib/email/intake-email";
-import { appOrigin } from "@/lib/app-url";
+import { notifyAdminsIntake } from "@/lib/notify-admin";
 import {
   loadIntakeByToken,
   intakeStatus,
@@ -112,15 +109,24 @@ export async function POST(
     const name = clean(s.name);
     const phone = clean(s.phone, 50);
     const email = clean(s.email, 120);
-    const idCardPath = clean(s.idCardPath, 400);
+    const idCardFront = clean(s.idCardFrontPath, 400);
+    const idCardBack = clean(s.idCardBackPath, 400);
+    const idCardLegacy = clean(s.idCardPath, 400);
     const houseRegPath = clean(s.houseRegPath, 400);
     const pct = parsePercent(s.percent);
     if (!name || !phone || !isEmail(email))
       return json("ข้อมูลผู้ถือหุ้นไม่ครบ (ชื่อ/โทร/อีเมล)", 400);
     if (pct == null || Number.isNaN(pct))
       return json(`กรุณาระบุสัดส่วนหุ้นของ "${name}" เป็นตัวเลข 0–100`, 400);
-    if (!isValidIntakePath(idCardPath, found.link.id))
-      return json(`ผู้ถือหุ้น "${name}" ยังแนบบัตรประชาชนไม่ครบ`, 400);
+    // Front + back required on new submits; a legacy single upload still counts.
+    const frontOk =
+      isValidIntakePath(idCardFront, found.link.id) ||
+      isValidIntakePath(idCardLegacy, found.link.id);
+    const backOk =
+      isValidIntakePath(idCardBack, found.link.id) ||
+      isValidIntakePath(idCardLegacy, found.link.id);
+    if (!frontOk || !backOk)
+      return json(`ผู้ถือหุ้น "${name}" ยังแนบบัตรประชาชนด้านหน้าและด้านหลังไม่ครบ`, 400);
     percentSum += pct;
     shareholders.push({
       name,
@@ -129,7 +135,9 @@ export async function POST(
       isDirector: s.isDirector === true,
       phone,
       email,
-      idCardPath,
+      idCardPath: isValidIntakePath(idCardLegacy, found.link.id) ? idCardLegacy : "",
+      idCardFrontPath: isValidIntakePath(idCardFront, found.link.id) ? idCardFront : "",
+      idCardBackPath: isValidIntakePath(idCardBack, found.link.id) ? idCardBack : "",
       houseRegPath: isValidIntakePath(houseRegPath, found.link.id) ? houseRegPath : "",
     });
   }
@@ -193,46 +201,16 @@ export async function POST(
     return json("บันทึกไม่สำเร็จ กรุณาลองใหม่", 500);
   }
 
-  // Best-effort staff notification.
+  // Best-effort staff notification (email + LINE) via the single choke point.
+  // Recipients come only from env — client data can never become a recipient.
   const ref = `INT-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
-  try {
-    const to = (process.env.USER_ALLOWLIST ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (to.length && process.env.REPORT_FROM_EMAIL) {
-      const origin = await appOrigin();
-      const built = buildIntakeNotifyEmail({
-        name: v.name_th,
-        juristicId: "— (รอจดทะเบียน)",
-        contactName: v.contact_name,
-        contactPhone: v.contact_phone,
-        contactEmail: v.contact_email,
-        reviewUrl: `${origin}/onboarding`,
-      });
-      await sendEmail({ to: to.join(","), subject: built.subject, html: built.html, text: built.text });
-    }
-  } catch (error) {
-    console.error("intake notify failed:", error);
-  }
-
-  // Best-effort LINE push to the admin (same fire-and-forget pattern).
-  try {
-    const origin = await appOrigin();
-    const text = buildIntakeLineText({
-      company: v.name_th,
-      contactName: v.contact_name,
-      contactPhone: v.contact_phone,
-      ref,
-      reviewUrl: `${origin}/onboarding`,
-    });
-    for (const to of adminLineRecipients()) {
-      const res = await pushLineText({ to, text });
-      if (!res.ok) console.error("intake LINE notify failed:", res.error);
-    }
-  } catch (error) {
-    console.error("intake LINE notify failed:", error);
-  }
+  await notifyAdminsIntake({
+    company: v.name_th,
+    contactName: v.contact_name,
+    contactPhone: v.contact_phone,
+    contactEmail: v.contact_email,
+    ref,
+  });
 
   return NextResponse.json({
     ok: true,

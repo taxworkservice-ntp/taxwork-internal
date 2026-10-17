@@ -13,6 +13,7 @@ import {
   type IntakeSubmissionRow,
 } from "@/lib/actions/intake";
 import { formatTaxId } from "@/lib/tax-id";
+import { shareholderIdDocs } from "@/lib/intake-shared";
 import IntakeModal, { badge, type IntakeDoc } from "@/components/intake-modal";
 
 export default function OnboardingPage() {
@@ -142,10 +143,15 @@ export default function OnboardingPage() {
     ? [
         { label: "ทะเบียนบ้าน (ที่ตั้งบริษัท)", path: viewing.company_house_path },
         { label: "แผนที่ Google Maps", path: viewing.company_map_path },
-        ...viewing.shareholders.map((sh, i) => ({
-          label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชน (${sh.name})`,
-          path: sh.idCardPath || null,
-        })),
+        ...viewing.shareholders.flatMap((sh, i) => {
+          const { front, back } = shareholderIdDocs(sh);
+          if (front && back && front !== back)
+            return [
+              { label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชนด้านหน้า (${sh.name})`, path: front },
+              { label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชนด้านหลัง (${sh.name})`, path: back },
+            ];
+          return [{ label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชน (${sh.name})`, path: front || null }];
+        }),
         { label: `ลายเซ็น (${viewing.signer_name || "ผู้ลงนาม"})`, path: viewing.signature_path },
       ]
     : [];
@@ -230,7 +236,10 @@ export default function OnboardingPage() {
                 ผู้ถือหุ้น {s.shareholders.length} คน · เอกสาร {[
                   s.company_house_path,
                   s.company_map_path,
-                  ...s.shareholders.map((sh) => sh.idCardPath),
+                  ...s.shareholders.flatMap((sh) => {
+                    const { front, back } = shareholderIdDocs(sh);
+                    return front && back && front !== back ? [front, back] : [front];
+                  }),
                   s.signature_path,
                 ].filter(Boolean).length} ไฟล์ — แตะเพื่อดูรูปและรายละเอียด
               </div>

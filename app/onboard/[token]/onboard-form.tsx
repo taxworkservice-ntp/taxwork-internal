@@ -8,31 +8,36 @@ import {
   INTAKE_TIMELINE_NOTE,
   INTAKE_MIN_SHAREHOLDERS,
   INTAKE_MAX_SHAREHOLDERS,
+  ID_FRONT_EXAMPLE_URL,
+  ID_BACK_EXAMPLE_URL,
+  shareholderIdDocs,
 } from "@/lib/intake-shared";
 
 type Sh = {
   key: string;
   name: string;
-  idNo: string;
   percent: string;
   isDirector: boolean;
   phone: string;
   email: string;
-  idCardPath: string;
-  idCardName: string;
+  idCardFrontPath: string;
+  idCardFrontName: string;
+  idCardBackPath: string;
+  idCardBackName: string;
 };
 
 function newSh(): Sh {
   return {
     key: Math.random().toString(36).slice(2),
     name: "",
-    idNo: "",
     percent: "",
     isDirector: false,
     phone: "",
     email: "",
-    idCardPath: "",
-    idCardName: "",
+    idCardFrontPath: "",
+    idCardFrontName: "",
+    idCardBackPath: "",
+    idCardBackName: "",
   };
 }
 
@@ -235,17 +240,21 @@ export default function OnboardForm({
   const [mapDesc, setMapDesc] = useState(initial?.company_map_desc ?? "");
   const [shs, setShs] = useState<Sh[]>(() => {
     if (initial?.shareholders?.length) {
-      return initial.shareholders.map((s) => ({
-        key: Math.random().toString(36).slice(2),
-        name: s.name ?? "",
-        idNo: s.idNo ?? "",
-        percent: s.percent ?? "",
-        isDirector: Boolean(s.isDirector),
-        phone: s.phone ?? "",
-        email: s.email ?? "",
-        idCardPath: s.idCardPath ?? "",
-        idCardName: s.idCardPath ? "แนบแล้ว" : "",
-      }));
+      return initial.shareholders.map((s) => {
+        const { front, back } = shareholderIdDocs(s);
+        return {
+          key: Math.random().toString(36).slice(2),
+          name: s.name ?? "",
+          percent: s.percent ?? "",
+          isDirector: Boolean(s.isDirector),
+          phone: s.phone ?? "",
+          email: s.email ?? "",
+          idCardFrontPath: front,
+          idCardFrontName: front ? "แนบแล้ว" : "",
+          idCardBackPath: back,
+          idCardBackName: back ? "แนบแล้ว" : "",
+        };
+      });
     }
     return [newSh(), newSh()];
   });
@@ -271,7 +280,9 @@ export default function OnboardForm({
   const shsInfoOk =
     shs.length >= INTAKE_MIN_SHAREHOLDERS &&
     shs.every((s) => s.name.trim() && s.phone.trim() && emailOk(s.email) && percentOf(s) != null);
-  const shsDocsOk = shs.length >= INTAKE_MIN_SHAREHOLDERS && shs.every((s) => s.idCardPath);
+  const shsDocsOk =
+    shs.length >= INTAKE_MIN_SHAREHOLDERS &&
+    shs.every((s) => s.idCardFrontPath && s.idCardBackPath);
   const percentSum = shs.reduce((sum, s) => sum + (percentOf(s) ?? 0), 0);
   const percentOk =
     shs.length >= INTAKE_MIN_SHAREHOLDERS &&
@@ -339,12 +350,13 @@ export default function OnboardForm({
     }
   }
 
-  async function pickShFile(sh: Sh, file: File) {
-    setUploading(`${sh.key}:id`);
+  async function pickShFile(sh: Sh, side: "front" | "back", file: File) {
+    setUploading(`${sh.key}:${side}`);
     setError("");
     try {
-      const path = await upload("shareholder_id", file, file.name, mimeFor(file));
-      setSh(sh.key, { idCardPath: path, idCardName: file.name });
+      const path = await upload(`shareholder_id_${side}`, file, file.name, mimeFor(file));
+      if (side === "front") setSh(sh.key, { idCardFrontPath: path, idCardFrontName: file.name });
+      else setSh(sh.key, { idCardBackPath: path, idCardBackName: file.name });
     } catch (e) {
       setError(e instanceof Error ? e.message : "แนบไฟล์ไม่สำเร็จ");
     } finally {
@@ -383,12 +395,12 @@ export default function OnboardForm({
           company_map_desc: mapDesc,
           shareholders: shs.map((s) => ({
             name: s.name,
-            idNo: s.idNo,
             percent: s.percent,
             isDirector: s.isDirector,
             phone: s.phone,
             email: s.email,
-            idCardPath: s.idCardPath,
+            idCardFrontPath: s.idCardFrontPath,
+            idCardBackPath: s.idCardBackPath,
           })),
           consent,
           signer_name: f.contact_name,
@@ -439,7 +451,13 @@ export default function OnboardForm({
       docs: [
         companyHouse.name ? { label: "ทะเบียนบ้าน (ที่ตั้งบริษัท)" } : { label: "" },
         companyMap.name ? { label: "ภาพแผนที่ Google Maps" } : { label: "" },
-        ...shs.map((s) => ({ label: `บัตรประชาชน — ${s.name || "ผู้ถือหุ้น"}` })),
+        ...shs.flatMap((s) => {
+          const who = s.name || "ผู้ถือหุ้น";
+          return [
+            { label: `บัตรประชาชนด้านหน้า — ${who}` },
+            { label: `บัตรประชาชนด้านหลัง — ${who}` },
+          ];
+        }),
       ].filter((d) => d.label),
       timelineNote: INTAKE_TIMELINE_NOTE,
     };
@@ -590,14 +608,52 @@ export default function OnboardForm({
                 <input type="checkbox" checked={s.isDirector} onChange={(e) => setSh(s.key, { isDirector: e.target.checked })} />
                 เป็นกรรมการ / ผู้มีอำนาจลงนามแทนนิติบุคคล
               </label>
-              <UploadBox
-                label="บัตรประชาชน"
-                required
-                accept="image/jpeg,image/png,image/webp,application/pdf"
-                uploadedName={s.idCardName}
-                busy={uploading === `${s.key}:id`}
-                onPick={(file) => pickShFile(s, file)}
-              />
+              <div>
+                <span className="label">บัตรประชาชน <span className="text-red-500">*</span></span>
+                <Hint>กรุณาแนบสำเนาบัตรที่ยังไม่หมดอายุ — ถ่ายด้านหน้าและด้านหลังให้ชัดเจน</Hint>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5 rounded-lg border border-neutral-200 p-2">
+                    <a href={ID_FRONT_EXAMPLE_URL} target="_blank" rel="noopener noreferrer" className="block">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={ID_FRONT_EXAMPLE_URL}
+                        alt="ตัวอย่างบัตรประชาชนด้านหน้า"
+                        className="aspect-[1.586/1] w-full rounded object-cover"
+                        loading="lazy"
+                      />
+                    </a>
+                    <p className="text-center text-[11px] font-medium text-neutral-500">ตัวอย่างด้านหน้า — แตะเพื่อดูขนาดเต็ม</p>
+                    <UploadBox
+                      label="แนบด้านหน้า"
+                      required
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      uploadedName={s.idCardFrontName}
+                      busy={uploading === `${s.key}:front`}
+                      onPick={(file) => pickShFile(s, "front", file)}
+                    />
+                  </div>
+                  <div className="space-y-1.5 rounded-lg border border-neutral-200 p-2">
+                    <a href={ID_BACK_EXAMPLE_URL} target="_blank" rel="noopener noreferrer" className="block">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={ID_BACK_EXAMPLE_URL}
+                        alt="ตัวอย่างบัตรประชาชนด้านหลัง"
+                        className="aspect-[1.586/1] w-full rounded object-cover"
+                        loading="lazy"
+                      />
+                    </a>
+                    <p className="text-center text-[11px] font-medium text-neutral-500">ตัวอย่างด้านหลัง — แตะเพื่อดูขนาดเต็ม</p>
+                    <UploadBox
+                      label="แนบด้านหลัง"
+                      required
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      uploadedName={s.idCardBackName}
+                      busy={uploading === `${s.key}:back`}
+                      onPick={(file) => pickShFile(s, "back", file)}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           ))}
           <p className={`text-xs font-medium ${percentOk ? "text-emerald-600" : "text-neutral-500"}`}>

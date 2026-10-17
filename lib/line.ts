@@ -6,6 +6,16 @@
 
 export type LinePushResult = { ok: true } | { ok: false; error: string };
 
+declare const adminBrand: unique symbol;
+/**
+ * A LINE recipient that provably came from the env allowlist. Constructible
+ * only via `adminLineRecipients()` — generic strings (request bodies, DB
+ * values, client input) cannot be passed to `pushLineText`, so a future
+ * client-facing send requires a deliberate new function instead of an
+ * accidental `to` swap.
+ */
+export type AdminRecipient = string & { readonly [adminBrand]: true };
+
 /** Short Thai summary for a new company-registration intake. */
 export function buildIntakeLineText(input: {
   company: string;
@@ -23,7 +33,7 @@ export function buildIntakeLineText(input: {
 }
 
 export async function pushLineText(opts: {
-  to: string;
+  to: AdminRecipient;
   text: string;
   token?: string;
   timeoutMs?: number;
@@ -55,10 +65,11 @@ export async function pushLineText(opts: {
   }
 }
 
-/** Recipient user/group IDs from env (comma-separated). */
-export function adminLineRecipients(): string[] {
+/** Recipient user/group IDs from env (comma-separated). The only legal source
+ *  of push recipients — see `AdminRecipient`. */
+export function adminLineRecipients(): AdminRecipient[] {
   return (process.env.ADMIN_LINE_USER_IDS ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean) as AdminRecipient[];
 }

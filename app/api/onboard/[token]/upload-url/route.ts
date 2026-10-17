@@ -18,6 +18,8 @@ const KINDS = new Set([
   "company_house",
   "company_map",
   "shareholder_id",
+  "shareholder_id_front",
+  "shareholder_id_back",
   "shareholder_house",
   "signature",
 ]);

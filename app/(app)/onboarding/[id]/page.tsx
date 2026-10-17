@@ -3,7 +3,7 @@ import { sql } from "@/lib/db";
 import { loadIntakeSubmissionById } from "@/lib/intake";
 import { getFirmBranding } from "@/lib/branding";
 import { getIntakeFileUrl } from "@/lib/actions/intake";
-import { INTAKE_TIMELINE_NOTE } from "@/lib/intake-shared";
+import { INTAKE_TIMELINE_NOTE, shareholderIdDocs } from "@/lib/intake-shared";
 import type { EvidenceData } from "@/components/evidence-sheet";
 import IntakeProcessing from "@/components/intake-processing";
 
@@ -30,10 +30,16 @@ export default async function IntakeRecordPage({
   const docSpecs: { label: string; path: string | null }[] = [
     { label: "ทะเบียนบ้าน (ที่ตั้งบริษัท)", path: sub.company_house_path },
     { label: "ภาพแผนที่ Google Maps", path: sub.company_map_path },
-    ...sub.shareholders.map((sh, i) => ({
-      label: `บัตรประชาชน — ${sh.name || `ผู้ถือหุ้น #${i + 1}`}`,
-      path: sh.idCardPath || null,
-    })),
+    ...sub.shareholders.flatMap((sh, i) => {
+      const who = sh.name || `ผู้ถือหุ้น #${i + 1}`;
+      const { front, back } = shareholderIdDocs(sh);
+      if (front && back && front !== back)
+        return [
+          { label: `บัตรประชาชนด้านหน้า — ${who}`, path: front },
+          { label: `บัตรประชาชนด้านหลัง — ${who}`, path: back },
+        ];
+      return [{ label: `บัตรประชาชน — ${who}`, path: front || null }];
+    }),
     { label: `ลายเซ็น (${sub.signer_name || "ผู้ลงนาม"})`, path: sub.signature_path },
   ];
   const docs: { label: string; url?: string }[] = [];

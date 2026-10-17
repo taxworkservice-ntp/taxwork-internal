@@ -30,7 +30,10 @@ export type IntakeShareholder = {
   isDirector: boolean;
   phone: string;
   email: string;
+  /** Legacy single ID upload (pre front/back split) — fallback only. */
   idCardPath: string;
+  idCardFrontPath: string;
+  idCardBackPath: string;
   houseRegPath: string;
 };
 

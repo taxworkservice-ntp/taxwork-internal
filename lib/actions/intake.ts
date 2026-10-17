@@ -290,7 +290,15 @@ export async function createBookkeepingClient(
       await attach(sub.company_house_path, "company-house");
       await attach(sub.company_map_path, "company-map");
       for (const sh of sub.shareholders) {
-        await attach(sh.idCardPath, "shareholder-id");
+        const front = sh.idCardFrontPath || sh.idCardPath || null;
+        const back = sh.idCardBackPath || null;
+        if (front && back && front !== back) {
+          await attach(front, "shareholder-id-front");
+          await attach(back, "shareholder-id-back");
+        } else {
+          // Legacy single upload (or identical paths) — keep one file row.
+          await attach(front || back, "shareholder-id");
+        }
         await attach(sh.houseRegPath, "shareholder-house");
       }
       await attach(sub.signature_path, "signature");
