@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import {
   createIntakeLink,
   getIntakeFileUrl,
@@ -13,33 +12,16 @@ import {
   type IntakeSubmissionRow,
 } from "@/lib/actions/intake";
 import { formatTaxId } from "@/lib/tax-id";
-
-function badge(status: string | null, hasClient = false) {
-  const map: Record<string, string> = {
-    submitted: "bg-amber-50 text-amber-700",
-    approved: hasClient ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700",
-    rejected: "bg-red-50 text-red-600",
-  };
-  const label: Record<string, string> = {
-    submitted: "รอตรวจสอบ",
-    approved: hasClient ? "เป็นลูกค้าแล้ว" : "ผู้สนใจ",
-    rejected: "ปฏิเสธ",
-  };
-  if (!status) return <span className="text-xs text-neutral-400">รอกรอก</span>;
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${map[status] ?? "bg-neutral-100 text-neutral-600"}`}>
-      {label[status] ?? status}
-    </span>
-  );
-}
+import IntakeModal, { badge, type IntakeDoc } from "@/components/intake-modal";
 
 export default function OnboardingPage() {
   const [links, setLinks] = useState<IntakeLinkRow[]>([]);
   const [subs, setSubs] = useState<IntakeSubmissionRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [openSub, setOpenSub] = useState<string | null>(null);
+  const [viewId, setViewId] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, string>>({});
+  const [docsLoading, setDocsLoading] = useState(false);
 
   const load = useCallback(async () => {
     const [l, s] = await Promise.all([listIntakeLinks(), listIntakeSubmissions()]);
@@ -49,7 +31,35 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     load().catch(() => undefined);
+    try {
+      const id = new URLSearchParams(window.location.search).get("view");
+      if (id) setViewId(id);
+    } catch {
+      // ignore
+    }
   }, [load]);
+
+  function openView(id: string) {
+    setViewId(id);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", id);
+      window.history.replaceState(null, "", url.toString());
+    } catch {
+      // ignore
+    }
+  }
+
+  function closeView() {
+    setViewId(null);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("view");
+      window.history.replaceState(null, "", url.toString());
+    } catch {
+      // ignore
+    }
+  }
 
   async function makeLink() {
     const label = prompt("ชื่อ/ป้ายกำกับลิงก์นี้ (เช่น ชื่อบริษัทผู้สนใจ) — เว้นว่างได้") ?? "";
@@ -113,6 +123,46 @@ export default function OnboardingPage() {
   }
 
   const pending = subs.filter((s) => s.status === "submitted");
+  const viewing = subs.find((s) => s.id === viewId) ?? null;
+
+  const viewingDocs: IntakeDoc[] = viewing
+    ? [
+        { label: "ทะเบียนบ้าน (ที่ตั้งบริษัท)", path: viewing.company_house_path },
+        { label: "แผนที่ Google Maps", path: viewing.company_map_path },
+        ...viewing.shareholders.map((sh, i) => ({
+          label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชน (${sh.name})`,
+          path: sh.idCardPath || null,
+        })),
+        { label: `ลายเซ็น (${viewing.signer_name || "ผู้ลงนาม"})`, path: viewing.signature_path },
+      ]
+    : [];
+
+  useEffect(() => {
+    if (!viewing) return;
+    let cancelled = false;
+    setDocsLoading(true);
+    (async () => {
+      const missing = viewingDocs.map((d) => d.path).filter((p): p is string => Boolean(p));
+      const fresh: Record<string, string> = {};
+      await Promise.all(
+        missing.map(async (p) => {
+          if (files[p]) return;
+          const url = await getIntakeFileUrl(p);
+          if (url && !cancelled) fresh[p] = url;
+        })
+      );
+      if (!cancelled) {
+        if (Object.keys(fresh).length) setFiles((prev) => ({ ...prev, ...fresh }));
+        setDocsLoading(false);
+      }
+    })().catch(() => {
+      if (!cancelled) setDocsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewing?.id]);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -138,21 +188,16 @@ export default function OnboardingPage() {
         <h2 className="text-sm font-medium">คำขอรอตรวจสอบ ({pending.length})</h2>
         {pending.length === 0 && <p className="text-sm text-neutral-500">ยังไม่มีคำขอใหม่</p>}
         {pending.map((s) => {
-          const open = openSub === s.id;
-          const docs: { label: string; path: string | null }[] = [
-            { label: "ทะเบียนบ้าน (ที่ตั้งบริษัท)", path: s.company_house_path },
-            { label: "แผนที่ Google Maps", path: s.company_map_path },
-            ...s.shareholders.map((sh, i) => ({
-              label: `ผู้ถือหุ้น #${i + 1} บัตรประชาชน (${sh.name})`,
-              path: sh.idCardPath || null,
-            })),
-            { label: `ลายเซ็น (${s.signer_name || "ผู้ลงนาม"})`, path: s.signature_path },
-          ];
           return (
-            <div key={s.id} className="card space-y-3">
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => openView(s.id)}
+              className="card block w-full space-y-1 text-left transition-shadow hover:shadow-sm"
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="font-medium">{s.name_th}</div>
+                  <div className="font-medium text-blue-600 hover:underline">{s.name_th}</div>
                   <div className="text-xs text-neutral-500">
                     {s.juristic_id ? `เลขทะเบียน ${formatTaxId(s.juristic_id)}` : "รอจดทะเบียน"} · ผู้ติดต่อ{" "}
                     {s.contact_name} · {s.contact_phone}
@@ -160,54 +205,18 @@ export default function OnboardingPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   {badge(s.status, Boolean(s.client_id))}
-                  <button className="btn text-xs" onClick={() => setOpenSub(open ? null : s.id)}>
-                    {open ? "ย่อ" : "ดูรายละเอียด"}
-                  </button>
+                  <span className="text-xs text-neutral-400">เปิด →</span>
                 </div>
               </div>
-
-              {open && (
-                <div className="space-y-3 border-t border-neutral-100 pt-3 text-sm">
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    <div>ชื่ออังกฤษ: {s.name_en || "-"}</div>
-                    <div>ชื่อสำรอง: {s.name_th2 || "-"}</div>
-                    <div>อีเมลบริษัท: {s.company_email || "-"}</div>
-                    <div>โทรบริษัท: {s.company_phone || "-"}</div>
-                    <div className="sm:col-span-2">ประเภทธุรกิจ: {s.business_desc || "-"}</div>
-                  </div>
-
-                  <div>
-                    <div className="mb-1 text-xs font-medium text-neutral-500">ผู้ถือหุ้น ({s.shareholders.length})</div>
-                    <ul className="list-inside list-disc text-xs text-neutral-600">
-                      {s.shareholders.map((sh, i) => (
-                        <li key={i}>
-                          {sh.name} {sh.percent && `· ${sh.percent}%`} {sh.isDirector && "· กรรมการ"} · {sh.phone} · {sh.email}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {docs
-                      .filter((x) => x.path)
-                      .map((x, i) => (
-                        <button key={i} className="btn text-xs" onClick={() => preview(x.path!)}>
-                          เปิด: {x.label}
-                        </button>
-                      ))}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <Link href={`/onboarding/${s.id}`} className="btn-primary text-xs">
-                      เปิดหน้าจดทะเบียน / ตรวจสอบ
-                    </Link>
-                    <button className="btn-danger text-xs" onClick={() => reject(s.id)} disabled={busy}>
-                      ปฏิเสธ
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+              <div className="text-xs text-neutral-400">
+                ผู้ถือหุ้น {s.shareholders.length} คน · เอกสาร {[
+                  s.company_house_path,
+                  s.company_map_path,
+                  ...s.shareholders.map((sh) => sh.idCardPath),
+                  s.signature_path,
+                ].filter(Boolean).length} ไฟล์ — แตะเพื่อดูรูปและรายละเอียด
+              </div>
+            </button>
           );
         })}
       </section>
@@ -232,8 +241,14 @@ export default function OnboardingPage() {
               {subs
                 .filter((s) => s.status !== "submitted")
                 .map((s) => (
-                  <tr key={s.id}>
-                    <td>{s.name_th}</td>
+                  <tr
+                    key={s.id}
+                    onClick={() => openView(s.id)}
+                    className="cursor-pointer transition-colors hover:bg-neutral-50"
+                  >
+                    <td>
+                      <span className="text-blue-600 hover:underline">{s.name_th}</span>
+                    </td>
                     <td className="font-mono text-xs">
                       {s.juristic_id ? formatTaxId(s.juristic_id) : "—"}
                     </td>
@@ -297,6 +312,16 @@ export default function OnboardingPage() {
           </table>
         </div>
       </section>
+
+      <IntakeModal
+        sub={viewing}
+        docs={viewingDocs.map((d) => ({ ...d, url: d.path ? files[d.path] : null }))}
+        loadingDocs={docsLoading}
+        onClose={closeView}
+        onOpenDoc={preview}
+        onReject={reject}
+        busy={busy}
+      />
     </div>
   );
 }
