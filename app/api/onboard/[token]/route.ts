@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email/resend";
+import { adminLineRecipients, buildIntakeLineText, pushLineText } from "@/lib/line";
 import { buildIntakeNotifyEmail } from "@/lib/email/intake-email";
 import { appOrigin } from "@/lib/app-url";
 import {
@@ -193,6 +194,7 @@ export async function POST(
   }
 
   // Best-effort staff notification.
+  const ref = `INT-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
   try {
     const to = (process.env.USER_ALLOWLIST ?? "")
       .split(",")
@@ -214,9 +216,27 @@ export async function POST(
     console.error("intake notify failed:", error);
   }
 
+  // Best-effort LINE push to the admin (same fire-and-forget pattern).
+  try {
+    const origin = await appOrigin();
+    const text = buildIntakeLineText({
+      company: v.name_th,
+      contactName: v.contact_name,
+      contactPhone: v.contact_phone,
+      ref,
+      reviewUrl: `${origin}/onboarding`,
+    });
+    for (const to of adminLineRecipients()) {
+      const res = await pushLineText({ to, text });
+      if (!res.ok) console.error("intake LINE notify failed:", res.error);
+    }
+  } catch (error) {
+    console.error("intake LINE notify failed:", error);
+  }
+
   return NextResponse.json({
     ok: true,
-    ref: `INT-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    ref,
     id,
     submittedAt: v.signed_at,
   });
