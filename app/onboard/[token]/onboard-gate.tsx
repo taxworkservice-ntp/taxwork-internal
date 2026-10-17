@@ -6,7 +6,6 @@ import {
   chromeIntentUrl,
   detectInAppBrowser,
   detectIOS,
-  IN_APP_BROWSER_LABELS,
   type InAppBrowser,
 } from "@/lib/in-app-browser";
 
@@ -97,29 +96,28 @@ export default function OnboardGate({
           </div>
         ) : ios ? (
           <div className="space-y-3 text-center">
-            <p className="text-sm leading-relaxed text-neutral-700">
-              ลิงก์นี้เปิดจาก {IN_APP_BROWSER_LABELS[inApp]} บน iPhone/iPad ซึ่งแนบไฟล์และลงลายมือชื่อได้ไม่แน่นอน
+            <p className="text-sm font-medium leading-relaxed text-neutral-800">
+              กรุณาเปิดใน Safari เพื่อกรอกแบบฟอร์ม
             </p>
             <p className="text-sm leading-relaxed text-neutral-700">
-              แตะปุ่ม <span className="font-semibold text-neutral-900">⋯</span> มุมขวาบน แล้วเลือก{" "}
-              <span className="font-semibold text-neutral-900">“เปิดใน Safari”</span>
+              แตะ <span className="font-semibold text-neutral-900">⋯</span> มุมขวาบน → เปิดใน Safari
+              หรือคัดลอกลิงก์ด้านล่างไปวางใน Safari
             </p>
             <button type="button" onClick={copyLink} className="btn w-full py-3">
               {copied ? "คัดลอกลิงก์แล้ว" : "คัดลอกลิงก์"}
             </button>
-            <p className="text-xs text-neutral-500">หรือคัดลอกลิงก์ไปวางใน Safari เพื่อกรอกแบบฟอร์ม</p>
           </div>
         ) : (
           <div className="space-y-3 text-center">
-            <p className="text-sm leading-relaxed text-neutral-700">
-              ลิงก์นี้เปิดจาก {IN_APP_BROWSER_LABELS[inApp]} ซึ่งแนบไฟล์และลงลายมือชื่อได้ไม่แน่นอน
+            <p className="text-sm font-medium leading-relaxed text-neutral-800">
+              กรุณาเปิดในเบราว์เซอร์เพื่อกรอกแบบฟอร์ม
             </p>
             <a href={url ? chromeIntentUrl(url) : undefined} className="btn-primary block w-full py-3">
               เปิดในเบราว์เซอร์
             </a>
             <p className="text-xs text-neutral-500">
-              หรือแตะ <span className="font-semibold text-neutral-900">⋮</span> มุมขวาบน แล้วเลือก{" "}
-              <span className="font-semibold text-neutral-900">เปิดใน Chrome</span>
+              หรือแตะ <span className="font-semibold text-neutral-900">⋮</span> มุมขวาบน → เปิดใน
+              Chrome หรือคัดลอกลิงก์
             </p>
           </div>
         )}
