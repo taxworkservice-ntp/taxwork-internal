@@ -2,13 +2,32 @@ import type { Metadata } from "next";
 import { loadIntakeByToken, intakeStatus } from "@/lib/intake";
 import { getFirmBranding, type FirmBranding } from "@/lib/branding";
 import OnboardForm from "./onboard-form";
+import OnboardGate from "./onboard-gate";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "ลงทะเบียนลูกค้า",
-  robots: { index: false, follow: false },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getFirmBranding();
+  const title = `ลงทะเบียนใช้บริการ | ${branding.firmName}`;
+  const description =
+    "กรอกแบบฟอร์มลงทะเบียนใช้บริการ (ประมาณ 3 นาที) — ข้อมูลของท่านจะถูกเก็บเป็นความลับ";
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      locale: "th_TH",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+    },
+    robots: { index: false, follow: false },
+  };
+}
 
 function Notice({
   branding,
@@ -71,6 +90,8 @@ export default async function OnboardPage({
   }
 
   return (
-    <OnboardForm token={token} branding={branding} initial={null} expiresAt={found.link.expires_at} />
+    <OnboardGate firmName={branding.firmName}>
+      <OnboardForm token={token} branding={branding} initial={null} expiresAt={found.link.expires_at} />
+    </OnboardGate>
   );
 }

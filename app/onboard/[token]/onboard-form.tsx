@@ -86,7 +86,7 @@ function Field({
       <span className="label">
         {label} {required ? <span className="text-red-500">*</span> : <span className="text-neutral-400">(ไม่บังคับ)</span>}
       </span>
-      <input className="input" type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+      <input className="input text-base sm:text-sm" type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       {hint && <Hint>{hint}</Hint>}
     </label>
   );
@@ -113,9 +113,9 @@ function UploadBox({
   return (
     <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-3">
       <div className="flex items-center gap-2">
-        <button type="button" className="btn text-xs" onClick={() => ref.current?.click()} disabled={busy}>
-          {busy ? "กำลังอัปโหลด…" : "แนบไฟล์"}
-        </button>
+      <button type="button" className="btn shrink-0 py-2.5 text-xs sm:py-1.5" onClick={() => ref.current?.click()} disabled={busy}>
+        {busy ? "กำลังอัปโหลด…" : "แนบไฟล์"}
+      </button>
         <span className="text-sm">
           {label} {required && <span className="text-red-500">*</span>}
         </span>
@@ -557,7 +557,7 @@ export default function OnboardForm({
             <span className="label">
               คำอธิบายเส้นทางโดยสังเขป <span className="text-neutral-400">(ไม่บังคับ)</span>
             </span>
-            <textarea className="input" rows={3} maxLength={500} value={mapDesc} onChange={(e) => setMapDesc(e.target.value)} placeholder="เช่น เข้าซอยสุขุมวิท 24 ตึกสีขาวชั้น 3 ใกล้ BTS พร้อมพงษ์" />
+            <textarea className="input text-base sm:text-sm" rows={3} maxLength={500} value={mapDesc} onChange={(e) => setMapDesc(e.target.value)} placeholder="เช่น เข้าซอยสุขุมวิท 24 ตึกสีขาวชั้น 3 ใกล้ BTS พร้อมพงษ์" />
           </label>
         </section>
 
@@ -640,7 +640,7 @@ export default function OnboardForm({
             <span className="label">
               หมายเหตุเพิ่มเติม <span className="text-neutral-400">(ไม่บังคับ)</span>
             </span>
-            <textarea className="input h-16" value={f.notes} onChange={(e) => set("notes", e.target.value)} />
+            <textarea className="input h-16 text-base sm:text-sm" value={f.notes} onChange={(e) => set("notes", e.target.value)} />
           </label>
         </section>
 
@@ -648,13 +648,13 @@ export default function OnboardForm({
           <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
         )}
 
-        <div className="sticky bottom-0 -mx-4 flex items-center justify-between gap-3 border-t border-neutral-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
+        <div className="sticky bottom-0 -mx-4 flex items-center justify-between gap-3 border-t border-neutral-200 bg-white/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
           <span className={`text-xs font-medium ${allDone ? "text-emerald-600" : "text-neutral-500"}`}>
             {allDone ? "พร้อมส่งแบบฟอร์ม ✓" : `ยังขาดอีก ${steps.length - doneCount} รายการ`}
           </span>
           <button
             type="button"
-            className="btn-primary flex-1 sm:flex-none"
+            className="btn-primary flex-1 py-3 sm:flex-none sm:py-1.5"
             onClick={submit}
             disabled={busy || Boolean(uploading) || !consent}
           >
