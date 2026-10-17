@@ -169,7 +169,11 @@ export async function approveIntakeSubmission(
     >[];
     const sub = rows[0] ? toSubmission(rows[0]) : null;
     if (!sub) return { ok: false, error: "ไม่พบคำขอ" };
-    if (sub.status !== "submitted") return { ok: false, error: "คำขอนี้ถูกตรวจสอบแล้ว" };
+    // Convertible states: pending review, or an accepted prospect (approved with
+    // no client yet). Already-converted and rejected rows stay locked.
+    const convertible =
+      sub.status === "submitted" || (sub.status === "approved" && !sub.client_id);
+    if (!convertible) return { ok: false, error: "คำขอนี้ถูกตรวจสอบแล้ว" };
     if (!composeAddress(sub).trim())
       return { ok: false, error: "กรุณากรอกที่อยู่จดทะเบียน (จากทะเบียนบ้าน) ก่อนอนุมัติ" };
 
@@ -203,15 +207,18 @@ export async function approveIntakeSubmission(
       `) as { id: string }[];
       clientId = inserted[0].id;
 
-      // Shareholders (single director enforced).
+      // Shareholders (single director enforced). Percent is numeric (validated
+      // to total 100 at submit) and stored in `shares`.
       let directorSet = false;
       for (const sh of sub.shareholders) {
         const isDirector = Boolean(sh.isDirector) && !directorSet;
         if (isDirector) directorSet = true;
-        const notes = sh.percent ? `สัดส่วน ${sh.percent}%` : null;
+        const pct = Number(String(sh.percent ?? "").replace(/%/g, ""));
+        const shares = Number.isFinite(pct) ? pct : null;
+        const notes = shares != null ? `สัดส่วน ${shares}%` : null;
         await sql`insert into shareholders (client_id, name, tax_id, email, phone, shares, is_director, notes)
           values (${clientId}, ${sh.name}, ${sh.idNo || null}, ${sh.email || null}, ${sh.phone || null},
-                  ${null}, ${isDirector}, ${notes})`;
+                  ${shares}, ${isDirector}, ${notes})`;
       }
 
       // Attach documents to the client's files.

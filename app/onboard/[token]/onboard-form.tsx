@@ -202,10 +202,12 @@ export default function OnboardForm({
   token,
   branding,
   initial,
+  expiresAt,
 }: {
   token: string;
   branding: FirmBranding;
   initial: IntakeSubmission | null;
+  expiresAt: string | null;
 }) {
   const [f, setF] = useState({
     name_th: initial?.name_th ?? "",
@@ -260,16 +262,28 @@ export default function OnboardForm({
     setShs((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)));
 
   const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  function percentOf(s: Sh): number | null {
+    const t = s.percent.trim().replace(/%/g, "");
+    if (!t) return null;
+    const n = Number(t.replace(/,/g, ""));
+    return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
+  }
   const shsInfoOk =
     shs.length >= INTAKE_MIN_SHAREHOLDERS &&
-    shs.every((s) => s.name.trim() && s.phone.trim() && emailOk(s.email));
+    shs.every((s) => s.name.trim() && s.phone.trim() && emailOk(s.email) && percentOf(s) != null);
   const shsDocsOk = shs.length >= INTAKE_MIN_SHAREHOLDERS && shs.every((s) => s.idCardPath);
+  const percentSum = shs.reduce((sum, s) => sum + (percentOf(s) ?? 0), 0);
+  const percentOk =
+    shs.length >= INTAKE_MIN_SHAREHOLDERS &&
+    shs.every((s) => percentOf(s) != null) &&
+    Math.abs(percentSum - 100) < 0.01;
+  const shsDone = shsInfoOk && percentOk;
   const steps = [
     { label: "ชื่อบริษัท", done: Boolean(f.name_th.trim()) },
     { label: "ติดต่อบริษัท", done: emailOk(f.company_email) && Boolean(f.company_phone.trim()) },
     { label: "ทะเบียนบ้าน", done: Boolean(companyHouse.path) },
     { label: "แผนที่", done: Boolean(companyMap.path) },
-    { label: "ผู้ถือหุ้น", done: shsInfoOk },
+    { label: "ผู้ถือหุ้น", done: shsDone },
     { label: "บัตร ปชช.", done: shsDocsOk },
     {
       label: "ผู้ติดต่อ",
@@ -288,6 +302,14 @@ export default function OnboardForm({
     steps[4].done && steps[5].done,
     steps[6].done && steps[7].done,
   ];
+  function expiryHint(): string | null {
+    const e = expiresAt ? new Date(expiresAt).getTime() : NaN;
+    if (!Number.isFinite(e)) return null;
+    const days = Math.ceil((e - Date.now()) / 86400000);
+    if (days < 0) return null;
+    if (days <= 7) return `ลิงก์นี้จะหมดอายุในอีก ${days} วัน — กรุณาส่งแบบฟอร์มก่อนหมดอายุ`;
+    return null;
+  }
 
 
   async function upload(kind: string, blob: Blob, fileName: string, contentType: string): Promise<string> {
@@ -431,9 +453,6 @@ export default function OnboardForm({
             <button className="btn-primary" onClick={() => window.print()}>
               ดาวน์โหลด PDF
             </button>
-            <button className="btn" onClick={() => setRef(null)}>
-              แก้ไขข้อมูล
-            </button>
           </div>
         </div>
         <EvidenceSheet data={evidence} />
@@ -465,6 +484,11 @@ export default function OnboardForm({
             <li>สำเนาบัตรประจำตัวประชาชนของผู้ถือหุ้นทุกท่าน (อย่างน้อย 2 ท่าน) พร้อมหมายเลขโทรศัพท์และอีเมลของแต่ละท่าน</li>
             <li>สำเนาทะเบียนบ้านของที่ตั้งสถานประกอบการ และภาพแผนที่จาก Google Maps</li>
           </ol>
+          {expiryHint() && (
+            <p className="rounded bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700">
+              ⏳ {expiryHint()}
+            </p>
+          )}
           <div className="mt-2 flex items-center gap-3">
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-neutral-200">
               <div
@@ -541,8 +565,7 @@ export default function OnboardForm({
           <div className="flex items-center justify-between">
             <SectionTitle step="3" done={secDone[2]}>
               ข้อมูลผู้ถือหุ้นและกรรมการ <span className="text-xs font-normal text-neutral-400">({shs.length}/{INTAKE_MAX_SHAREHOLDERS})</span>
-            </SectionTitle>
-            {shs.length < INTAKE_MAX_SHAREHOLDERS && (
+            </SectionTitle>            {shs.length < INTAKE_MAX_SHAREHOLDERS && (
               <button type="button" className="btn text-xs" onClick={() => setShs((p) => [...p, newSh()])}>
                 + เพิ่มรายชื่อ
               </button>
@@ -564,7 +587,7 @@ export default function OnboardForm({
                 <Field label="เลขบัตรประชาชน" value={s.idNo} onChange={(v) => setSh(s.key, { idNo: v })} hint="13 หลัก (ไม่บังคับ)" />
                 <Field label="โทรศัพท์" required value={s.phone} onChange={(v) => setSh(s.key, { phone: v })} hint="ของเจ้าของข้อมูล — กรมพัฒนาธุรกิจการค้าจะส่งรหัสยืนยันไปยังหมายเลขนี้" />
                 <Field label="อีเมล" required value={s.email} onChange={(v) => setSh(s.key, { email: v })} hint="ของเจ้าของข้อมูล" />
-                <Field label="สัดส่วนหุ้น (%)" value={s.percent} onChange={(v) => setSh(s.key, { percent: v })} hint="เช่น 50" />
+                <Field label="สัดส่วนหุ้น (%)" required value={s.percent} onChange={(v) => setSh(s.key, { percent: v })} hint="ตัวเลข 0–100 เช่น 50 — รวมทุกคนต้องเป็น 100%" />
               </div>
               <label className="flex items-center gap-1.5 text-sm">
                 <input type="checkbox" checked={s.isDirector} onChange={(e) => setSh(s.key, { isDirector: e.target.checked })} />
@@ -581,6 +604,11 @@ export default function OnboardForm({
               />
             </div>
           ))}
+          <p className={`text-xs font-medium ${percentOk ? "text-emerald-600" : "text-neutral-500"}`}>
+            {percentOk
+              ? "✓ สัดส่วนหุ้นรวม 100% ถูกต้อง"
+              : `สัดส่วนหุ้นรวม ${percentSum.toFixed(2).replace(/\.?0+$/, "")}% — ต้องรวมเป็น 100%`}
+          </p>
         </section>
 
         <section className="card space-y-3">

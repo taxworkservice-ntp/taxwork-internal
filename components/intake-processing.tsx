@@ -87,7 +87,12 @@ export default function IntakeProcessing({
       setMessage(res.error);
       return;
     }
-    router.push(res.clientId ? `/clients/${res.clientId}` : "/onboarding");
+    if (res.duplicate) {
+      setMessage("มีลูกค้าเดิมอยู่แล้ว — เชื่อมโยงการลงทะเบียนนี้กับลูกค้าเดิมแล้ว");
+      router.refresh();
+      return;
+    }
+    router.push(`/clients/${res.clientId}`);
   }
   async function mark() {
     await run(() => markIntakeProspect(id), "บันทึกเป็นผู้สนใจแล้ว");

@@ -54,8 +54,9 @@ export async function POST(
 
   const found = await loadIntakeByToken(token);
   if (!found || intakeStatus(found.link) !== "open") return json("ลิงก์ไม่ถูกต้องหรือหมดอายุ", 403);
-  if (found.submission && found.submission.status !== "submitted")
-    return json("คำขอนี้ถูกตรวจสอบแล้ว", 409);
+  // One-shot: the prospect cannot edit after sending. Any existing submission
+  // locks the link for them (staff can still transcribe via review actions).
+  if (found.submission) return json("คำขอของท่านถูกส่งแล้ว กรุณาติดต่อเจ้าหน้าที่หากต้องแก้ไข", 409);
 
   let body: Record<string, unknown>;
   try {
@@ -90,12 +91,20 @@ export async function POST(
   if (!isValidIntakePath(signaturePath, found.link.id)) return json("กรุณาลงนามยืนยันข้อมูล", 400);
   if (body.consent !== true) return json("กรุณายินยอมให้เก็บและใช้ข้อมูล", 400);
 
-  // --- shareholders (>= 2) ---
+  // --- shareholders (>= 2, percents must total 100) ---
   const rawSh = Array.isArray(body.shareholders) ? body.shareholders : [];
   if (rawSh.length < INTAKE_MIN_SHAREHOLDERS || rawSh.length > INTAKE_MAX_SHAREHOLDERS)
     return json(`กรุณากรอกข้อมูลผู้ถือหุ้นอย่างน้อย ${INTAKE_MIN_SHAREHOLDERS} ราย`, 400);
 
+  function parsePercent(v: unknown): number | null {
+    const s = String(v ?? "").trim().replace(/%/g, "");
+    if (!s) return null;
+    const n = Number(s.replace(/,/g, ""));
+    return Number.isFinite(n) && n >= 0 && n <= 100 ? n : NaN as unknown as null;
+  }
+
   const shareholders: IntakeShareholder[] = [];
+  let percentSum = 0;
   for (const raw of rawSh) {
     const s = (raw ?? {}) as Record<string, unknown>;
     const name = clean(s.name);
@@ -103,14 +112,18 @@ export async function POST(
     const email = clean(s.email, 120);
     const idCardPath = clean(s.idCardPath, 400);
     const houseRegPath = clean(s.houseRegPath, 400);
+    const pct = parsePercent(s.percent);
     if (!name || !phone || !isEmail(email))
       return json("ข้อมูลผู้ถือหุ้นไม่ครบ (ชื่อ/โทร/อีเมล)", 400);
+    if (pct == null || Number.isNaN(pct))
+      return json(`กรุณาระบุสัดส่วนหุ้นของ "${name}" เป็นตัวเลข 0–100`, 400);
     if (!isValidIntakePath(idCardPath, found.link.id))
       return json(`ผู้ถือหุ้น "${name}" ยังแนบบัตรประชาชนไม่ครบ`, 400);
+    percentSum += pct;
     shareholders.push({
       name,
       idNo: clean(s.idNo, 20).replace(/\D/g, ""),
-      percent: clean(s.percent, 20),
+      percent: String(pct),
       isDirector: s.isDirector === true,
       phone,
       email,
@@ -118,6 +131,8 @@ export async function POST(
       houseRegPath: isValidIntakePath(houseRegPath, found.link.id) ? houseRegPath : "",
     });
   }
+  if (Math.abs(percentSum - 100) > 0.01)
+    return json(`สัดส่วนหุ้นรวมต้องเท่ากับ 100% (ปัจจุบัน ${percentSum.toFixed(2).replace(/\.?0+$/, "")}%)`, 400);
 
   const v = {
     name_th: nameTh,
@@ -149,43 +164,28 @@ export async function POST(
     raw: JSON.stringify(body).slice(0, 20000),
   };
 
+  // One-shot: no re-submit path (the early guard above already returned 409
+  // when a submission exists).
   let id: string;
   try {
-    if (found.submission) {
-      id = found.submission.id;
-      await sql`update intake_submissions set
-        name_th=${v.name_th}, name_en=${v.name_en},
-        reg_date=${v.reg_date},
-        capital_registered=${v.capital_registered}, capital_paid=${v.capital_paid}, business_desc=${v.business_desc},
-        company_email=${v.company_email}, company_phone=${v.company_phone},
-        company_house_path=${v.company_house_path}, company_map_path=${v.company_map_path}, company_map_desc=${v.company_map_desc},
-        contact_name=${v.contact_name}, contact_position=${v.contact_position},
-        contact_phone=${v.contact_phone}, contact_email=${v.contact_email},
-        shareholders=${v.shareholders}::jsonb,
-        signer_name=${v.signer_name}, signature_path=${v.signature_path}, signed_at=${v.signed_at}, signed_ip=${v.signed_ip},
-        consent_at=${v.consent_at}, consent_version=${v.consent_version},
-        notes=${v.notes}, raw=${v.raw}::jsonb, status='submitted'
-        where id=${id}`;
-    } else {
-      const inserted = (await sql`
-        insert into intake_submissions (
-          link_id, name_th, name_en, name_th2, name_en2, juristic_id, reg_date,
-          capital_registered, capital_paid, business_desc,
-          company_email, company_phone, company_house_path, company_map_path, company_map_desc,
-          contact_name, contact_position, contact_phone, contact_email,
-          shareholders, signer_name, signature_path, signed_at, signed_ip,
-          consent_at, consent_version, notes, raw
-        ) values (
-          ${found.link.id}, ${v.name_th}, ${v.name_en}, ${v.name_th2}, ${v.name_en2}, ${v.juristic_id}, ${v.reg_date},
-          ${v.capital_registered}, ${v.capital_paid}, ${v.business_desc},
-          ${v.company_email}, ${v.company_phone}, ${v.company_house_path}, ${v.company_map_path}, ${v.company_map_desc},
-          ${v.contact_name}, ${v.contact_position}, ${v.contact_phone}, ${v.contact_email},
-          ${v.shareholders}::jsonb, ${v.signer_name}, ${v.signature_path}, ${v.signed_at}, ${v.signed_ip},
-          ${v.consent_at}, ${v.consent_version}, ${v.notes}, ${v.raw}::jsonb
-        ) returning id
-      `) as { id: string }[];
-      id = inserted[0].id;
-    }
+    const inserted = (await sql`
+      insert into intake_submissions (
+        link_id, name_th, name_en, juristic_id, reg_date,
+        capital_registered, capital_paid, business_desc,
+        company_email, company_phone, company_house_path, company_map_path, company_map_desc,
+        contact_name, contact_position, contact_phone, contact_email,
+        shareholders, signer_name, signature_path, signed_at, signed_ip,
+        consent_at, consent_version, notes, raw
+      ) values (
+        ${found.link.id}, ${v.name_th}, ${v.name_en}, ${v.juristic_id}, ${v.reg_date},
+        ${v.capital_registered}, ${v.capital_paid}, ${v.business_desc},
+        ${v.company_email}, ${v.company_phone}, ${v.company_house_path}, ${v.company_map_path}, ${v.company_map_desc},
+        ${v.contact_name}, ${v.contact_position}, ${v.contact_phone}, ${v.contact_email},
+        ${v.shareholders}::jsonb, ${v.signer_name}, ${v.signature_path}, ${v.signed_at}, ${v.signed_ip},
+        ${v.consent_at}, ${v.consent_version}, ${v.notes}, ${v.raw}::jsonb
+      ) returning id
+    `) as { id: string }[];
+    id = inserted[0].id;
   } catch (error) {
     console.error("intake submit failed:", error);
     return json("บันทึกไม่สำเร็จ กรุณาลองใหม่", 500);

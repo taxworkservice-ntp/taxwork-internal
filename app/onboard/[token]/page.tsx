@@ -60,24 +60,17 @@ export default async function OnboardPage({
     );
   }
   const sub = found.submission;
-  if (sub && sub.status === "approved") {
+  if (sub) {
     return (
       <Notice
         branding={branding}
-        title="ลงทะเบียนเรียบร้อยแล้ว"
-        body="เราได้รับข้อมูลของท่านและดำเนินการแล้ว ขอบคุณค่ะ"
-      />
-    );
-  }
-  if (sub && sub.status === "rejected") {
-    return (
-      <Notice
-        branding={branding}
-        title="คำขอไม่ถูกอนุมัติ"
-        body="กรุณาติดต่อเจ้าหน้าที่เพื่อสอบถามรายละเอียด"
+        title="คำขอของท่านถูกส่งแล้ว"
+        body="กรุณาติดต่อเจ้าหน้าที่หากต้องการแก้ไขข้อมูล ขอบคุณค่ะ"
       />
     );
   }
 
-  return <OnboardForm token={token} branding={branding} initial={sub} />;
+  return (
+    <OnboardForm token={token} branding={branding} initial={null} expiresAt={found.link.expires_at} />
+  );
 }

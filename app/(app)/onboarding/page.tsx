@@ -62,11 +62,12 @@ export default function OnboardingPage() {
   }
 
   async function makeLink() {
-    const label = prompt("ชื่อ/ป้ายกำกับลิงก์นี้ (เช่น ชื่อบริษัทผู้สนใจ) — เว้นว่างได้") ?? "";
+    const label = prompt("ชื่อ/ป้ายกำกับลิงก์นี้ (เช่น ชื่อบริษัทผู้สนใจ) — เว้นว่างได้");
+    if (label === null) return; // Cancel pressed — do not create.
     setBusy(true);
     setMessage("");
     try {
-      const res = await createIntakeLink(label);
+      const res = await createIntakeLink(label || "");
       if (!res.ok) {
         setMessage(res.error);
         return;
