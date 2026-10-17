@@ -170,6 +170,8 @@ export async function approveIntakeSubmission(
     const sub = rows[0] ? toSubmission(rows[0]) : null;
     if (!sub) return { ok: false, error: "ไม่พบคำขอ" };
     if (sub.status !== "submitted") return { ok: false, error: "คำขอนี้ถูกตรวจสอบแล้ว" };
+    if (!composeAddress(sub).trim())
+      return { ok: false, error: "กรุณากรอกที่อยู่จดทะเบียน (จากทะเบียนบ้าน) ก่อนอนุมัติ" };
 
     // No registration number is collected on the public form (companies are
     // usually not yet registered), so de-dup only runs when one exists.
@@ -273,6 +275,50 @@ export async function rejectIntakeSubmission(id: string): Promise<ActionResult> 
     return { ok: true };
   } catch (error) {
     console.error("rejectIntakeSubmission failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
+}
+
+/**
+ * Save staff-transcribed address + tax fields on a still-pending submission.
+ * Staging only — nothing reaches `clients` until approval.
+ */
+export async function updateIntakeSubmission(
+  id: string,
+  review: IntakeReviewPatch
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const addr = review.address?.trim() || null;
+    await sql`update intake_submissions set
+      addr_line=${addr}, addr_moo=null, addr_soi=null, addr_road=null,
+      addr_subdistrict=null, addr_district=null, addr_province=null, addr_postcode=null,
+      vat_registered=${review.vat_registered ?? null},
+      vat_reg_date=${review.vat_reg_date?.trim() || null},
+      vat_place=${review.vat_place?.trim() || null},
+      fiscal_year_end=${review.fiscal_year_end?.trim() || null},
+      filings=${review.filings ?? []}
+      where id=${id} and status='submitted'`;
+    return { ok: true };
+  } catch (error) {
+    console.error("updateIntakeSubmission failed:", error);
+    return { ok: false, error: actionError(error) };
+  }
+}
+
+/**
+ * Accept a submission as a "prospect" (interested, not yet a bookkeeping
+ * client) — marks it reviewed without creating a `clients` row.
+ */
+export async function markIntakeProspect(id: string): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    await sql`update intake_submissions
+      set status='approved', reviewed_by=${user.email}, reviewed_at=${new Date().toISOString()}
+      where id=${id} and status='submitted'`;
+    return { ok: true };
+  } catch (error) {
+    console.error("markIntakeProspect failed:", error);
     return { ok: false, error: actionError(error) };
   }
 }

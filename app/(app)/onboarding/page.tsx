@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  approveIntakeSubmission,
   createIntakeLink,
   getIntakeFileUrl,
   listIntakeLinks,
@@ -11,22 +10,19 @@ import {
   rejectIntakeSubmission,
   revokeIntakeLink,
   type IntakeLinkRow,
-  type IntakeReviewPatch,
   type IntakeSubmissionRow,
 } from "@/lib/actions/intake";
 import { formatTaxId } from "@/lib/tax-id";
 
-const FILINGS = ["ภ.พ.30", "ภ.ง.ด.1", "ภ.ง.ด.3", "ภ.ง.ด.53", "ภ.ง.ด.50/51", "ประกันสังคม"];
-
-function badge(status: string | null) {
+function badge(status: string | null, hasClient = false) {
   const map: Record<string, string> = {
     submitted: "bg-amber-50 text-amber-700",
-    approved: "bg-emerald-50 text-emerald-700",
+    approved: hasClient ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700",
     rejected: "bg-red-50 text-red-600",
   };
   const label: Record<string, string> = {
     submitted: "รอตรวจสอบ",
-    approved: "อนุมัติแล้ว",
+    approved: hasClient ? "เป็นลูกค้าแล้ว" : "ผู้สนใจ",
     rejected: "ปฏิเสธ",
   };
   if (!status) return <span className="text-xs text-neutral-400">รอกรอก</span>;
@@ -44,9 +40,6 @@ export default function OnboardingPage() {
   const [message, setMessage] = useState("");
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, string>>({});
-  const [draft, setDraft] = useState<Record<string, IntakeReviewPatch>>({});
-  const setDraftField = (id: string, patch: IntakeReviewPatch) =>
-    setDraft((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
 
   const load = useCallback(async () => {
     const [l, s] = await Promise.all([listIntakeLinks(), listIntakeSubmissions()]);
@@ -107,23 +100,6 @@ export default function OnboardingPage() {
     window.open(url, "_blank", "noopener");
   }
 
-  async function approve(id: string) {
-    if (!confirm("อนุมัติคำขอนี้ และสร้างเป็นลูกค้า?")) return;
-    setBusy(true);
-    setMessage("");
-    try {
-      const res = await approveIntakeSubmission(id, draft[id]);
-      if (!res.ok) {
-        setMessage(res.error);
-        return;
-      }
-      setMessage(res.duplicate ? "มีลูกค้าเลขนี้อยู่แล้ว — เชื่อมโยงให้แล้ว" : "อนุมัติและสร้างลูกค้าแล้ว");
-      await load();
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function reject(id: string) {
     if (!confirm("ปฏิเสธคำขอนี้?")) return;
     setBusy(true);
@@ -172,7 +148,6 @@ export default function OnboardingPage() {
             })),
             { label: `ลายเซ็น (${s.signer_name || "ผู้ลงนาม"})`, path: s.signature_path },
           ];
-          const d = draft[s.id] ?? {};
           return (
             <div key={s.id} className="card space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -184,7 +159,7 @@ export default function OnboardingPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {badge(s.status)}
+                  {badge(s.status, Boolean(s.client_id))}
                   <button className="btn text-xs" onClick={() => setOpenSub(open ? null : s.id)}>
                     {open ? "ย่อ" : "ดูรายละเอียด"}
                   </button>
@@ -199,87 +174,6 @@ export default function OnboardingPage() {
                     <div>อีเมลบริษัท: {s.company_email || "-"}</div>
                     <div>โทรบริษัท: {s.company_phone || "-"}</div>
                     <div className="sm:col-span-2">ประเภทธุรกิจ: {s.business_desc || "-"}</div>
-                  </div>
-
-                  <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-                    <div className="mb-2 text-xs font-medium text-neutral-500">
-                      กรอกเพิ่มโดยเจ้าหน้าที่ (ก่อนอนุมัติ)
-                    </div>
-                    <label className="block">
-                      <span className="label">ที่อยู่จดทะเบียน (พิมพ์จากทะเบียนบ้าน)</span>
-                      <textarea
-                        className="input"
-                        rows={2}
-                        value={d.address ?? ""}
-                        onChange={(e) => setDraftField(s.id, { address: e.target.value })}
-                      />
-                    </label>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                      <label className="block">
-                        <span className="label">VAT</span>
-                        <select
-                          className="input"
-                          value={d.vat_registered === undefined || d.vat_registered === null ? "" : d.vat_registered ? "yes" : "no"}
-                          onChange={(e) =>
-                            setDraftField(s.id, {
-                              vat_registered: e.target.value === "" ? null : e.target.value === "yes",
-                            })
-                          }
-                        >
-                          <option value="">ไม่ทราบ</option>
-                          <option value="yes">จด</option>
-                          <option value="no">ไม่จด</option>
-                        </select>
-                      </label>
-                      <label className="block">
-                        <span className="label">วันจด VAT</span>
-                        <input
-                          type="date"
-                          className="input"
-                          value={d.vat_reg_date ?? ""}
-                          onChange={(e) => setDraftField(s.id, { vat_reg_date: e.target.value })}
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="label">วันสิ้นสุดรอบบัญชี</span>
-                        <input
-                          className="input"
-                          value={d.fiscal_year_end ?? ""}
-                          onChange={(e) => setDraftField(s.id, { fiscal_year_end: e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    <label className="mt-2 block">
-                      <span className="label">สถานที่ประกอบการ VAT</span>
-                      <input
-                        className="input"
-                        value={d.vat_place ?? ""}
-                        onChange={(e) => setDraftField(s.id, { vat_place: e.target.value })}
-                      />
-                    </label>
-                    <div className="mt-2">
-                      <span className="label">แบบที่ต้องยื่น</span>
-                      <div className="flex flex-wrap gap-3 text-sm">
-                        {FILINGS.map((code) => {
-                          const sel = (d.filings ?? []).includes(code);
-                          return (
-                            <label key={code} className="flex items-center gap-1.5">
-                              <input
-                                type="checkbox"
-                                checked={sel}
-                                onChange={(e) => {
-                                  const cur = new Set(d.filings ?? []);
-                                  if (e.target.checked) cur.add(code);
-                                  else cur.delete(code);
-                                  setDraftField(s.id, { filings: [...cur] });
-                                }}
-                              />
-                              {code}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
                   </div>
 
                   <div>
@@ -304,12 +198,9 @@ export default function OnboardingPage() {
                   </div>
 
                   <div className="flex flex-wrap gap-2 pt-1">
-                    <Link href={`/onboarding/${s.id}`} className="btn text-xs">
-                      ดูแบบฟอร์ม / พิมพ์
+                    <Link href={`/onboarding/${s.id}`} className="btn-primary text-xs">
+                      เปิดหน้าจดทะเบียน / ตรวจสอบ
                     </Link>
-                    <button className="btn-primary text-xs" onClick={() => approve(s.id)} disabled={busy}>
-                      อนุมัติ → สร้างลูกค้า
-                    </button>
                     <button className="btn-danger text-xs" onClick={() => reject(s.id)} disabled={busy}>
                       ปฏิเสธ
                     </button>
@@ -346,7 +237,7 @@ export default function OnboardingPage() {
                     <td className="font-mono text-xs">
                       {s.juristic_id ? formatTaxId(s.juristic_id) : "—"}
                     </td>
-                    <td>{badge(s.status)}</td>
+                    <td>{badge(s.status, Boolean(s.client_id))}</td>
                     <td className="text-xs">{s.reviewed_by ?? "-"}</td>
                     <td className="text-xs">{s.reviewed_at ? new Date(s.reviewed_at).toLocaleString("th-TH") : "-"}</td>
                   </tr>
@@ -374,7 +265,15 @@ export default function OnboardingPage() {
                 return (
                   <tr key={l.id}>
                     <td className="text-sm">{l.label || "—"}</td>
-                    <td>{l.revoked_at ? <span className="text-xs text-red-500">ยกเลิก</span> : badge(l.submission_status)}</td>
+                    <td>
+                      {l.revoked_at ? (
+                        <span className="text-xs text-red-500">ยกเลิก</span>
+                      ) : l.submission_status ? (
+                        <span className="text-xs text-neutral-500">ส่งแล้ว</span>
+                      ) : (
+                        <span className="text-xs text-neutral-400">รอกรอก</span>
+                      )}
+                    </td>
                     <td className="text-xs text-neutral-500">
                       {l.expires_at ? new Date(l.expires_at).toLocaleDateString("th-TH") : "-"}
                       {expired && !l.revoked_at && <span className="ml-1 text-amber-600">(หมดอายุ)</span>}

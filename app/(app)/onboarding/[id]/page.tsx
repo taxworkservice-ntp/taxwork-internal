@@ -1,11 +1,11 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { sql } from "@/lib/db";
 import { loadIntakeSubmissionById } from "@/lib/intake";
 import { getFirmBranding } from "@/lib/branding";
 import { getIntakeFileUrl } from "@/lib/actions/intake";
 import { INTAKE_TIMELINE_NOTE } from "@/lib/intake-shared";
-import EvidenceSheet, { type EvidenceData } from "@/components/evidence-sheet";
-import PrintButton from "@/components/print-button";
+import type { EvidenceData } from "@/components/evidence-sheet";
+import IntakeProcessing from "@/components/intake-processing";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ const STATUS_LABEL: Record<string, string> = {
   rejected: "ปฏิเสธ",
 };
 
-export default async function IntakeFormPage({
+export default async function IntakeRecordPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -64,8 +64,6 @@ export default async function IntakeFormPage({
     submittedAt: sub.created_at,
     nameTh: sub.name_th,
     nameEn: sub.name_en,
-    nameTh2: sub.name_th2,
-    nameEn2: sub.name_en2,
     juristicId: sub.juristic_id,
     regDate: sub.reg_date,
     capitalRegistered: sub.capital_registered,
@@ -89,15 +87,30 @@ export default async function IntakeFormPage({
     timelineNote: INTAKE_TIMELINE_NOTE,
   };
 
+  let clientName: string | null = null;
+  if (sub.client_id) {
+    const rows = (await sql`select name from clients where id=${sub.client_id} limit 1`) as {
+      name: string;
+    }[];
+    clientName = rows[0]?.name ?? null;
+  }
+
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <Link href="/onboarding" className="text-sm text-neutral-500 hover:underline">
-          ← กลับ
-        </Link>
-        <PrintButton />
-      </div>
-      <EvidenceSheet data={evidence} />
-    </div>
+    <IntakeProcessing
+      id={sub.id}
+      evidence={evidence}
+      status={sub.status}
+      clientId={sub.client_id}
+      clientName={clientName}
+      linkLabel={null}
+      defaults={{
+        address: addressText || "",
+        vat_registered: sub.vat_registered,
+        vat_reg_date: sub.vat_reg_date ?? "",
+        vat_place: sub.vat_place ?? "",
+        fiscal_year_end: sub.fiscal_year_end ?? "",
+        filings: sub.filings,
+      }}
+    />
   );
 }
