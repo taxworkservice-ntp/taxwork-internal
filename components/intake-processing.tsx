@@ -52,6 +52,8 @@ export default function IntakeProcessing({
   });
 
   const editable = status === "submitted";
+  // Prospect rows (accepted, no client yet) can still be converted to a client.
+  const canAct = editable || (status === "approved" && !clientId);
   const checks = [
     { label: "ชื่อบริษัท", ok: Boolean(evidence.nameTh) },
     { label: "ที่อยู่จดทะเบียน", ok: Boolean((r.address ?? "").trim()) },
@@ -267,9 +269,9 @@ export default function IntakeProcessing({
         </section>
       )}
 
-      {editable && (
+      {canAct && (
         <div className="flex flex-wrap gap-2 print:hidden">
-          <button className="btn" onClick={save} disabled={busy}>
+          <button className="btn" onClick={save} disabled={busy || !editable}>
             บันทึกที่กรอกเพิ่ม
           </button>
           <button
@@ -280,10 +282,10 @@ export default function IntakeProcessing({
           >
             อนุมัติเป็นลูกค้า
           </button>
-          <button className="btn" onClick={mark} disabled={busy}>
+          <button className="btn" onClick={mark} disabled={busy || !editable}>
             เก็บเป็นผู้สนใจ
           </button>
-          <button className="btn-danger" onClick={reject} disabled={busy}>
+          <button className="btn-danger" onClick={reject} disabled={busy || !editable}>
             ปฏิเสธ
           </button>
         </div>
