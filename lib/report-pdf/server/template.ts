@@ -128,7 +128,7 @@ function renderPayBlock(f: ReportModelFiling): string {
 function renderCard(f: ReportModelFiling, index: number): string {
   const form = escapeHtml(f.form_code?.trim() || "-");
   const desc = f.description?.trim();
-  const amount = `${escapeHtml(fmtMoney(f.amount))} บาท`;
+  const amount = `${escapeHtml(fmtMoney(f.amount))}<span class="unit"> บาท</span>`;
 
   const payBlock = renderPayBlock(f);
   const qr = f.qrDataUri;
@@ -310,10 +310,20 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .section-title { font-size: 11pt; font-weight: 700; margin: 12pt 0 6pt; }
 
 .card { position: relative; border: 0.5pt solid #d1d1da; border-left: 2pt solid var(--brand, #242428); padding: 7pt 10pt; margin-bottom: 8pt; page-break-inside: avoid; }
-.card .head { display: flex; justify-content: space-between; align-items: baseline; }
+.card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8pt; }
+.card .head-left { min-width: 0; }
 .card .idx { color: #73737d; font-weight: 700; margin-right: 6pt; }
 .card .form { font-weight: 700; }
-.card .amt { font-weight: 700; }
+.card .amt {
+  font-size: 12pt;
+  line-height: 1.1;
+  font-weight: 700;
+  color: var(--brand, #242428);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.card .amt .unit { font-size: 8.5pt; font-weight: 400; color: #73737d; }
 .card .body { display: flex; gap: 8pt; margin-top: 4pt; }
 .card .col { flex: 1; min-width: 0; }
 .card .desc { color: #73737d; }
@@ -326,7 +336,7 @@ body { font-family: 'Sarabun', sans-serif; color: #17171c; font-size: 9.5pt; lin
 .payright { display: inline-flex; align-items: center; gap: 5pt; white-space: nowrap; flex-shrink: 0; }
 .banklogos { display: inline-flex; align-items: center; gap: 4pt; }
 .banklogos img { height: 14pt; max-width: 48pt; object-fit: contain; }
-.acctno { font-weight: 600; }
+.acctno { font-size: 8pt; font-weight: 400; color: #52525b; font-variant-numeric: tabular-nums; }
 .formdesc { color: #73737d; margin-left: 4pt; font-weight: 400; }
 .card .qrbox { width: 44pt; height: 44pt; border: 0.5pt solid #d1d1da; padding: 2pt; background: #fff; }
 .card .qrbox img { width: 100%; height: 100%; object-fit: contain; }

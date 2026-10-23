@@ -1143,12 +1143,13 @@ async function drawCoverModern(
       size: fontSize,
       bold: true,
     });
-    const amtW = r.measureText(amountText, fontSize, true);
+    const amtSize = 11;
+    const amtW = r.measureText(amountText, amtSize, true);
     await r.drawTextCanvas(
       amountText,
       M + CONTENT_W - cPadX - amtW,
       headerBaseline,
-      { size: fontSize, bold: true }
+      { size: amtSize, bold: true }
     );
 
     let cursor = headerBaseline - (metaLh + 1);

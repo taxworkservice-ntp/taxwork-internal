@@ -20,13 +20,24 @@ describe("report template (server renderer)", () => {
     const html = renderReportHtml(baseModel());
     expect(html).toContain("รายการที่ 1");
     expect(html).toContain("ภ.พ.30");
-    expect(html).toContain("5,000.00 บาท");
+    expect(html).toContain("5,000.00");
+    expect(html).toContain('<span class="unit"> บาท</span>');
     expect(html).toContain("รายละเอียด");
     expect(html).toContain("ช่องทางการชำระเงิน");
     expect(html).toContain("เลขที่บัญชี 164-3-84594-2");
     expect(html).toContain("พร้อมเพย์ 0810000000");
     // QR image embedded
     expect(html).toContain(SAMPLE_QR);
+  });
+
+  it("keeps the amount prominent and the account number regular", () => {
+    const html = renderReportHtml(baseModel());
+    // The amount is emphasized, but its line box never exceeds the 9.5pt form
+    // line (9.5 * 1.5 = 14.25pt), so the card does not grow taller.
+    expect(html).toMatch(/\.card \.amt\s*\{[^}]*font-size:\s*12pt/);
+    expect(html).toMatch(/\.card \.amt\s*\{[^}]*line-height:\s*1\.1/);
+    // 600 would resolve to the only bold face (700); the account must be 400.
+    expect(html).toMatch(/\.acctno\s*\{[^}]*font-weight:\s*400/);
   });
 
   it("includes a dedicated payment page unless preview", () => {
