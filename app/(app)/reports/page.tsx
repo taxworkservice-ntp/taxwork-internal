@@ -1027,6 +1027,13 @@ export default function ReportsPage() {
 
   async function uploadFilingDocument(filing: Filing, file: File) {
     if (reportLocked) return;
+    const allowedType =
+      ["application/pdf", "image/png", "image/jpeg"].includes(file.type) ||
+      /\.(pdf|png|jpe?g)$/i.test(file.name);
+    if (!allowedType) {
+      alert("แนบเอกสารได้เฉพาะไฟล์ PDF, JPG หรือ PNG");
+      return;
+    }
     if (file.size > 10 * 1024 * 1024) {
       alert("ไฟล์เอกสารต้องมีขนาดไม่เกิน 10 MB");
       return;

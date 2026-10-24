@@ -38,6 +38,25 @@ export async function GET(
     return NextResponse.json({ error: "document not found" }, { status: 404 });
   }
 
+  const name = document.file_name || "document";
+  const declared = (document.mime_type ?? "").toLowerCase();
+  const lowerName = name.toLowerCase();
+  const contentType =
+    declared === "application/pdf" || lowerName.endsWith(".pdf")
+      ? "application/pdf"
+      : declared === "image/png" || lowerName.endsWith(".png")
+        ? "image/png"
+        : declared === "image/jpeg" ||
+            declared === "image/jpg" ||
+            /\.jpe?g$/.test(lowerName)
+          ? "image/jpeg"
+          : null;
+  // Share documents are deliberately limited to PDF/PNG/JPEG. Anything else
+  // (HTML/SVG/etc.) would be unsafe to render inline on the share origin.
+  if (!contentType) {
+    return NextResponse.json({ error: "unsupported document type" }, { status: 415 });
+  }
+
   try {
     const obj = await r2.send(
       new GetObjectCommand({ Bucket: R2_BUCKET, Key: document.storage_path })
@@ -46,14 +65,6 @@ export async function GET(
     if (!bytes) {
       return NextResponse.json({ error: "empty document" }, { status: 404 });
     }
-    const name = document.file_name || "document";
-    const contentType =
-      document.mime_type ??
-      (/\.pdf$/i.test(name)
-        ? "application/pdf"
-        : /\.(png|jpe?g)$/i.test(name)
-          ? "image/jpeg"
-          : "application/octet-stream");
     return new NextResponse(new Uint8Array(bytes), {
       status: 200,
       headers: {
