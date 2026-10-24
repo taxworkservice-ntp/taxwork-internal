@@ -6,10 +6,16 @@ type State = "idle" | "sending" | "sent" | "deduped" | "error";
 
 /**
  * Client-facing "email me this report" action (archival copy). Sends only to the
- * client's email on file — the server enforces the recipient, and the address is
- * never shown here. Deduped and rate-limited server-side.
+ * client's email on file — the server enforces the recipient. The address is
+ * shown so the client can confirm which inbox will receive the archive.
  */
-export default function ShareEmailButton({ emailUrl }: { emailUrl: string }) {
+export default function ShareEmailButton({
+  emailUrl,
+  email,
+}: {
+  emailUrl: string;
+  email: string | null;
+}) {
   const [state, setState] = useState<State>("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -70,19 +76,25 @@ export default function ShareEmailButton({ emailUrl }: { emailUrl: string }) {
 
       <p className="text-center text-xs text-neutral-500">
         {done && state === "sent" && (
-          <span className="font-medium text-emerald-600">
-            ส่งแล้ว — ตรวจสอบอีเมลของท่าน
+          <span className="font-medium text-emerald-600 break-all">
+            ส่งแล้ว — ตรวจสอบอีเมล{email ? ` ${email}` : "ของท่าน"}
           </span>
         )}
         {done && state === "deduped" && (
-          <span className="font-medium text-emerald-600">
-            ส่งไปแล้วเมื่อสักครู่ — ตรวจสอบอีเมลของท่าน
+          <span className="font-medium text-emerald-600 break-all">
+            ส่งไปแล้วเมื่อสักครู่ — ตรวจสอบอีเมล
+            {email ? ` ${email}` : "ของท่าน"}
           </span>
         )}
         {state === "error" && <span className="text-red-600">{error}</span>}
         {(state === "idle" || state === "sending") && (
           <>
             ระบบจะส่งรายงานฉบับเต็มไปที่อีเมลที่ลงทะเบียนไว้ของท่าน
+            {email && (
+              <span className="mt-0.5 block break-all font-mono text-xs text-neutral-700">
+                {email}
+              </span>
+            )}
           </>
         )}
       </p>

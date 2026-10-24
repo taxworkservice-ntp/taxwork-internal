@@ -145,7 +145,9 @@ export default async function SharePage({
   const file = await latestReportFile(loaded.resolved.reportId);
   const clientEmail = loaded.model.client.email?.trim() || null;
 
-  // Never ship the client's real email to the browser.
+  // The shared model never carries the email. The address is passed separately
+  // to the gated page so the client can confirm which inbox will receive the
+  // archived PDF (the recipient is still enforced server-side).
   const safeModel = {
     ...loaded.model,
     client: { ...loaded.model.client, email: null },
@@ -158,7 +160,7 @@ export default async function SharePage({
       fileName={file?.file_name ?? null}
       token={token}
       expiresAt={loaded.resolved.expiresAt}
-      hasEmail={Boolean(clientEmail)}
+      emailAddress={clientEmail}
     />
   );
 }

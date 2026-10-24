@@ -261,14 +261,14 @@ export default function ShareView({
   fileName,
   token,
   expiresAt,
-  hasEmail,
+  emailAddress,
 }: {
   model: ReportModel;
   hasPdf: boolean;
   fileName: string | null;
   token: string;
   expiresAt?: string | null;
-  hasEmail: boolean;
+  emailAddress: string | null;
 }) {
   const sections = buildSections(model);
   const grandTotal = sections.reduce((sum, s) => sum + s.amount, 0);
@@ -639,7 +639,12 @@ export default function ShareView({
           <SectionTitle>รับเอกสาร</SectionTitle>
           <div className="space-y-1">
             <ShareDownloadButton pdfUrl={`/r/${token}/pdf`} fileName={fileName} />
-            {hasEmail && <ShareEmailButton emailUrl={`/r/${token}/email`} />}
+            {emailAddress && (
+              <ShareEmailButton
+                emailUrl={`/r/${token}/email`}
+                email={emailAddress}
+              />
+            )}
             {expiryLabel && (
               <p className="text-center text-xs text-neutral-400">
                 ลิงก์นี้ใช้ได้ถึง {expiryLabel}
