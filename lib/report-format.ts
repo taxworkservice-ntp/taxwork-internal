@@ -23,3 +23,19 @@ export function formatBaht(n: number): string {
     maximumFractionDigits: 2,
   });
 }
+
+/**
+ * Mask the local part of an email address for display: "somchai@example.com"
+ * -> "so*****@example.com". The domain is kept so staff can still recognise
+ * the recipient, while the full address is only shown when explicitly revealed.
+ */
+export function maskEmail(email: string): string {
+  const value = email.trim();
+  const at = value.lastIndexOf("@");
+  if (at <= 0 || at === value.length - 1) return value;
+  const local = value.slice(0, at);
+  const domain = value.slice(at + 1);
+  const visible = local.slice(0, Math.min(2, local.length));
+  const masked = "*".repeat(Math.max(3, local.length - visible.length));
+  return `${visible}${masked}@${domain}`;
+}

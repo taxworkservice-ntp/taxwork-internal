@@ -47,6 +47,12 @@ type SectionSlip = {
   pdfPage: number | null;
 };
 
+type SectionDocument = {
+  id: string;
+  file_name: string;
+  isImage: boolean;
+};
+
 type Section = {
   id: string;
   title: string;
@@ -61,6 +67,7 @@ type Section = {
   qr: string | null;
   bankLogos: string[];
   slips: SectionSlip[];
+  documents: SectionDocument[];
 };
 
 function buildSections(model: ReportModel): Section[] {
@@ -85,6 +92,11 @@ function buildSections(model: ReportModel): Section[] {
       isImage: s.isImage,
       dataUri: s.dataUri,
       pdfPage: s.pdfPage,
+    })),
+    documents: (f.attachedDocuments ?? []).map((d) => ({
+      id: d.id,
+      file_name: d.file_name,
+      isImage: d.isImage,
     })),
   }));
 }
@@ -405,7 +417,7 @@ export default function ShareView({
                         </div>
                       </div>
                       <div className="shrink-0 text-right">
-                        <div className="text-sm font-bold tabular-nums text-neutral-900">
+                        <div className="text-base font-bold tabular-nums text-blue-800">
                           {fmtMoney(s.amount)}
                         </div>
                         <AmountCopy amount={s.amount} />
@@ -549,6 +561,56 @@ export default function ShareView({
                           : "ชำระตามช่องทางที่เจ้าหน้าที่แจ้ง"}
                       </div>
                     )}
+
+                    {/* share-only documents */}
+                    {s.documents.length > 0 && (
+                      <div className="border-t border-neutral-100 px-4 py-3">
+                        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                          เอกสารแนบ
+                        </div>
+                        <div className="space-y-2">
+                          {s.documents.map((doc) => (
+                            <a
+                              key={doc.id}
+                              href={`/r/${token}/document/${doc.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50/60 p-3 transition-colors hover:bg-neutral-100 active:bg-neutral-200"
+                            >
+                              {doc.isImage ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={`/r/${token}/document/${doc.id}`}
+                                  alt=""
+                                  className="h-10 w-10 shrink-0 rounded-lg border border-neutral-200 object-cover"
+                                />
+                              ) : (
+                                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-[10px] font-bold text-blue-700">
+                                  PDF
+                                </span>
+                              )}
+                              <span className="min-w-0 flex-1">
+                                <span
+                                  className="block truncate text-sm font-semibold text-neutral-800"
+                                  title={doc.file_name}
+                                >
+                                  {doc.file_name}
+                                </span>
+                                <span className="block text-[11px] text-neutral-400">
+                                  เอกสารประกอบรายการนี้
+                                </span>
+                              </span>
+                              <span className="shrink-0 text-xs font-semibold text-blue-700">
+                                เปิดดู
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-[11px] text-neutral-400">
+                          เอกสารนี้แสดงเฉพาะในลิงก์รายงานนี้
+                        </p>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -556,7 +618,9 @@ export default function ShareView({
 
             <div className="mt-4 flex items-center justify-between rounded-2xl border border-neutral-200 bg-neutral-100 px-4 py-3 text-base font-bold text-neutral-900">
               <span>ยอดรวมทั้งสิ้น</span>
-              <span className="tabular-nums">{fmtMoney(grandTotal)} บาท</span>
+              <span className="tabular-nums text-blue-800">
+                {fmtMoney(grandTotal)} บาท
+              </span>
             </div>
           </>
         )}

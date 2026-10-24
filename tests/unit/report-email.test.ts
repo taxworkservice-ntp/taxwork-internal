@@ -78,6 +78,13 @@ describe("buildReportEmail", () => {
     expect(html).toContain("15,650.00");
   });
 
+  it("emphasises the attachment sentence and the money total", () => {
+    const { html } = buildReportEmail(base);
+    expect(html).toContain("เอกสารฉบับเต็มแนบมากับอีเมลนี้");
+    expect(html).toContain("border-left:3px solid #1e40af");
+    expect(html).toContain("color:#1e40af");
+  });
+
   it("hides the total when nothing is due", () => {
     const { html } = buildReportEmail({ ...base, total: 0 });
     expect(html).not.toContain("฿0.00");

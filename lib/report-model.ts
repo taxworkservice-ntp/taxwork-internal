@@ -26,6 +26,13 @@ export type ReportModelSlip = {
   pdfPage: number | null;
 };
 
+export type ReportModelAttachment = {
+  id: string;
+  file_name: string;
+  mime_type: string | null;
+  isImage: boolean;
+};
+
 export type ReportModelFiling = {
   id: string;
   form_code: string;
@@ -39,6 +46,11 @@ export type ReportModelFiling = {
   qrDataUri: string | null;
   /** Pay-in slips attached to this filing, in upload order. */
   slips: ReportModelSlip[];
+  /**
+   * Share-link-only documents. These are intentionally NOT part of `slips`,
+   * so the combined PDF/email never includes them.
+   */
+  attachedDocuments: ReportModelAttachment[];
 };
 
 export type ReportModelBank = {
@@ -196,6 +208,7 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     string,
     { id: string; storage_path: string; file_name: string; mime_type: string | null; pdf_page: number | null }[]
   >();
+  const documentsByFiling = new Map<string, ReportModelAttachment[]>();
   if (filingIds.length) {
     const placeholders = filingIds.map((_, i) => `$${i + 1}`).join(",");
     const qrs = (await sql.query(
@@ -225,6 +238,26 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
     for (const a of slips) {
       if (!slipsByFiling.has(a.filing_id)) slipsByFiling.set(a.filing_id, []);
       slipsByFiling.get(a.filing_id)!.push(a);
+    }
+    const shareDocs = (await sql.query(
+      `select id, filing_id, file_name, mime_type from filing_attachments
+       where kind='document' and filing_id in (${placeholders})
+       order by created_at`,
+      filingIds
+    )) as {
+      id: string;
+      filing_id: string;
+      file_name: string;
+      mime_type: string | null;
+    }[];
+    for (const d of shareDocs) {
+      if (!documentsByFiling.has(d.filing_id)) documentsByFiling.set(d.filing_id, []);
+      documentsByFiling.get(d.filing_id)!.push({
+        id: String(d.id),
+        file_name: String(d.file_name),
+        mime_type: d.mime_type == null ? null : String(d.mime_type),
+        isImage: isImageMime(d.mime_type, String(d.file_name)),
+      });
     }
   }
 
@@ -295,6 +328,7 @@ export async function buildReportModel(reportId: string): Promise<ReportModel> {
       bank,
       qrDataUri,
       slips,
+      attachedDocuments: documentsByFiling.get(id) ?? [],
     });
   }
 

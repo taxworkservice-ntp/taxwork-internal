@@ -64,6 +64,7 @@ import {
   type ReportFiling,
 } from "@/lib/report-pdf";
 import { thaiBahtText } from "@/lib/thai-baht-text";
+import { maskEmail } from "@/lib/report-format";
 import { downloadStoredFile } from "@/lib/download";
 import ClientAvatar from "@/components/client-avatar";
 import ClientSelect from "@/components/client-select";
@@ -208,6 +209,8 @@ export default function ReportsPage() {
   const [logoBusyId, setLogoBusyId] = useState<string | null>(null);
   const [qrFilingId, setQrFilingId] = useState<string | null>(null);
   const [slipFilingId, setSlipFilingId] = useState<string | null>(null);
+  const [docFilingId, setDocFilingId] = useState<string | null>(null);
+  const [showClientEmail, setShowClientEmail] = useState(false);
   const [firmName, setFirmName] = useState("");
   const [preparedBy, setPreparedBy] = useState("");
   const [firmPhone, setFirmPhone] = useState("");
@@ -234,6 +237,11 @@ export default function ReportsPage() {
   const [docsDragActive, setDocsDragActive] = useState(false);
   const [docsBusy, setDocsBusy] = useState(false);
   const docsInputRef = useRef<HTMLInputElement>(null);
+
+  // Never keep a revealed client address when switching clients.
+  useEffect(() => {
+    setShowClientEmail(false);
+  }, [clientId]);
 
   async function refreshDocs(reportId = activeReportId) {
     if (!reportId) {
@@ -1017,6 +1025,52 @@ export default function ReportsPage() {
     }
   }
 
+  async function uploadFilingDocument(filing: Filing, file: File) {
+    if (reportLocked) return;
+    if (file.size > 10 * 1024 * 1024) {
+      alert("ไฟล์เอกสารต้องมีขนาดไม่เกิน 10 MB");
+      return;
+    }
+    setDocFilingId(filing.id);
+    try {
+      const path = await uploadObject(file.name, file);
+      // One share-only document per filing, slip-style: replace on upload.
+      for (const att of filing.filing_attachments) {
+        if (att.kind !== "document") continue;
+        await deleteR2Object(att.storage_path);
+        await deleteAttachment(att.id);
+      }
+      await addAttachment(
+        filing.id,
+        "document",
+        {
+          storage_path: path,
+          file_name: file.name,
+          size_bytes: file.size,
+          mime_type: file.type || null,
+        },
+        [filing.id]
+      );
+      await loadFilings();
+    } catch (err) {
+      alert(`อัปโหลดเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setDocFilingId(null);
+    }
+  }
+
+  async function removeFilingDocument(att: Attachment) {
+    if (reportLocked) return;
+    if (!confirm("ลบเอกสารแนบของรายการนี้?")) return;
+    try {
+      await deleteAttachment(att.id);
+      await deleteR2Object(att.storage_path);
+      await loadFilings();
+    } catch (err) {
+      alert(`ลบเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   async function deleteFiling(filing: Filing) {
     if (!confirm(`ลบรายการ "${filing.form_code}" ?`)) return;
     await deleteFilingAction(filing.id);
@@ -1524,8 +1578,9 @@ export default function ReportsPage() {
       alert(`ครบโควตาส่งอีเมล ${emailQuota.limit} ฉบับ/เดือนแล้ว`);
       return;
     }
+    const displayTo = showClientEmail ? to : maskEmail(to);
     const ok = confirm(
-      `ส่งรายงานทางอีเมลถึง:\n${to}\n\nคงเหลือโควตาเดือนนี้ ${remaining}/${
+      `ส่งรายงานทางอีเมลถึง:\n${displayTo}\n\nคงเหลือโควตาเดือนนี้ ${remaining}/${
         emailQuota?.limit ?? 30
       } ฉบับ\n\nยืนยันการส่ง?`
     );
@@ -1554,7 +1609,7 @@ export default function ReportsPage() {
         return;
       }
       setStatus(
-        `ส่งอีเมลถึง ${to} แล้ว (คงเหลือ ${data.remaining ?? remaining - 1} ฉบับ)`
+        `ส่งอีเมลถึง ${displayTo} แล้ว (คงเหลือ ${data.remaining ?? remaining - 1} ฉบับ)`
       );
       await reloadEmailQuota();
       await reloadEmailLogs();
@@ -2106,6 +2161,7 @@ export default function ReportsPage() {
                   locked={reportLocked}
                   qrBusy={qrFilingId === f.id}
                   slipBusy={slipFilingId === f.id}
+                  docBusy={docFilingId === f.id}
                   canMoveUp={i > 0}
                   canMoveDown={i < filings.length - 1}
                   onMoveUp={() => moveFiling(f.id, -1)}
@@ -2116,6 +2172,8 @@ export default function ReportsPage() {
                   onRemoveQr={removeFilingQr}
                   onUploadSlip={(file) => uploadFilingSlip(f, file)}
                   onRemoveSlip={removeFilingSlip}
+                  onUploadDocument={(file) => uploadFilingDocument(f, file)}
+                  onRemoveDocument={removeFilingDocument}
                 />
               ))
             )}
@@ -2591,7 +2649,7 @@ export default function ReportsPage() {
                 )}
               </section>
 
-              <section className="card space-y-2">
+              <section className="card space-y-2 border-blue-200 bg-blue-50/30">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">ส่งอีเมลถึงลูกค้า</span>
                   {emailQuota && (
@@ -2615,7 +2673,18 @@ export default function ReportsPage() {
                 {selectedClient?.email ? (
                   <p className="text-xs text-neutral-500">
                     แนบไฟล์ PDF (ฉบับเต็ม) ไปที่{" "}
-                    <span className="font-mono">{selectedClient.email}</span>
+                    <span className="font-mono">
+                      {showClientEmail
+                        ? selectedClient.email
+                        : maskEmail(selectedClient.email)}
+                    </span>
+                    <button
+                      type="button"
+                      className="ml-1 text-blue-600 hover:underline"
+                      onClick={() => setShowClientEmail((v) => !v)}
+                    >
+                      {showClientEmail ? "ซ่อน" : "แสดง"}
+                    </button>
                   </p>
                 ) : (
                   <p className="text-xs text-neutral-500">
@@ -2922,6 +2991,7 @@ function FilingCard({
   locked,
   qrBusy,
   slipBusy,
+  docBusy,
   canMoveUp,
   canMoveDown,
   onMoveUp,
@@ -2932,12 +3002,15 @@ function FilingCard({
   onRemoveQr,
   onUploadSlip,
   onRemoveSlip,
+  onUploadDocument,
+  onRemoveDocument,
 }: {
   filing: Filing;
   bankAccounts: BankAccount[];
   locked?: boolean;
   qrBusy?: boolean;
   slipBusy?: boolean;
+  docBusy?: boolean;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
   onMoveUp: () => void;
@@ -2948,10 +3021,14 @@ function FilingCard({
   onRemoveQr: (att: Attachment) => void;
   onUploadSlip: (file: File) => void;
   onRemoveSlip: (att: Attachment) => void;
+  onUploadDocument: (file: File) => void;
+  onRemoveDocument: (att: Attachment) => void;
 }) {
   const editingRef = useRef<string | null>(null);
   const qrAtt = filing.filing_attachments.find((a) => a.kind === "qr") ?? null;
   const slipAtt = filing.filing_attachments.find((a) => a.kind === "slip") ?? null;
+  const docAtt =
+    filing.filing_attachments.find((a) => a.kind === "document") ?? null;
   const [draft, setDraft] = useState({
     form_code: filing.form_code,
     description: filing.description ?? "",
@@ -3112,72 +3189,118 @@ function FilingCard({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 border-t border-neutral-100 pt-2">
-        <span className="text-xs text-neutral-500">สลิป / ใบนำฝาก</span>
-        {slipAtt ? (
-          <>
-            <FileThumb
-              storagePath={slipAtt.storage_path}
-              isImage={isImageAttachment(slipAtt)}
-            />
-            <span className="min-w-0 flex-1 truncate text-xs text-neutral-600" title={slipAtt.file_name}>
-              {slipAtt.file_name}
-            </span>
-            {slipAtt.pdf_page ? (
-              <span className="text-[11px] text-neutral-400">
-                หน้า {slipAtt.pdf_page}
-              </span>
-            ) : null}
-            <button
-              type="button"
-              className="text-xs text-red-600 hover:underline disabled:opacity-50"
-              onClick={() => onRemoveSlip(slipAtt)}
-              disabled={locked}
-            >
-              ลบสลิป
-            </button>
-          </>
-        ) : (
-          <DropZone
-            label={slipBusy ? "กำลังอัปโหลด..." : "+ แนบสลิป"}
+      <div className="border-t border-neutral-100 pt-3">
+        <div className="mb-2 text-xs font-medium text-neutral-500">ไฟล์แนบ</div>
+        <div className="grid gap-2 md:grid-cols-3">
+          <AttachmentSlot
+            label="สลิป / ใบนำฝาก"
+            hint="วางหลังหน้าปก"
+            emptyLabel="+ แนบสลิป"
             accept="image/png,image/jpeg,application/pdf"
-            disabled={locked || slipBusy}
-            onFile={onUploadSlip}
+            busy={slipBusy}
+            disabled={locked}
+            file={slipAtt}
+            onUpload={onUploadSlip}
+            onRemove={onRemoveSlip}
           />
-        )}
-        <span className="text-[11px] text-neutral-400">
-          ลากไฟล์มาวางได้ · วางหลังหน้าปก
-        </span>
-      </div>
-
-      <div className="flex items-center gap-2 border-t border-neutral-100 pt-2">
-        <span className="text-xs text-neutral-500">QR ชำระเงิน</span>
-        {qrAtt ? (
-          <>
-            <QrThumb storagePath={qrAtt.storage_path} />
-            <span className="min-w-0 flex-1 truncate text-xs text-neutral-600" title={qrAtt.file_name}>
-              {qrAtt.file_name}
-            </span>
-            <button
-              type="button"
-              className="text-xs text-red-600 hover:underline disabled:opacity-50"
-              onClick={() => onRemoveQr(qrAtt)}
-              disabled={locked}
-            >
-              ลบ QR
-            </button>
-          </>
-        ) : (
-          <DropZone
-            label={qrBusy ? "กำลังอัปโหลด..." : "+ แนบ QR"}
+          <AttachmentSlot
+            label="QR ชำระเงิน"
+            hint="QR สร้างใหม่ต่อการยื่น"
+            emptyLabel="+ แนบ QR"
             accept="image/png,image/jpeg"
-            disabled={locked || qrBusy}
-            onFile={onUploadQr}
+            busy={qrBusy}
+            disabled={locked}
+            file={qrAtt}
+            onUpload={onUploadQr}
+            onRemove={onRemoveQr}
           />
-        )}
-        <span className="text-[11px] text-neutral-400">
-          ลากไฟล์มาวางได้ · QR สร้างใหม่ต่อการยื่น
-        </span>
+          <AttachmentSlot
+            label="เอกสารแนบ (ลิงก์แชร์)"
+            hint="แสดงเฉพาะลิงก์ · ไม่รวมใน PDF"
+            emptyLabel="+ แนบเอกสาร"
+            accept="application/pdf,image/png,image/jpeg"
+            busy={docBusy}
+            disabled={locked}
+            file={docAtt}
+            onUpload={onUploadDocument}
+            onRemove={onRemoveDocument}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AttachmentSlot({
+  label,
+  hint,
+  emptyLabel,
+  accept,
+  busy,
+  disabled,
+  file,
+  onUpload,
+  onRemove,
+}: {
+  label: string;
+  hint: string;
+  emptyLabel: string;
+  accept: string;
+  busy?: boolean;
+  disabled?: boolean;
+  file: Attachment | null;
+  onUpload: (file: File) => void;
+  onRemove: (att: Attachment) => void;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-neutral-200 bg-neutral-50/50 p-2.5">
+      <div className="text-[11px] font-semibold text-neutral-600">{label}</div>
+      {file ? (
+        <div className="mt-1.5 flex items-center gap-2">
+          {file.kind === "qr" ? (
+            <QrThumb storagePath={file.storage_path} />
+          ) : (
+            <FileThumb
+              storagePath={file.storage_path}
+              isImage={isImageAttachment(file)}
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <div
+              className="truncate text-xs text-neutral-700"
+              title={file.file_name}
+            >
+              {file.file_name}
+            </div>
+            <div className="flex items-center gap-2">
+              {file.kind === "slip" && file.pdf_page ? (
+                <span className="text-[10px] text-neutral-400">
+                  หน้า {file.pdf_page}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                className="text-[11px] text-red-600 hover:underline disabled:opacity-50"
+                onClick={() => onRemove(file)}
+                disabled={disabled}
+              >
+                ลบ
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-1.5">
+          <DropZone
+            label={busy ? "กำลังอัปโหลด..." : emptyLabel}
+            accept={accept}
+            disabled={disabled || busy}
+            onFile={onUpload}
+          />
+        </div>
+      )}
+      <div className="mt-1 text-[10px] leading-snug text-neutral-400">
+        {hint}
       </div>
     </div>
   );
@@ -3211,7 +3334,9 @@ function DropZone({
         const file = e.dataTransfer.files?.[0];
         if (file) onFile(file);
       }}
-      className={`btn text-xs ${dragging ? "border-blue-500 bg-blue-50" : ""} ${
+      className={`btn inline-flex w-full items-center justify-center text-xs ${
+        dragging ? "border-blue-500 bg-blue-50" : ""
+      } ${
         disabled ? "pointer-events-none opacity-50" : "cursor-pointer"
       }`}
     >

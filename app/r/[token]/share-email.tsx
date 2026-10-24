@@ -44,7 +44,7 @@ export default function ShareEmailButton({ emailUrl }: { emailUrl: string }) {
         onClick={send}
         disabled={state === "sending"}
         aria-busy={state === "sending"}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-neutral-300 bg-white px-4 py-3 text-center text-sm font-semibold text-neutral-800 shadow-sm transition-colors active:bg-neutral-100 disabled:opacity-60"
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-center text-sm font-semibold text-blue-900 shadow-sm transition-colors hover:bg-blue-100 active:bg-blue-100 disabled:opacity-60"
       >
         <svg
           width="16"

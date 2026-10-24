@@ -13,6 +13,7 @@ import { formatBaht } from "@/lib/report-format";
 export const REPORT_EMAIL_MONTHLY_LIMIT = 200;
 
 const DEFAULT_BRAND_COLOR = "#111827";
+const MONEY_COLOR = "#1e40af";
 
 export type ReportEmailItem = { label: string; amount: number };
 
@@ -105,7 +106,7 @@ export function buildReportEmail(input: ReportEmailInput): ReportEmail {
 
   const totalRow = `<tr>
       <td style="padding:8px 8px 0 0;border-top:2px solid #e5e7eb;font-weight:700;color:#111827;">รวม</td>
-      <td style="padding:8px 0 0;border-top:2px solid #e5e7eb;text-align:right;white-space:nowrap;font-weight:700;color:${brand};">฿${escapeHtml(
+      <td style="padding:8px 0 0;border-top:2px solid #e5e7eb;text-align:right;white-space:nowrap;font-weight:700;color:${MONEY_COLOR};">฿${escapeHtml(
         formatBaht(input.total)
       )}</td>
     </tr>`;
@@ -153,9 +154,11 @@ export function buildReportEmail(input: ReportEmailInput): ReportEmail {
         </td></tr>
         <tr><td style="padding:16px 24px 0;font-size:14px;">
           <p style="margin:0 0 12px;">เรียน ${escapeHtml(client)}</p>
-          <p style="margin:0 0 18px;color:#374151;">รายงานสรุปการนำส่งภาษีประจำเดือน ${escapeHtml(
-            period
-          )} ของท่านได้จัดทำเรียบร้อยแล้ว เอกสารฉบับเต็มแนบมากับอีเมลนี้ เพื่อใช้ในการจัดเก็บและตรวจสอบ</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border-left:3px solid ${MONEY_COLOR};border-radius:6px;margin:0 0 18px;">
+            <tr><td style="padding:10px 12px;font-size:13px;color:#1e3a8a;">รายงานสรุปการนำส่งภาษีประจำเดือน ${escapeHtml(
+              period
+            )} ของท่านได้จัดทำเรียบร้อยแล้ว เอกสารฉบับเต็มแนบมากับอีเมลนี้ เพื่อใช้ในการจัดเก็บและตรวจสอบ</td></tr>
+          </table>
           ${refBlock}
           ${itemsBlock}
         </td></tr>

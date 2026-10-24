@@ -38,6 +38,9 @@ describe("report template (server renderer)", () => {
     expect(html).toMatch(/\.card \.amt\s*\{[^}]*line-height:\s*1\.1/);
     // 600 would resolve to the only bold face (700); the account must be 400.
     expect(html).toMatch(/\.acctno\s*\{[^}]*font-weight:\s*400/);
+    // Money is a single print-safe accent; it must not fall back to ink.
+    expect(html).toContain("--money: #1e40af");
+    expect(html).toMatch(/\.card \.amt\s*\{[^}]*color:\s*var\(--money/);
   });
 
   it("includes a dedicated payment page unless preview", () => {
@@ -88,6 +91,7 @@ describe("report template (server renderer)", () => {
               pdfPage: 2,
             },
           ],
+          attachedDocuments: [],
         },
       ],
     });

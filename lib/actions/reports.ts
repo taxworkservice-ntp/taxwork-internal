@@ -829,6 +829,30 @@ export async function resolveSlip(
     : null;
 }
 
+/**
+ * Public: resolve a share-only document for the given report. Only returns
+ * attachments of kind 'document' that belong to the tokenized report.
+ */
+export async function resolveFilingDocument(
+  reportId: string,
+  attachmentId: string
+): Promise<{ storage_path: string; file_name: string; mime_type: string | null } | null> {
+  const rows = (await sql`
+    select a.storage_path, a.file_name, a.mime_type
+    from filing_attachments a
+    join monthly_filings f on f.id = a.filing_id
+    where a.id=${attachmentId} and a.kind='document' and f.report_id=${reportId}
+  `) as { storage_path: string; file_name: string; mime_type: string | null }[];
+  const row = rows[0];
+  return row
+    ? {
+        storage_path: String(row.storage_path),
+        file_name: String(row.file_name),
+        mime_type: row.mime_type == null ? null : String(row.mime_type),
+      }
+    : null;
+}
+
 export async function addBankAccount(input: {
   label: string;
   bank_name: string;
