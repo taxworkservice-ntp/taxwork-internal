@@ -2,6 +2,7 @@
 
 import { sql } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { FILE_CATEGORY_KEYS, SYSTEM_REPORT_CATEGORY } from "@/lib/file-categories";
 import { num } from "./db-helpers";
 
 export type FileRow = {
@@ -10,9 +11,11 @@ export type FileRow = {
   storage_path: string;
   file_name: string;
   size_bytes: number;
+  mime_type: string | null;
+  category: string | null;
+  note: string | null;
   uploaded_at: string;
   uploaded_by: string | null;
-  note: string | null;
   clients: { name: string } | null;
 };
 
@@ -74,6 +77,20 @@ export async function recordFile(meta: FileMeta): Promise<string> {
 export async function updateFileNote(id: string, note: string): Promise<void> {
   await requireUser();
   await sql`update files set note=${note.trim() || null} where id=${id}`;
+}
+
+/** Move a client document to another category. System-generated reports are immutable. */
+export async function updateFileCategory(
+  id: string,
+  category: string | null
+): Promise<void> {
+  await requireUser();
+  const value = category?.trim() || null;
+  if (value && !FILE_CATEGORY_KEYS.has(value)) {
+    throw new Error("หมวดเอกสารไม่ถูกต้อง");
+  }
+  await sql`update files set category=${value}
+    where id=${id} and coalesce(category, '') <> ${SYSTEM_REPORT_CATEGORY}`;
 }
 
 export async function deleteFileRecord(id: string): Promise<void> {
