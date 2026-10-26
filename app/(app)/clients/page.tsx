@@ -2,14 +2,13 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient, deleteClient, listClients, listCredentials } from "@/lib/actions/clients";
+import { createClient, listClients, listCredentials } from "@/lib/actions/clients";
 import CopyButton from "@/components/copy-button";
 import PageHeader from "@/components/page-header";
 import SearchInput from "@/components/search-input";
 import EmptyState from "@/components/empty-state";
 import Badge from "@/components/badge";
 import ClientAvatar from "@/components/client-avatar";
-import InlineConfirm from "@/components/inline-confirm";
 import PasswordValue from "@/components/password-value";
 import { ToastStack, useToasts } from "@/components/toast";
 import { useClientFavorites } from "@/lib/use-client-favorites";
@@ -90,7 +89,6 @@ export default function ClientsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [credCache, setCredCache] = useState<Record<string, Credential[]>>({});
   const [credLoading, setCredLoading] = useState<Record<string, boolean>>({});
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "name", dir: "asc" });
   const { favorites, toggleFav, onlyFav, setOnlyFav } = useClientFavorites();
   const { toasts, push, dismiss } = useToasts();
@@ -167,17 +165,6 @@ export default function ClientsPage() {
       setFormError("บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง");
     } finally {
       setSubmitting(false);
-    }
-  }
-
-  async function remove(c: Client) {
-    setConfirmingId(null);
-    try {
-      await deleteClient(c.id);
-      await load();
-      push({ type: "success", message: `ลบ "${c.name}" แล้ว` });
-    } catch {
-      push({ type: "error", message: `ลบ "${c.name}" ไม่สำเร็จ` });
     }
   }
 
@@ -347,7 +334,7 @@ export default function ClientsPage() {
               <th>ลูกค้า</th>
               <th className="w-56">ติดต่อ</th>
               <th className="w-28">สถานะ</th>
-              <th className="w-44"></th>
+              <th className="w-24"></th>
             </tr>
           </thead>
           <tbody>
@@ -432,27 +419,9 @@ export default function ClientsPage() {
                         <Badge tone={st.tone}>{st.label}</Badge>
                       </td>
                       <td className="text-right">
-                        {confirmingId === c.id ? (
-                          <InlineConfirm
-                            message="ลบลูกค้ารายนี้?"
-                            confirmLabel="ลบถาวร"
-                            onConfirm={() => remove(c)}
-                            onCancel={() => setConfirmingId(null)}
-                          />
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5">
-                            <Link className="btn px-2 py-1 text-xs" href={`/clients/${c.id}`}>
-                              เปิด
-                            </Link>
-                            <button
-                              type="button"
-                              className="btn-danger px-2 py-1 text-xs"
-                              onClick={() => setConfirmingId(c.id)}
-                            >
-                              ลบ
-                            </button>
-                          </span>
-                        )}
+                        <Link className="btn px-2 py-1 text-xs" href={`/clients/${c.id}`}>
+                          เปิด
+                        </Link>
                       </td>
                     </tr>
 
