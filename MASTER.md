@@ -40,7 +40,7 @@ Single-user tool (the owner) used daily to:
 app/
   login/page.tsx              Email+password sign-in (better-auth)
    password/page.tsx           Change password (signed-in users)
-  page.tsx                    Redirects to /clients
+  (app)/page.tsx              Home landing: quick upload, main page cards, recent files
   (app)/layout.tsx            Shell: desktop sidebar / mobile bottom nav
   (app)/clients/page.tsx      Client list: sortable, copy icons, expandable credential rows
   (app)/clients/[id]/page.tsx Client detail: edit info, credentials CRUD, files, tasks, delete
@@ -55,6 +55,7 @@ app/
    (app)/tools/page.tsx        PDF merge & split (pdf-lib, in-browser)
 components/
   sidebar.tsx                 Desktop sidebar + mobile fixed bottom nav + sign-out
+  upload-zone.tsx             Shared upload dropzone (home quick upload + Files page)
   copy-button.tsx             Copy icon w/ check feedback (used on every data field)
   credential-row.tsx          Platform/user/password row (passwords always visible)
   file-section.tsx            Per-client upload/list/delete/download
@@ -68,7 +69,7 @@ lib/
   tasks.ts                    generateDueTasks() — idempotent task generation (server action)
   report-pdf.ts               Client-side monthly report PDF builder (Sarabun embedded, slips/QR/invoice blocks)
   thai-baht-text.ts           Number → Thai baht words ("...บาทถ้วน")
-middleware.ts                Auth guard: no user → /login; logged in on /login → /clients
+middleware.ts                Auth guard: no user → /login; logged in on /login → /
  db/migrations/              Neon schema record (applied manually, see §10)
 ```
 
@@ -153,7 +154,7 @@ files.report_id → monthly_reports (SET NULL; set for monthly-report copies)
 ## 7. Auth flow
 
 - better-auth email/password. Two users (owner + mom), allowlisted via `USER_ALLOWLIST`; public sign-up is rejected server-side and no sign-up UI exists.
-- `middleware.ts` checks for the session cookie: unauthenticated → `/login`; authenticated hitting `/login` → `/clients`. Server Actions / API routes re-verify the session via `requireUser()` / `requireUserApi()`.
+- `middleware.ts` checks for the session cookie: unauthenticated → `/login`; authenticated hitting `/login` → `/`. Server Actions / API routes re-verify the session via `requireUser()` / `requireUserApi()`.
 - Passwords can be changed at `/password` (linked in sidebar). [REMOVED 2026-09-30: passcode-only login; password changes are done directly in the database by the owner.]
 
 ## 8. Environment variables
@@ -169,7 +170,7 @@ RESEND_API_KEY=<Resend API key> (server-only)
 REPORT_FROM_EMAIL=Taxwork Account <reports@taxworkaccount.com> (verified sender)
 ```
 
- Login redirects to `/clients` after sign-in. Dashboard/tasks/templates are hidden from nav but still routable.
+ Login redirects to `/` (home landing) after sign-in. Dashboard/tasks/templates are hidden from nav but still routable.
 
 ⚠️ If login breaks on production, check that Vercel env vars (`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`) match the current Neon project — a stale `DATABASE_URL` is the most likely cause.
 

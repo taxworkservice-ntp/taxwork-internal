@@ -1,8 +1,8 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { deleteFileRecord, listFiles, recordFile, updateFileNote } from "@/lib/actions/files";
+import { deleteFileRecord, listFiles, updateFileNote } from "@/lib/actions/files";
 import CopyButton from "@/components/copy-button";
 import CreatableSelect from "@/components/creatable-select";
 import { downloadStoredFile } from "@/lib/download";
@@ -10,6 +10,7 @@ import PageHeader from "@/components/page-header";
 import SearchInput from "@/components/search-input";
 import EmptyState from "@/components/empty-state";
 import InlineConfirm from "@/components/inline-confirm";
+import UploadZone from "@/components/upload-zone";
 import { ToastStack, useToasts } from "@/components/toast";
 import ReportFilesPanel from "./report-files-panel";
 import WhtFilesPanel from "./wht-files-panel";
@@ -25,8 +26,6 @@ type FileRow = {
   note: string | null;
   clients: { name: string } | null;
 };
-
-type QueueItem = { id: string; name: string; status: "uploading" | "done" | "error" };
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -87,22 +86,16 @@ export default function FilesPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"general" | "reports" | "wht">("general");
   const [search, setSearch] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [dragging, setDragging] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filterYear, setFilterYear] = useState("");
   const [filterMonth, setFilterMonth] = useState("");
   const [filterUser, setFilterUser] = useState("");
-  const [note, setNote] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNote, setEditNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [queue, setQueue] = useState<QueueItem[]>([]);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const batchRef = useRef(0);
   const { toasts, push, dismiss } = useToasts();
 
   const years = [...new Set(files.map((f) => new Date(f.uploaded_at).getFullYear()))].sort((a, b) => b - a);
@@ -123,70 +116,10 @@ export default function FilesPage() {
     load();
   }, [load]);
 
-  async function uploadFiles(list: FileList | File[]) {
-    const arr = Array.from(list);
-    if (!arr.length) return;
-    const batch = ++batchRef.current;
-    setUploading(true);
-    const items: QueueItem[] = arr.map((f, i) => ({ id: `${batch}-${i}`, name: f.name, status: "uploading" }));
-    setQueue(items);
-    const setStatus = (index: number, status: QueueItem["status"]) =>
-      setQueue((prev) => prev.map((it, i) => (i === index ? { ...it, status } : it)));
-
-    let ok = 0;
-    let failed = 0;
-    for (let i = 0; i < arr.length; i++) {
-      const file = arr[i];
-      try {
-        const signRes = await fetch("/api/files/sign-upload", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ clientId: "", fileName: file.name }),
-        });
-        if (!signRes.ok) throw new Error("sign");
-        const { url, path } = await signRes.json();
-        const putRes = await fetch(url, {
-          method: "PUT",
-          body: file,
-          headers: { "Content-Type": file.type || "application/octet-stream" },
-        });
-        if (!putRes.ok) throw new Error("put");
-        await recordFile({
-          client_id: null,
-          storage_path: path,
-          file_name: file.name,
-          size_bytes: file.size,
-          mime_type: file.type,
-          note: note || null,
-        });
-        setStatus(i, "done");
-        ok++;
-      } catch {
-        setStatus(i, "error");
-        failed++;
-      }
-    }
-
-    setUploading(false);
-    setNote("");
-    if (inputRef.current) inputRef.current.value = "";
-    await load();
-
+  function handleUploadResult({ ok, failed }: { ok: number; failed: number }) {
     if (ok && failed) push({ type: "info", message: `อัปโหลดสำเร็จ ${ok} ไฟล์ · ล้มเหลว ${failed} ไฟล์` });
     else if (ok) push({ type: "success", message: `อัปโหลดสำเร็จ ${ok} ไฟล์` });
     else if (failed) push({ type: "error", message: `อัปโหลดไม่สำเร็จ ${failed} ไฟล์` });
-
-    setTimeout(() => {
-      if (batchRef.current === batch) setQueue([]);
-    }, 4000);
-  }
-
-  function upload(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files) uploadFiles(e.target.files);
-  }
-
-  function openPicker() {
-    inputRef.current?.click();
   }
 
   function startEditNote(file: FileRow) {
@@ -287,8 +220,6 @@ export default function FilesPage() {
 
   return (
     <>
-      <input ref={inputRef} type="file" multiple className="hidden" onChange={upload} disabled={uploading} />
-
       <PageHeader
         title="ไฟล์"
         subtitle={
@@ -300,17 +231,13 @@ export default function FilesPage() {
         }
         actions={
           tab === "general" ? (
-            <button
-              className="btn-primary inline-flex items-center gap-2 px-4 py-2"
-              onClick={openPicker}
-              disabled={uploading}
-            >
+            <a href="#upload-zone" className="btn-primary inline-flex items-center gap-2 px-4 py-2">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M8 11V3M5 6l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M3 13h10" strokeLinecap="round" />
               </svg>
-              {uploading ? "กำลังอัปโหลด..." : "อัปโหลดไฟล์"}
-            </button>
+              อัปโหลดไฟล์
+            </a>
           ) : undefined
         }
       />
@@ -341,94 +268,12 @@ export default function FilesPage() {
         <>
 
       {/* Upload zone */}
-      <div className="card mb-5">
-        <label className="label">หมายเหตุสำหรับไฟล์ชุดนี้ (ไม่บังคับ)</label>
-        <CreatableSelect
-          value={note}
-          onChange={setNote}
-          options={noteOptions}
-          placeholder="เลือกหรือพิมพ์หมายเหตุใหม่..."
-          disabled={uploading}
-          className="mb-3 max-w-md"
+      <div id="upload-zone" className="card mb-5 scroll-mt-6">
+        <UploadZone
+          noteOptions={noteOptions}
+          onUploaded={load}
+          onResult={handleUploadResult}
         />
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={openPicker}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              openPicker();
-            }
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragging(false);
-            if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
-          }}
-          className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors focus:outline-none focus-visible:border-blue-500 ${
-            dragging ? "border-blue-500 bg-blue-50" : "border-neutral-300 bg-neutral-50 hover:border-neutral-400"
-          } ${uploading ? "pointer-events-none opacity-60" : ""}`}
-        >
-          <svg
-            width="28"
-            height="28"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            className="text-neutral-400"
-          >
-            <path d="M12 16V4M8 8l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" strokeLinecap="round" />
-          </svg>
-          <p className="text-sm font-medium text-neutral-700">
-            {uploading ? "กำลังอัปโหลด..." : dragging ? "วางไฟล์ที่นี่" : "ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์"}
-          </p>
-          <p className="text-xs text-neutral-500">รองรับหลายไฟล์พร้อมกัน</p>
-        </div>
-
-        {queue.length > 0 && (
-          <ul className="mt-3 space-y-1.5">
-            {queue.map((q) => (
-              <li key={q.id} className="flex items-center gap-2 text-xs">
-                <span
-                  className={`inline-flex h-4 w-4 shrink-0 items-center justify-center ${
-                    q.status === "done"
-                      ? "text-emerald-600"
-                      : q.status === "error"
-                        ? "text-red-600"
-                        : "text-blue-600"
-                  }`}
-                >
-                  {q.status === "uploading" ? (
-                    <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
-                      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.25" />
-                      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                    </svg>
-                  ) : q.status === "done" ? (
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M3 8.5L6.5 12L13 4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
-                    </svg>
-                  )}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-neutral-700">{q.name}</span>
-                <span className="shrink-0 text-neutral-500">
-                  {q.status === "uploading" ? "กำลังอัปโหลด" : q.status === "done" ? "สำเร็จ" : "ล้มเหลว"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
       {/* Search + filters */}
