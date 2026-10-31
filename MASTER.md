@@ -40,7 +40,8 @@ Single-user tool (the owner) used daily to:
 app/
   login/page.tsx              Email+password sign-in (better-auth)
    password/page.tsx           Change password (signed-in users)
-  (app)/page.tsx              Home landing: quick upload, main page cards, recent files
+  (app)/page.tsx              Home landing: quick upload, own/team upload history with direct downloads
+  (app)/upload-history.tsx    Home history client component: own/team split, direct download, new badges
   (app)/layout.tsx            Shell: desktop sidebar / mobile bottom nav
   (app)/clients/page.tsx      Client list: sortable, copy icons, expandable credential rows
   (app)/clients/[id]/page.tsx Client detail: edit info, credentials CRUD, files, tasks, delete

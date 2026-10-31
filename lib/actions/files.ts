@@ -49,6 +49,22 @@ export async function listFiles(): Promise<FileRow[]> {
   return rows.map(toRow);
 }
 
+/** Email → display name for staff uploaders (used on the home page). */
+export async function listUploaderNames(): Promise<Record<string, string>> {
+  await requireUser();
+  const rows = (await sql`select email, name from "user"`) as {
+    email: string | null;
+    name: string | null;
+  }[];
+  const names: Record<string, string> = {};
+  for (const row of rows) {
+    const email = (row.email ?? "").trim().toLowerCase();
+    if (!email) continue;
+    names[email] = (row.name ?? "").trim() || email;
+  }
+  return names;
+}
+
 export async function listClientFiles(clientId: string): Promise<FileRow[]> {
   await requireUser();
   const rows = await sql`select f.*, c.name as client_name from files f
