@@ -66,6 +66,7 @@ import {
 import { thaiBahtText } from "@/lib/thai-baht-text";
 import { maskEmail } from "@/lib/report-format";
 import { downloadStoredFile } from "@/lib/download";
+import { ToastStack, useToasts } from "@/components/toast";
 import ClientAvatar from "@/components/client-avatar";
 import ClientSelect from "@/components/client-select";
 import { contrastText, normalizeHex } from "@/lib/client-avatar";
@@ -176,6 +177,7 @@ export default function ReportsPage() {
   const [newAmount, setNewAmount] = useState("");
   const [newPaymentMethod, setNewPaymentMethod] = useState("");
   const [adding, setAdding] = useState(false);
+  const [showAddFiling, setShowAddFiling] = useState(false);
   const [copyingFrom, setCopyingFrom] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
   const [customFormCodes, setCustomFormCodes] = useState<string[]>([]);
@@ -200,6 +202,12 @@ export default function ReportsPage() {
   const pullSeqRef = useRef(0);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"brand" | "company" | "format" | "share">("brand");
+  const [confirmPrompt, setConfirmPrompt] = useState<{
+    message: string;
+    resolve: (value: boolean) => void;
+  } | null>(null);
+  const { toasts, push, dismiss } = useToasts();
   const [logoPath, setLogoPath] = useState<string | null>(null);
   const [logoFileName, setLogoFileName] = useState<string | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
@@ -238,10 +246,55 @@ export default function ReportsPage() {
   const [docsBusy, setDocsBusy] = useState(false);
   const docsInputRef = useRef<HTMLInputElement>(null);
 
+  function notify(message: string) {
+    push({ type: "error", message });
+  }
+
+  function askConfirm(message: string) {
+    return new Promise<boolean>((resolve) => {
+      setConfirmPrompt({ message, resolve });
+    });
+  }
+
+  function resolveConfirm(value: boolean) {
+    confirmPrompt?.resolve(value);
+    setConfirmPrompt(null);
+  }
+
+  useEffect(() => {
+    if (!confirmPrompt) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        confirmPrompt?.resolve(false);
+        setConfirmPrompt(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmPrompt]);
+
   // Never keep a revealed client address when switching clients.
   useEffect(() => {
     setShowClientEmail(false);
   }, [clientId]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setShowSettings(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showSettings]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closePreview();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewOpen]);
 
   async function refreshDocs(reportId = activeReportId) {
     if (!reportId) {
@@ -274,7 +327,7 @@ export default function ReportsPage() {
       }
       await refreshDocs();
     } catch (err) {
-      alert(`อัปโหลดเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`อัปโหลดเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setDocsBusy(false);
       if (docsInputRef.current) docsInputRef.current.value = "";
@@ -294,7 +347,7 @@ export default function ReportsPage() {
         next.map((d) => d.id)
       );
     } catch (err) {
-      alert(`จัดลำดับไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`จัดลำดับไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       await refreshDocs();
     }
   }
@@ -307,20 +360,20 @@ export default function ReportsPage() {
       await deleteReportDocument(doc.id);
       await refreshDocs();
     } catch (err) {
-      alert(`ลบเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     }
   }
 
   async function clearDocs() {
     if (!activeReportId || !docs.length) return;
-    if (!confirm(`ล้างเอกสารทั้งหมด ${docs.length} ไฟล์?`)) return;
+    if (!await askConfirm(`ล้างเอกสารทั้งหมด ${docs.length} ไฟล์?`)) return;
     setDocsBusy(true);
     try {
       for (const d of docs) await deleteR2Object(d.storage_path);
       await clearReportDocuments(activeReportId);
       await refreshDocs();
     } catch (err) {
-      alert(`ล้างเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ล้างเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setDocsBusy(false);
     }
@@ -391,12 +444,12 @@ export default function ReportsPage() {
   }
 
   async function removePayMethodPreset(code: string) {
-    if (!confirm(`ลบวิธีชำระ "${code}" ออกจากตัวเลือก?`)) return;
+    if (!await askConfirm(`ลบวิธีชำระ "${code}" ออกจากตัวเลือก?`)) return;
     setCustomPayMethods((prev) => prev.filter((p) => p !== code));
     try {
       await deleteCustomPaymentMethodAction(code);
     } catch (err) {
-      alert(`ลบไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       setCustomPayMethods(await listCustomPaymentMethods());
     }
   }
@@ -669,10 +722,10 @@ export default function ReportsPage() {
         firmAddress: firmAddress.trim() || null,
       });
       if (!res.ok) {
-        alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
+        notify(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
       }
     } catch (error) {
-      alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      notify(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     } finally {
       setBrandingBusy(false);
     }
@@ -682,10 +735,10 @@ export default function ReportsPage() {
     try {
       const res = await saveAppSettings(path, fileName);
       if (!res.ok) {
-        alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
+        notify(`บันทึกการตั้งค่าไม่สำเร็จ: ${res.error}`);
       }
     } catch (error) {
-      alert(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      notify(`บันทึกการตั้งค่าไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     }
   }
 
@@ -699,14 +752,14 @@ export default function ReportsPage() {
       await saveSettingsLogo(path, file.name);
       if (old && old !== path) deleteR2Object(old);
     } catch (err) {
-      alert(`อัปโหลดโลโก้ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`อัปโหลดโลโก้ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setLogoBusy(false);
     }
   }
 
   async function handleLogoRemove() {
-    if (!logoPath || !confirm("ลบโลโก้ออกจากรายงาน?")) return;
+    if (!logoPath || !await askConfirm("ลบโลโก้ออกจากรายงาน?")) return;
     setLogoBusy(true);
     try {
       await deleteR2Object(logoPath);
@@ -796,13 +849,13 @@ export default function ReportsPage() {
     try {
       const res = await copyRoundIntoReport(pullReportId, activeReportId);
       if (!res.ok) {
-        alert(res.error);
+        notify(res.error);
         return;
       }
       await loadFilings();
       setStatus(`ดึงรายการ ${res.filings.length} รายการเข้าสู่รอบนี้แล้ว`);
     } catch (err) {
-      alert(`ดึงรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ดึงรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setPullBusy(false);
     }
@@ -813,12 +866,12 @@ export default function ReportsPage() {
     if (!clientId) return;
     const latest = reports[reports.length - 1];
     if (!latest) {
-      alert(`ไม่พบรอบรายงานของ ${periodToThai(period)} สำหรับลูกค้านี้`);
+      notify(`ไม่พบรอบรายงานของ ${periodToThai(period)} สำหรับลูกค้านี้`);
       return;
     }
     if (
       filings.length &&
-      !confirm(
+      !await askConfirm(
         `มีรายการอยู่แล้ว ${filings.length} รายการ — คัดลอกจาก ${latest.label ?? `ครั้งที่ ${latest.seq}`} เป็นรอบใหม่หรือไม่? (รายการเดิมจะไม่ถูกลบ)`
       )
     )
@@ -827,7 +880,7 @@ export default function ReportsPage() {
     try {
       const inserted = await copyReportToNewIssue(latest.id, clientId, period);
       if (!inserted.length) {
-        alert(`ไม่พบรายการของ ${latest.label ?? `ครั้งที่ ${latest.seq}`}`);
+        notify(`ไม่พบรายการของ ${latest.label ?? `ครั้งที่ ${latest.seq}`}`);
         return;
       }
       const rows = await listMonthlyReports(clientId, period);
@@ -838,7 +891,7 @@ export default function ReportsPage() {
         if (f.payment_method) rememberPaymentMethod(f.payment_method);
       });
     } catch (err) {
-      alert(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`คัดลอกรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setCopyingFrom(false);
     }
@@ -846,7 +899,7 @@ export default function ReportsPage() {
 
   async function addFiling() {
     if (!clientId || !newFormCode.trim()) {
-      alert("กรอกรหัสแบบฟอร์มก่อน เช่น ภ.พ.30");
+      notify("กรอกรหัสแบบฟอร์มก่อน เช่น ภ.พ.30");
       return;
     }
     if (reportLocked) return;
@@ -875,7 +928,7 @@ export default function ReportsPage() {
       setNewAmount("");
       setNewPaymentMethod("");
     } catch (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      notify(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     } finally {
       setAdding(false);
     }
@@ -888,7 +941,7 @@ export default function ReportsPage() {
     try {
       await patchFilingAction(id, patch);
     } catch (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      notify(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
       loadFilings();
       return;
     }
@@ -910,7 +963,7 @@ export default function ReportsPage() {
         next.map((f, idx) => patchFilingAction(f.id, { sort_order: idx + 1 }))
       );
     } catch (error) {
-      alert(`จัดลำดับไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      notify(`จัดลำดับไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
       loadFilings();
     }
   }
@@ -965,7 +1018,7 @@ export default function ReportsPage() {
       );
       await loadFilings();
     } catch (err) {
-      alert(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setQrFilingId(null);
     }
@@ -973,13 +1026,13 @@ export default function ReportsPage() {
 
   async function removeFilingQr(att: Attachment) {
     if (reportLocked) return;
-    if (!confirm("ลบ QR ของรายการนี้?")) return;
+    if (!await askConfirm("ลบ QR ของรายการนี้?")) return;
     try {
       await deleteAttachment(att.id);
       await deleteR2Object(att.storage_path);
       await loadFilings();
     } catch (err) {
-      alert(`ลบ QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบ QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -1007,7 +1060,7 @@ export default function ReportsPage() {
       );
       await loadFilings();
     } catch (err) {
-      alert(`อัปโหลดสลิปไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`อัปโหลดสลิปไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setSlipFilingId(null);
     }
@@ -1015,13 +1068,13 @@ export default function ReportsPage() {
 
   async function removeFilingSlip(att: Attachment) {
     if (reportLocked) return;
-    if (!confirm("ลบสลิปของรายการนี้?")) return;
+    if (!await askConfirm("ลบสลิปของรายการนี้?")) return;
     try {
       await deleteAttachment(att.id);
       await deleteR2Object(att.storage_path);
       await loadFilings();
     } catch (err) {
-      alert(`ลบสลิปไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบสลิปไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -1031,11 +1084,11 @@ export default function ReportsPage() {
       ["application/pdf", "image/png", "image/jpeg"].includes(file.type) ||
       /\.(pdf|png|jpe?g)$/i.test(file.name);
     if (!allowedType) {
-      alert("แนบเอกสารได้เฉพาะไฟล์ PDF, JPG หรือ PNG");
+      notify("แนบเอกสารได้เฉพาะไฟล์ PDF, JPG หรือ PNG");
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
-      alert("ไฟล์เอกสารต้องมีขนาดไม่เกิน 10 MB");
+      notify("ไฟล์เอกสารต้องมีขนาดไม่เกิน 10 MB");
       return;
     }
     setDocFilingId(filing.id);
@@ -1060,7 +1113,7 @@ export default function ReportsPage() {
       );
       await loadFilings();
     } catch (err) {
-      alert(`อัปโหลดเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`อัปโหลดเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setDocFilingId(null);
     }
@@ -1068,18 +1121,18 @@ export default function ReportsPage() {
 
   async function removeFilingDocument(att: Attachment) {
     if (reportLocked) return;
-    if (!confirm("ลบเอกสารแนบของรายการนี้?")) return;
+    if (!await askConfirm("ลบเอกสารแนบของรายการนี้?")) return;
     try {
       await deleteAttachment(att.id);
       await deleteR2Object(att.storage_path);
       await loadFilings();
     } catch (err) {
-      alert(`ลบเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบเอกสารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     }
   }
 
   async function deleteFiling(filing: Filing) {
-    if (!confirm(`ลบรายการ "${filing.form_code}" ?`)) return;
+    if (!await askConfirm(`ลบรายการ "${filing.form_code}" ?`)) return;
     await deleteFilingAction(filing.id);
     loadFilings();
   }
@@ -1087,7 +1140,7 @@ export default function ReportsPage() {
   async function clearAllFilings() {
     if (!clientId || !activeReportId || !filings.length || reportLocked) return;
     if (
-      !confirm(
+      !await askConfirm(
         `ลบรายการทั้งหมด ${filings.length} รายการ ของ ${activeReport?.label ?? periodToThai(period)} ?\nไม่สามารถกู้คืนได้`
       )
     )
@@ -1097,7 +1150,7 @@ export default function ReportsPage() {
       await clearFilings(activeReportId);
       loadFilings();
     } catch (err) {
-      alert(`ลบรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบรายการไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setClearingAll(false);
     }
@@ -1109,7 +1162,7 @@ export default function ReportsPage() {
     try {
       const res = await createMonthlyReport(clientId, period, seqInput ?? null);
       if (!res.ok) {
-        alert(`เพิ่มรอบรายงานไม่สำเร็จ: ${res.error}`);
+        notify(`เพิ่มรอบรายงานไม่สำเร็จ: ${res.error}`);
         return;
       }
       setReports((prev) =>
@@ -1117,7 +1170,7 @@ export default function ReportsPage() {
       );
       setActiveReportId(res.report.id);
     } catch (err) {
-      alert(`เพิ่มรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`เพิ่มรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setReportBusy(false);
     }
@@ -1126,16 +1179,16 @@ export default function ReportsPage() {
   async function removeReportRound(report: MonthlyReport) {
     if (!clientId) return;
     if (reports.length <= 1) {
-      alert("ต้องมีอย่างน้อย 1 รอบรายงาน");
+      notify("ต้องมีอย่างน้อย 1 รอบรายงาน");
       return;
     }
-    if (!confirm(`ลบ ${report.label ?? `ครั้งที่ ${report.seq}`} และรายการทั้งหมดในรอบนี้?`)) return;
+    if (!await askConfirm(`ลบ ${report.label ?? `ครั้งที่ ${report.seq}`} และรายการทั้งหมดในรอบนี้?`)) return;
     setReportBusy(true);
     try {
       await deleteMonthlyReport(report.id);
       await loadReports();
     } catch (err) {
-      alert(`ลบรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบรอบรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setReportBusy(false);
     }
@@ -1145,13 +1198,13 @@ export default function ReportsPage() {
     if (!clientId) return;
     const label = report.label ?? `ครั้งที่ ${report.seq}`;
     if (report.status === "issued") {
-      if (!confirm(`เปิดแก้ไข ${label} อีกครั้ง?`)) return;
+      if (!await askConfirm(`เปิดแก้ไข ${label} อีกครั้ง?`)) return;
       setReportBusy(true);
       try {
         await reopenMonthlyReport(report.id);
         await loadReports();
       } catch (err) {
-        alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+        notify(`เปลี่ยนสถานะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       } finally {
         setReportBusy(false);
       }
@@ -1159,7 +1212,7 @@ export default function ReportsPage() {
     }
 
     if (
-      !confirm(
+      !await askConfirm(
         `ออกรายงาน ${report.report_no ?? label} — จะล็อกไม่ให้แก้ไข และบันทึกไฟล์ PDF ลงประวัติ ใช่หรือไม่?`
       )
     )
@@ -1170,7 +1223,7 @@ export default function ReportsPage() {
       await issueMonthlyReport(report.id);
       await loadReports();
     } catch (err) {
-      alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`เปลี่ยนสถานะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       setReportBusy(false);
       return;
     }
@@ -1195,7 +1248,7 @@ export default function ReportsPage() {
 
   async function addBankAccount() {
     if (!bankLabel.trim() || !bankName.trim() || !bankNo.trim() || !bankAcctName.trim()) {
-      alert("กรอก label, ธนาคาร, เลขบัญชี และชื่อบัญชีให้ครบ");
+      notify("กรอก label, ธนาคาร, เลขบัญชี และชื่อบัญชีให้ครบ");
       return;
     }
     try {
@@ -1207,7 +1260,7 @@ export default function ReportsPage() {
         promptpay_id: bankPromptpay.trim() || null,
       });
     } catch (error) {
-      alert(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      notify(`บันทึกไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
       return;
     }
     setBankLabel("");
@@ -1219,7 +1272,7 @@ export default function ReportsPage() {
   }
 
   async function deleteBankAccount(id: string) {
-    if (!confirm("ลบบัญชีนี้? รายการที่ผูกไว้จะตัดการเชื่อมโยง")) return;
+    if (!await askConfirm("ลบบัญชีนี้? รายการที่ผูกไว้จะตัดการเชื่อมโยง")) return;
     const bank = bankAccounts.find((b) => b.id === id);
     if (bank?.qr_path) deleteR2Object(bank.qr_path);
     if (bank?.logo_path) deleteR2Object(bank.logo_path);
@@ -1241,7 +1294,7 @@ export default function ReportsPage() {
       });
       if (bank?.qr_path && bank.qr_path !== path) deleteR2Object(bank.qr_path);
     } catch (err) {
-      alert(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`อัปโหลด QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       reloadBanks();
     } finally {
       setQrBusyId(null);
@@ -1250,7 +1303,7 @@ export default function ReportsPage() {
 
   async function handleBankQrRemove(bankId: string) {
     const bank = bankAccounts.find((b) => b.id === bankId);
-    if (!bank?.qr_path || !confirm("ลบ QR ของบัญชีนี้?")) return;
+    if (!bank?.qr_path || !await askConfirm("ลบ QR ของบัญชีนี้?")) return;
     setQrBusyId(bankId);
     try {
       setBankAccounts((prev) =>
@@ -1260,7 +1313,7 @@ export default function ReportsPage() {
       if (!res.ok) throw new Error(res.error);
       deleteR2Object(bank.qr_path);
     } catch (err) {
-      alert(`ลบ QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบ QR ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       reloadBanks();
     } finally {
       setQrBusyId(null);
@@ -1297,7 +1350,7 @@ export default function ReportsPage() {
       });
       if (oldPath && oldPath !== path) deleteR2Object(oldPath);
     } catch (err) {
-      alert(`อัปโหลดโลโก้ธนาคารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`อัปโหลดโลโก้ธนาคารไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       reloadBanks();
     } finally {
       setLogoBusyId(null);
@@ -1309,7 +1362,7 @@ export default function ReportsPage() {
     const oldPath = slot === "bottom" ? bank?.logo_bottom_path : bank?.logo_path;
     if (
       !oldPath ||
-      !confirm(`ลบโลโก้ ${slot === "bottom" ? "2" : "1"} ของบัญชีนี้?`)
+      !await askConfirm(`ลบโลโก้ ${slot === "bottom" ? "2" : "1"} ของบัญชีนี้?`)
     )
       return;
     setLogoBusyId(`${bankId}:${slot}`);
@@ -1327,7 +1380,7 @@ export default function ReportsPage() {
       if (!res.ok) throw new Error(res.error);
       deleteR2Object(oldPath);
     } catch (err) {
-      alert(`ลบโลโก้ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ลบโลโก้ไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       reloadBanks();
     } finally {
       setLogoBusyId(null);
@@ -1501,7 +1554,7 @@ export default function ReportsPage() {
       });
       setPreviewOpen(true);
     } catch (err) {
-      alert(`ดูตัวอย่างไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ดูตัวอย่างไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setPreviewBusy(false);
     }
@@ -1523,7 +1576,7 @@ export default function ReportsPage() {
         fileName: file.file_name,
       });
     } catch (err) {
-      alert(`ดาวน์โหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ดาวน์โหลดไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setDownloadingId(null);
     }
@@ -1538,12 +1591,12 @@ export default function ReportsPage() {
       setStatus("กำลังเตรียมไฟล์ PDF…");
       const ready = await ensureArchivedPdf();
       if (!ready) {
-        alert("ยังสร้างไฟล์ PDF ไม่สำเร็จ — กรุณากด 'ดาวน์โหลด PDF' ก่อนสร้างลิงก์");
+        notify("ยังสร้างไฟล์ PDF ไม่สำเร็จ — กรุณากด 'ดาวน์โหลด PDF' ก่อนสร้างลิงก์");
         return;
       }
       const res = await createReportShareLink(activeReportId, 7);
       if (!res.ok) {
-        alert(res.error);
+        notify(res.error);
         return;
       }
       setShare(res.share);
@@ -1552,19 +1605,19 @@ export default function ReportsPage() {
         setStatus("สร้างลิงก์แชร์แล้ว (คัดลอกไปวางใน LINE ได้เลย)");
       }
     } catch (error) {
-      alert(`สร้างลิงก์ไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      notify(`สร้างลิงก์ไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     } finally {
       setShareBusy(false);
     }
   }
 
   async function revokeShareLink() {
-    if (!activeReportId || !confirm("ยกเลิกลิงก์แชร์นี้?")) return;
+    if (!activeReportId || !await askConfirm("ยกเลิกลิงก์แชร์นี้?")) return;
     setShareBusy(true);
     try {
       const res = await revokeReportShareLink(activeReportId);
       if (!res.ok) {
-        alert(res.error);
+        notify(res.error);
         return;
       }
       setShare(null);
@@ -1577,16 +1630,16 @@ export default function ReportsPage() {
     if (!activeReportId || !selectedClient || !reportLocked) return;
     const to = selectedClient.email?.trim();
     if (!to) {
-      alert("ลูกค้ายังไม่มีอีเมล กรุณาเพิ่มที่หน้าลูกค้าก่อน");
+      notify("ลูกค้ายังไม่มีอีเมล กรุณาเพิ่มที่หน้าลูกค้าก่อน");
       return;
     }
     const remaining = emailQuota?.remaining ?? 0;
     if (emailQuota && remaining <= 0) {
-      alert(`ครบโควตาส่งอีเมล ${emailQuota.limit} ฉบับ/เดือนแล้ว`);
+      notify(`ครบโควตาส่งอีเมล ${emailQuota.limit} ฉบับ/เดือนแล้ว`);
       return;
     }
     const displayTo = showClientEmail ? to : maskEmail(to);
-    const ok = confirm(
+    const ok = await askConfirm(
       `ส่งรายงานทางอีเมลถึง:\n${displayTo}\n\nคงเหลือโควตาเดือนนี้ ${remaining}/${
         emailQuota?.limit ?? 30
       } ฉบับ\n\nยืนยันการส่ง?`
@@ -1599,7 +1652,7 @@ export default function ReportsPage() {
       // Ensure the archived PDF exists before emailing (the send is attachment-only).
       const ready = await ensureArchivedPdf();
       if (!ready) {
-        alert("ยังสร้างไฟล์ PDF ไม่สำเร็จ — กรุณากด 'ดาวน์โหลด PDF' ก่อนส่งอีเมล");
+        notify("ยังสร้างไฟล์ PDF ไม่สำเร็จ — กรุณากด 'ดาวน์โหลด PDF' ก่อนส่งอีเมล");
         return;
       }
       const res = await fetch("/api/reports/email", {
@@ -1612,7 +1665,7 @@ export default function ReportsPage() {
         remaining?: number;
       };
       if (!res.ok) {
-        alert(`ส่งอีเมลไม่สำเร็จ: ${data.error ?? res.statusText}`);
+        notify(`ส่งอีเมลไม่สำเร็จ: ${data.error ?? res.statusText}`);
         return;
       }
       setStatus(
@@ -1622,7 +1675,7 @@ export default function ReportsPage() {
       await reloadEmailLogs();
       await reloadRoundEmailCounts();
     } catch (error) {
-      alert(`ส่งอีเมลไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
+      notify(`ส่งอีเมลไม่สำเร็จ: ${error instanceof Error ? error.message : error}`);
     } finally {
       setEmailBusy(false);
     }
@@ -1716,7 +1769,7 @@ export default function ReportsPage() {
   async function generatePdf() {
     if (!selectedClient || !activeReportId || !filings.length) return;
     if (
-      !confirm(
+      !await askConfirm(
         `สร้างรายงาน ${periodToThai(period)} ${activeReport?.label ?? ""} ของ "${selectedClient.name}" (${filings.length} รายการ + ${docs.length} เอกสาร)?`
       )
     )
@@ -1727,121 +1780,239 @@ export default function ReportsPage() {
       await buildAndArchiveReportPdf({ download: true });
       setStatus("สร้างรายงานสำเร็จ — ดาวน์โหลดแล้ว และบันทึกสำเนาในประวัติไฟล์รายงานแล้ว");
     } catch (err) {
-      alert(`สร้างรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`สร้างรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
     } finally {
       setGenerating(false);
     }
   }
 
+  function handlePrimaryAction() {
+    if (!filings.length) {
+      setShowAddFiling(true);
+      requestAnimationFrame(() => {
+        document
+          .getElementById("add-filing")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      return;
+    }
+    if (reportLocked) {
+      void generatePdf();
+      return;
+    }
+    if (activeReport) void toggleReportIssued(activeReport);
+  }
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <h1 className="text-lg font-bold">รายงานรายเดือน</h1>
-        <div className="flex items-center gap-1">
-          <button
-            className="btn px-2.5"
-            onClick={() => setPeriod((p) => shiftPeriod(p, -1))}
-            aria-label="เดือนก่อนหน้า"
-          >
-            ←
-          </button>
-          <label
-            className="relative inline-flex cursor-pointer items-center rounded-lg px-2 py-0.5 hover:bg-neutral-100"
-            title="เลือกเดือน"
-          >
-            <span className="text-xl font-bold tracking-tight text-neutral-900 sm:text-2xl">
-              {periodToThai(period)}
-            </span>
-            <input
-              type="month"
-              value={period}
-              onChange={(e) => e.target.value && setPeriod(e.target.value)}
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              aria-label="เลือกเดือน"
-            />
-          </label>
-          <button
-            className="btn px-2.5"
-            onClick={() => setPeriod((p) => shiftPeriod(p, 1))}
-            aria-label="เดือนถัดไป"
-          >
-            →
-          </button>
-          <button
-            className="btn ml-1 px-2.5"
-            title="ตั้งค่ารายงาน (โลโก้บริษัท)"
-            aria-label="ตั้งค่ารายงาน"
-            onClick={() => setShowSettings(true)}
-          >
-            <GearIcon />
-          </button>
-        </div>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-5 pb-20 lg:pb-0">
+      <header className="sticky top-0 z-30 -mx-4 border-b border-neutral-200 bg-[#fafafa]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 print:static">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight text-neutral-900">
+                รายงานรายเดือน
+              </h1>
+              {activeReport && (
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    reportLocked
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-neutral-100 text-neutral-600"
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      reportLocked ? "bg-emerald-500" : "bg-neutral-400"
+                    }`}
+                  />
+                  {activeReport.label ?? `ครั้งที่ ${activeReport.seq}`} ·{" "}
+                  {reportLocked ? "ออกแล้ว" : "ฉบับร่าง"}
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              จัดทำรายการ ออกรายงาน และส่งให้ลูกค้าในที่เดียว
+            </p>
+          </div>
 
-      <div className="card max-w-xl space-y-3">
-        <div>
-          <label className="label">ลูกค้า</label>
-          <ClientSelect
-            clients={clients}
-            value={clientId}
-            onChange={setClientId}
-          />
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-lg border border-neutral-200 bg-white p-0.5 shadow-sm">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+                onClick={() => setPeriod((p) => shiftPeriod(p, -1))}
+                aria-label="เดือนก่อนหน้า"
+              >
+                ←
+              </button>
+              <label
+                className="relative inline-flex cursor-pointer items-center rounded-md px-2 py-1.5 hover:bg-neutral-100"
+                title="เลือกเดือน"
+              >
+                <span className="text-sm font-semibold whitespace-nowrap text-neutral-900">
+                  {periodToThai(period)}
+                </span>
+                <input
+                  type="month"
+                  value={period}
+                  onChange={(e) => e.target.value && setPeriod(e.target.value)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  aria-label="เลือกเดือน"
+                />
+              </label>
+              <button
+                type="button"
+                className="rounded-md px-2 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+                onClick={() => setPeriod((p) => shiftPeriod(p, 1))}
+                aria-label="เดือนถัดไป"
+              >
+                →
+              </button>
+            </div>
+            <button
+              type="button"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-500 shadow-sm hover:bg-neutral-50 hover:text-neutral-900"
+              title="ตั้งค่ารายงาน"
+              aria-label="ตั้งค่ารายงาน"
+              onClick={() => {
+                setSettingsTab("brand");
+                setShowSettings(true);
+              }}
+            >
+              <GearIcon />
+            </button>
+          </div>
         </div>
 
-        {selectedClient && (
-          <div className="flex items-center gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-            <ClientAvatar
-              name={selectedClient.name}
-              text={selectedClient.avatar_text}
-              color={selectedClient.avatar_color}
-              size="lg"
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="w-full sm:w-80">
+            <ClientSelect
+              clients={clients}
+              value={clientId}
+              onChange={setClientId}
             />
-            <div className="min-w-0">
-              <div className="truncate font-medium text-neutral-900">{selectedClient.name}</div>
-              <div className="mt-0.5 truncate text-xs text-neutral-500">
-                {[
-                  selectedClient.tax_id && `เลขผู้เสียภาษี: ${selectedClient.tax_id}`,
-                  selectedClient.phone,
-                  selectedClient.email,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || "ยังไม่มีข้อมูลติดต่อ"}
+          </div>
+          {selectedClient ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-sm">
+              <ClientAvatar
+                name={selectedClient.name}
+                text={selectedClient.avatar_text}
+                color={selectedClient.avatar_color}
+                size="sm"
+              />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-neutral-900">
+                  {selectedClient.name}
+                </div>
+                <div className="truncate text-xs text-neutral-500">
+                  {[
+                    selectedClient.tax_id && `เลขผู้เสียภาษี ${selectedClient.tax_id}`,
+                    selectedClient.email,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "ยังไม่มีข้อมูลติดต่อ"}
+                </div>
               </div>
             </div>
-            {activeReport && (
-              <span className="ml-auto shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-medium whitespace-nowrap text-neutral-600 ring-1 ring-neutral-200 ring-inset">
-                {activeReport.label ?? `ครั้งที่ ${activeReport.seq}`}
-                <span className="text-neutral-400">
-                  {" · "}
-                  {activeReport.status === "issued" ? "ออกแล้ว" : "ฉบับร่าง"}
-                </span>
-              </span>
-            )}
-          </div>
-        )}
-      </div>
+          ) : (
+            <p className="text-xs text-neutral-500">
+              เลือกหรือค้นหาลูกค้าเพื่อเริ่มจัดทำรายงาน
+            </p>
+          )}
+        </div>
+      </header>
 
       {status && (
-        <p className="text-xs font-medium text-green-700">{status}</p>
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            className="mt-0.5 shrink-0"
+            aria-hidden
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 11v5M12 8h.01" strokeLinecap="round" />
+          </svg>
+          <span className="min-w-0 flex-1">{status}</span>
+          <button
+            type="button"
+            className="shrink-0 text-blue-500 hover:text-blue-700"
+            onClick={() => setStatus("")}
+            aria-label="ปิดข้อความ"
+          >
+            ×
+          </button>
+        </div>
       )}
 
       {!clientId ? (
-        <p className="text-sm text-neutral-500">
-          เลือกลูกค้าและเดือนเพื่อจัดทำรายการและสร้างรายงาน PDF
-        </p>
+        <div className="rounded-xl border border-dashed border-neutral-300 bg-white px-6 py-14 text-center">
+          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              aria-hidden
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M8 17v-3M12 17v-5M16 17v-2" />
+            </svg>
+          </span>
+          <h2 className="mt-4 text-base font-semibold text-neutral-900">
+            เลือกลูกค้าเพื่อเริ่มจัดทำรายงาน
+          </h2>
+          <p className="mx-auto mt-1 max-w-md text-sm text-neutral-500">
+            เลือกเดือนและลูกค้าด้านบน จากนั้นเพิ่มรายการภาษี เอกสารแนบ
+            และออกรายงานให้ลูกค้า
+          </p>
+          <div className="mx-auto mt-6 grid max-w-2xl gap-3 text-left sm:grid-cols-3">
+            {[
+              ["1", "เลือกลูกค้า & เดือน", "กำหนดรอบระยะเวลาที่ต้องการจัดทำ"],
+              ["2", "เพิ่มรายการ & เอกสาร", "กรอกงานภาษีและแนบไฟล์ตามลำดับ"],
+              ["3", "ออกรายงาน & ส่ง", "ดาวน์โหลด แชร์ลิงก์ หรือส่งอีเมล"],
+            ].map(([step, title, detail]) => (
+              <div
+                key={step}
+                className="rounded-lg border border-neutral-200 bg-neutral-50/60 p-3"
+              >
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs font-semibold text-neutral-700 ring-1 ring-neutral-200">
+                  {step}
+                </span>
+                <div className="mt-2 text-sm font-medium text-neutral-800">{title}</div>
+                <div className="mt-0.5 text-xs leading-snug text-neutral-500">{detail}</div>
+              </div>
+            ))}
+          </div>
+        </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-          <div className="min-w-0 space-y-6">
+        <div className="flex flex-col gap-5 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+          <div className="order-last min-w-0 space-y-5 lg:order-none lg:col-start-1 lg:row-start-1">
           <WorkflowStepper
             filled={filings.length > 0}
             issued={reportLocked}
             delivered={Boolean(share)}
           />
           <section className="max-w-4xl">
-            <div className="card space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm font-medium">รอบรายงาน</span>
-                <span className="inline-flex items-center gap-1">
+            <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-sm font-semibold text-neutral-900">รอบรายงาน</div>
+                  <p className="mt-0.5 text-xs text-neutral-500">
+                    เลือกครั้งที่ต้องการจัดทำ หรือสร้างรอบใหม่
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
                   <button
                     className="btn text-xs"
                     title={`คัดลอกจากรอบล่าสุด (${reports[reports.length - 1]?.label ?? "ครั้งที่ 1"}) เป็นรอบใหม่`}
@@ -1873,10 +2044,13 @@ export default function ReportsPage() {
                   >
                     + เพิ่มรอบ
                   </button>
-                </span>
+                </div>
               </div>
               {reportsLoading ? (
-                <span className="text-xs text-neutral-500">กำลังโหลด...</span>
+                <div className="flex flex-wrap gap-2" aria-hidden>
+                  <div className="h-14 w-40 animate-pulse rounded-lg bg-neutral-100" />
+                  <div className="h-14 w-40 animate-pulse rounded-lg bg-neutral-100" />
+                </div>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {reports.map((r) => {
@@ -1984,181 +2158,242 @@ export default function ReportsPage() {
                   )}
                 </div>
               </div>
-              <div className="flex flex-wrap items-end gap-2 border-t border-neutral-200 pt-3 text-xs">
-                <div>
-                  <label className="label">ดึงรายการจากเดือน</label>
-                  <input
-                    type="month"
-                    className="input w-auto !py-1 text-xs"
-                    value={pullPeriod || defaultPullPeriod}
-                    max={period}
-                    onChange={(e) => setPullPeriod(e.target.value)}
-                    disabled={reportLocked}
-                  />
-                </div>
-                <div>
-                  <label className="label">รอบต้นทาง</label>
-                  <select
-                    className="input w-auto !py-1 text-xs"
-                    value={pullReportId}
-                    onChange={(e) => setPullReportId(e.target.value)}
-                    disabled={reportLocked || !pullRounds.length}
+              <details className="border-t border-neutral-200 pt-3 text-xs">
+                <summary className="cursor-pointer font-medium text-neutral-600 hover:text-neutral-900">
+                  ขั้นสูง — ดึงรายการจากเดือนอื่น
+                </summary>
+                <div className="mt-3 flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="label">ดึงรายการจากเดือน</label>
+                    <input
+                      type="month"
+                      className="input w-auto !py-1 text-xs"
+                      value={pullPeriod || defaultPullPeriod}
+                      max={period}
+                      onChange={(e) => setPullPeriod(e.target.value)}
+                      disabled={reportLocked}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">รอบต้นทาง</label>
+                    <select
+                      className="input w-auto !py-1 text-xs"
+                      value={pullReportId}
+                      onChange={(e) => setPullReportId(e.target.value)}
+                      disabled={reportLocked || !pullRounds.length}
+                    >
+                      {!pullRounds.length && <option value="">— ไม่มีรอบ —</option>}
+                      {pullRounds.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.label ?? `ครั้งที่ ${r.seq}`}
+                          {r.status === "issued" ? " (ออกแล้ว)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn text-xs"
+                    onClick={pullRoundIntoCurrent}
+                    disabled={pullBusy || !pullReportId || reportLocked || Boolean(filings.length)}
+                    title={
+                      filings.length
+                        ? "รอบนี้มีรายการอยู่แล้ว — ดึงได้เฉพาะรอบที่ยังว่าง"
+                        : "ดึงรายการจากรอบต้นทางเข้าสู่รอบนี้ (ยอดเงินเป็น 0)"
+                    }
                   >
-                    {!pullRounds.length && <option value="">— ไม่มีรอบ —</option>}
-                    {pullRounds.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.label ?? `ครั้งที่ ${r.seq}`}
-                        {r.status === "issued" ? " (ออกแล้ว)" : ""}
-                      </option>
-                    ))}
-                  </select>
+                    {pullBusy ? "กำลังดึง…" : "ดึงเข้าสู่รอบนี้"}
+                  </button>
+                  <span className="text-neutral-500">
+                    {filings.length
+                      ? "รอบนี้มีรายการแล้ว"
+                      : "ใช้ได้เมื่อรอบนี้ยังว่าง — ยอดเงินจะถูกตั้งเป็น 0"}
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  className="btn text-xs"
-                  onClick={pullRoundIntoCurrent}
-                  disabled={pullBusy || !pullReportId || reportLocked || Boolean(filings.length)}
-                  title={
-                    filings.length
-                      ? "รอบนี้มีรายการอยู่แล้ว — ดึงได้เฉพาะรอบที่ยังว่าง"
-                      : "ดึงรายการจากรอบต้นทางเข้าสู่รอบนี้ (ยอดเงินเป็น 0)"
-                  }
-                >
-                  {pullBusy ? "กำลังดึง…" : "ดึงเข้าสู่รอบนี้"}
-                </button>
-                <span className="text-neutral-500">
-                  {filings.length
-                    ? "รอบนี้มีรายการแล้ว"
-                    : "ใช้ได้เมื่อรอบนี้ยังว่าง — ยอดเงินจะถูกตั้งเป็น 0"}
-                </span>
-              </div>
+              </details>
             </div>
           </section>
 
           <section className="max-w-4xl space-y-3">
-            <h2 className="font-medium">
-              ส่วนที่ 1 — ปก: รายการงานภาษี ประจำเดือน {periodToThai(period)}
-              {activeReport?.label ? ` (${activeReport.label})` : ""}
-            </h2>
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-neutral-900">
+                  ส่วนที่ 1 · รายการงานภาษี
+                </h2>
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  ประจำเดือน {periodToThai(period)}
+                  {activeReport?.label ? ` · ${activeReport.label}` : ""}
+                </p>
+              </div>
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-600">
+                {filings.length} รายการ
+              </span>
+            </div>
 
             {reportLocked && (
-              <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 รอบนี้ {activeReport?.report_no} ออกแล้ว — เปิดแก้ไขก่อนเพื่อเพิ่ม/แก้รายการ
                 หรือสร้างรอบใหม่
               </p>
             )}
 
-            <div className="card grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[150px_135px_minmax(0,1.7fr)_170px_auto] lg:items-end lg:gap-x-3">
-              <div className="order-1 lg:order-none">
-                <label className="label">แบบฟอร์ม</label>
-                <input
-                  className="input"
-                  list="form-presets"
-                  placeholder="ภ.พ.30"
-                  value={newFormCode}
-                  onChange={(e) => setNewFormCode(e.target.value)}
-                  disabled={reportLocked}
-                />
-                <datalist id="form-presets">
-                  {formPresetList.map((p) => (
-                    <option key={p} value={p} />
-                  ))}
-                </datalist>
-              </div>
-              <div className="order-2 lg:order-none">
-                <label className="label">จำนวนเงิน</label>
-                <input
-                  className="input"
-                  inputMode="decimal"
-                  value={newAmount}
-                  onChange={(e) => setNewAmount(parseAmountInput(e.target.value))}
-                  onBlur={() =>
-                    setNewAmount((v) => (v ? fmtAmountInput(v) : v))
-                  }
-                  placeholder="0.00"
-                  disabled={reportLocked}
-                />
-              </div>
-              <div className="order-3 col-span-2 lg:order-none lg:col-span-1">
-                <label className="label">รายละเอียด</label>
-                <input
-                  className="input"
-                  placeholder="เช่น ภาษีมูลค่าเพิ่ม เดือน 7/69"
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  disabled={reportLocked}
-                />
-              </div>
-              <div className="order-4 lg:order-none">
-                <label className="label">วิธีชำระ</label>
-                <input
-                  className="input"
-                  list="payment-method-presets"
-                  placeholder="เช่น สลิป หน้า 2"
-                  value={newPaymentMethod}
-                  onChange={(e) => setNewPaymentMethod(e.target.value)}
-                  disabled={reportLocked}
-                />
-                <datalist id="payment-method-presets">
-                  {payMethodPresetList.map((p) => (
-                    <option key={p} value={p} />
-                  ))}
-                </datalist>
-              </div>
-              <button
-                className="btn-primary order-5 col-span-2 lg:order-none lg:col-span-1"
-                onClick={addFiling}
-                disabled={adding || reportLocked}
-              >
-                เพิ่มรายการ
-              </button>
-            </div>
-
-            <details className="card !py-2 text-sm">
-              <summary className="cursor-pointer text-neutral-600">
-                จัดการตัวเลือกวิธีชำระ ({payMethodPresetList.length})
-              </summary>
-              <div className="mt-2 flex gap-2">
-                <input
-                  className="input"
-                  placeholder="เพิ่มวิธีชำระใหม่ เช่น สลิป หน้า 3"
-                  value={newPayMethodPreset}
-                  onChange={(e) => setNewPayMethodPreset(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addPayMethodPreset();
-                  }}
-                />
-                <button className="btn shrink-0" onClick={addPayMethodPreset}>
-                  เพิ่ม
-                </button>
-              </div>
-              {payMethodPresetList.length > 0 && (
-                <ul className="mt-2 space-y-1">
-                  {payMethodPresetList.map((p) => (
-                    <li
-                      key={p}
-                      className="flex items-center gap-2 rounded bg-neutral-50 px-2 py-1"
+            {!reportLocked && (
+              showAddFiling ? (
+                <>
+                  <div
+                    id="add-filing"
+                    className="card grid grid-cols-2 gap-x-2 gap-y-3 rounded-xl lg:grid-cols-[150px_135px_minmax(0,1.7fr)_170px_auto] lg:items-end lg:gap-x-3"
+                  >
+                    <div className="order-1 lg:order-none">
+                      <label className="label">แบบฟอร์ม</label>
+                      <input
+                        className="input"
+                        list="form-presets"
+                        placeholder="ภ.พ.30"
+                        value={newFormCode}
+                        onChange={(e) => setNewFormCode(e.target.value)}
+                        disabled={reportLocked}
+                      />
+                      <datalist id="form-presets">
+                        {formPresetList.map((p) => (
+                          <option key={p} value={p} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div className="order-2 lg:order-none">
+                      <label className="label">จำนวนเงิน</label>
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        value={newAmount}
+                        onChange={(e) => setNewAmount(parseAmountInput(e.target.value))}
+                        onBlur={() =>
+                          setNewAmount((v) => (v ? fmtAmountInput(v) : v))
+                        }
+                        placeholder="0.00"
+                        disabled={reportLocked}
+                      />
+                    </div>
+                    <div className="order-3 col-span-2 lg:order-none lg:col-span-1">
+                      <label className="label">รายละเอียด</label>
+                      <input
+                        className="input"
+                        placeholder="เช่น ภาษีมูลค่าเพิ่ม เดือน 7/69"
+                        value={newDescription}
+                        onChange={(e) => setNewDescription(e.target.value)}
+                        disabled={reportLocked}
+                      />
+                    </div>
+                    <div className="order-4 lg:order-none">
+                      <label className="label">วิธีชำระ</label>
+                      <input
+                        className="input"
+                        list="payment-method-presets"
+                        placeholder="เช่น สลิป หน้า 2"
+                        value={newPaymentMethod}
+                        onChange={(e) => setNewPaymentMethod(e.target.value)}
+                        disabled={reportLocked}
+                      />
+                      <datalist id="payment-method-presets">
+                        {payMethodPresetList.map((p) => (
+                          <option key={p} value={p} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <button
+                      className="btn-primary order-5 col-span-2 lg:order-none lg:col-span-1"
+                      onClick={addFiling}
+                      disabled={adding || reportLocked}
                     >
-                      <span className="min-w-0 flex-1 truncate">{p}</span>
-                      <button
-                        className="text-neutral-400 hover:text-red-600"
-                        onClick={() => removePayMethodPreset(p)}
-                        aria-label={`ลบวิธีชำระ ${p}`}
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </details>
+                      {adding ? "กำลังบันทึก..." : "เพิ่มรายการ"}
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-start gap-2">
+                    <details className="card !py-2 flex-1 rounded-xl text-sm">
+                      <summary className="cursor-pointer text-neutral-600">
+                        จัดการตัวเลือกวิธีชำระ ({payMethodPresetList.length})
+                      </summary>
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          className="input"
+                          placeholder="เพิ่มวิธีชำระใหม่ เช่น สลิป หน้า 3"
+                          value={newPayMethodPreset}
+                          onChange={(e) => setNewPayMethodPreset(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") addPayMethodPreset();
+                          }}
+                        />
+                        <button className="btn shrink-0" onClick={addPayMethodPreset}>
+                          เพิ่ม
+                        </button>
+                      </div>
+                      {payMethodPresetList.length > 0 && (
+                        <ul className="mt-2 space-y-1">
+                          {payMethodPresetList.map((p) => (
+                            <li
+                              key={p}
+                              className="flex items-center gap-2 rounded bg-neutral-50 px-2 py-1"
+                            >
+                              <span className="min-w-0 flex-1 truncate">{p}</span>
+                              <button
+                                className="text-neutral-400 hover:text-red-600"
+                                onClick={() => removePayMethodPreset(p)}
+                                aria-label={`ลบวิธีชำระ ${p}`}
+                              >
+                                ✕
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </details>
+                    <button
+                      type="button"
+                      className="btn text-xs"
+                      onClick={() => setShowAddFiling(false)}
+                    >
+                      ซ่อนฟอร์ม
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowAddFiling(true)}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-neutral-300 bg-white px-4 py-4 text-sm font-medium text-neutral-600 transition-colors hover:border-blue-300 hover:bg-blue-50/40 hover:text-blue-700"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                    <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+                  </svg>
+                  เพิ่มรายการ
+                </button>
+              )
+            )}
 
             {loading && loadedKey !== `${clientId}|${period}|${activeReportId}` ? (
-              <p className="text-sm text-neutral-500">กำลังโหลด...</p>
+              <div className="space-y-2" aria-hidden>
+                <div className="h-24 animate-pulse rounded-xl bg-neutral-100" />
+                <div className="h-24 animate-pulse rounded-xl bg-neutral-100" />
+              </div>
             ) : !filings.length ? (
-              <p className="text-sm text-neutral-500">
-                ยังไม่มีรายการในเดือนนี้ — เพิ่มรายการแรกด้านบน
-              </p>
+              <div className="rounded-xl border border-dashed border-neutral-300 bg-white px-5 py-8 text-center">
+                <div className="text-sm font-medium text-neutral-800">
+                  ยังไม่มีรายการในรอบนี้
+                </div>
+                <p className="mt-1 text-xs text-neutral-500">
+                  เพิ่มรายการภาษีแรกเพื่อเริ่มสร้างรายงาน
+                </p>
+                {!reportLocked && (
+                  <button
+                    type="button"
+                    className="btn-primary mt-3"
+                    onClick={() => setShowAddFiling(true)}
+                  >
+                    + เพิ่มรายการแรก
+                  </button>
+                )}
+              </div>
             ) : (
               filings.map((f, i) => (
                 <FilingCard
@@ -2186,34 +2421,52 @@ export default function ReportsPage() {
             )}
 
             {Boolean(filings.length) && (
-              <div className="card flex flex-wrap items-center justify-between gap-3">
-                <div className="text-sm">
-                  <span className="font-medium">ยอดรวม: {fmtMoney(total)} บาท</span>
-                  <div className="text-xs text-neutral-500">
-                    ({thaiBahtText(total)})
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50/70 px-4 py-3">
+                <div>
+                  <div className="text-xs text-neutral-500">ยอดรวมทั้งสิ้น</div>
+                  <div className="text-lg font-semibold tracking-tight text-neutral-900">
+                    ฿{fmtMoney(total)}
+                  </div>
+                  <div className="mt-0.5 text-xs text-neutral-500">
+                    {thaiBahtText(total)}
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    className="btn-danger"
-                    onClick={clearAllFilings}
-                    disabled={!filings.length || clearingAll || generating || reportLocked}
-                    title="ลบรายการทั้งหมดของรอบที่เลือก"
-                  >
-                    {clearingAll ? "กำลังลบ..." : `ลบทั้งหมด (${filings.length})`}
-                  </button>
-                </div>
+                <button
+                  className="btn-danger"
+                  onClick={clearAllFilings}
+                  disabled={!filings.length || clearingAll || generating || reportLocked}
+                  title="ลบรายการทั้งหมดของรอบที่เลือก"
+                >
+                  {clearingAll ? "กำลังลบ..." : `ลบทั้งหมด (${filings.length})`}
+                </button>
               </div>
             )}
           </section>
 
           <section className="max-w-4xl space-y-3">
-            <h2 className="font-medium">ส่วนที่ 2 — เอกสารแนบ (ตามลำดับอัปโหลด)</h2>
-            <p className="-mt-2 text-xs text-neutral-500">
-              ลากไฟล์มาวาง จัดลำดับ แล้วรวมต่อท้ายปกเป็นไฟล์เดียว
-            </p>
-            <div className="card space-y-3">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-neutral-900">
+                  ส่วนที่ 2 · เอกสารแนบ
+                </h2>
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  ลากไฟล์มาวาง จัดลำดับ แล้วรวมต่อท้ายปกเป็นไฟล์เดียว
+                </p>
+              </div>
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-600">
+                {docs.length} ไฟล์
+              </span>
+            </div>
+            <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm space-y-3">
               <div
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (!reportLocked && !docsBusy) docsInputRef.current?.click();
+                  }
+                }}
                 onDragOver={(e) => {
                   if (reportLocked || docsBusy) return;
                   e.preventDefault();
@@ -2229,13 +2482,13 @@ export default function ReportsPage() {
                 onClick={() => {
                   if (!reportLocked && !docsBusy) docsInputRef.current?.click();
                 }}
-                className={`flex min-h-36 flex-col items-center justify-center rounded border-2 border-dashed p-8 text-center text-sm transition ${
+                className={`flex min-h-36 flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed p-8 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
                   reportLocked || docsBusy
                     ? "cursor-not-allowed border-neutral-200 bg-neutral-50 opacity-60"
                     : `cursor-pointer ${
                         docsDragActive
                           ? "border-blue-500 bg-blue-50"
-                          : "border-neutral-300 bg-neutral-50 hover:bg-neutral-100"
+                          : "border-neutral-300 bg-neutral-50/70 hover:border-blue-300 hover:bg-blue-50/40"
                       }`
                 }`}
               >
@@ -2251,9 +2504,18 @@ export default function ReportsPage() {
                     e.target.value = "";
                   }}
                 />
-                {docsBusy
-                  ? "กำลังอัปโหลด..."
-                  : "ลากไฟล์มาวาง หรือคลิกเพื่อเลือก (PDF / PNG / JPG — เลือกได้หลายไฟล์)"}
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+                    <path d="M12 16V4M8 8l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" strokeLinecap="round" />
+                  </svg>
+                </span>
+                <span className="text-sm font-medium text-neutral-700">
+                  {docsBusy ? "กำลังอัปโหลด..." : "ลากไฟล์มาวาง หรือคลิกเพื่อเลือก"}
+                </span>
+                <span className="text-xs text-neutral-500">
+                  PDF / PNG / JPG · เลือกได้หลายไฟล์
+                </span>
               </div>
               {!docs.length ? (
                 <p className="text-sm text-neutral-500">
@@ -2561,47 +2823,67 @@ export default function ReportsPage() {
           </section>
           </div>
 
-          {Boolean(filings.length) && (
-            <aside className="space-y-4 lg:sticky lg:top-24">
-              <section className="card space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium">สรุป & การส่ง</span>
-                  <span className="text-xs text-neutral-500">
-                    {activeReport?.label ?? ""}
-                    {activeReport?.report_no ? ` · ${activeReport.report_no}` : ""}
-                  </span>
-                </div>
-                <div className="text-2xl font-bold">
-                  {fmtMoney(total)}
-                  <span className="ml-1 text-sm font-normal text-neutral-500">บาท</span>
-                </div>
-                <div className="text-xs text-neutral-500">
-                  {filings.length} รายการ · เอกสาร {docs.length} ไฟล์
+          <aside className="order-first space-y-4 lg:order-none lg:col-start-2 lg:row-start-1 lg:sticky lg:top-28">
+            <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between gap-2 border-b border-neutral-100 bg-neutral-50/70 px-4 py-3">
+                <span className="text-sm font-semibold text-neutral-900">สรุปงาน</span>
+                <span className="truncate text-[11px] text-neutral-500">
+                  {activeReport?.report_no ?? "—"}
+                </span>
+              </div>
+              <div className="space-y-3 p-4">
+                <div>
+                  <div className="text-xs text-neutral-500">ยอดรวมทั้งสิ้น</div>
+                  <div className="mt-0.5 text-2xl font-semibold tracking-tight text-neutral-900">
+                    ฿{fmtMoney(total)}
+                  </div>
+                  <div className="mt-1 text-xs text-neutral-500">
+                    {filings.length} รายการ · เอกสาร {docs.length} ไฟล์
+                  </div>
                 </div>
                 {reportLocked && reportFiles.length === 0 && (
-                  <div className="text-xs font-medium text-amber-600">
-                    ⚠ ยังไม่มีไฟล์ PDF — กด &quot;ดาวน์โหลด PDF&quot;
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs font-medium text-amber-700">
+                    ยังไม่มีไฟล์ PDF — กด &quot;ดาวน์โหลด PDF&quot; เพื่อสร้างสำเนา
                   </div>
                 )}
-                <div className="flex flex-col gap-2 pt-1">
+                <div className="rounded-lg bg-neutral-50 px-3 py-2 text-xs leading-snug text-neutral-600">
+                  {reportLocked
+                    ? "รายงานออกแล้ว — ดาวน์โหลดหรือส่งให้ลูกค้าได้"
+                    : filings.length
+                      ? "ตรวจสอบรายการแล้วกดออกรายงานเพื่อล็อกรอบและเก็บสำเนา PDF"
+                      : "เพิ่มรายการก่อนจึงจะออกรายงานได้"}
+                </div>
+                <div className="flex flex-col gap-2">
                   <button
                     className="btn-primary"
-                    onClick={generatePdf}
-                    disabled={generating}
+                    onClick={handlePrimaryAction}
+                    disabled={generating || reportBusy}
                   >
-                    {generating ? "กำลังสร้าง..." : "ดาวน์โหลด PDF"}
+                    {generating
+                      ? "กำลังสร้าง..."
+                      : reportLocked
+                        ? "ดาวน์โหลด PDF"
+                        : filings.length
+                          ? "ออกรายงาน"
+                          : "เพิ่มรายการ"}
                   </button>
                   <button
                     className="btn"
                     onClick={previewCover}
-                    disabled={previewBusy || generating}
+                    disabled={previewBusy || generating || !filings.length}
                   >
                     {previewBusy ? "กำลังสร้างตัวอย่าง..." : "ดูตัวอย่างปก"}
                   </button>
                 </div>
-              </section>
+              </div>
+            </section>
 
-              <section className="card space-y-2">
+            <div className="space-y-2">
+              <h3 className="px-1 text-[11px] font-semibold tracking-wide text-neutral-500 uppercase">
+                ส่งให้ลูกค้า
+              </h3>
+
+              <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">ลิงก์แชร์ให้ลูกค้า</span>
                   {!reportLocked && (
@@ -2656,7 +2938,7 @@ export default function ReportsPage() {
                 )}
               </section>
 
-              <section className="card space-y-2 border-blue-200 bg-blue-50/30">
+              <section className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">ส่งอีเมลถึงลูกค้า</span>
                   {emailQuota && (
@@ -2744,24 +3026,60 @@ export default function ReportsPage() {
                   </div>
                 )}
               </section>
-            </aside>
-          )}
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {clientId && (
+        <div className="fixed inset-x-0 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] z-30 border-t border-neutral-200 bg-white/95 px-4 py-2.5 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] backdrop-blur lg:hidden print:hidden">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] text-neutral-500">ยอดรวม</div>
+              <div className="truncate text-base font-semibold text-neutral-900">
+                ฿{fmtMoney(total)}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn-primary shrink-0 px-4 py-2"
+              onClick={handlePrimaryAction}
+              disabled={generating || reportBusy}
+            >
+              {generating
+                ? "กำลังสร้าง..."
+                : reportLocked
+                  ? "ดาวน์โหลด PDF"
+                  : filings.length
+                    ? "ออกรายงาน"
+                    : "เพิ่มรายการ"}
+            </button>
+          </div>
         </div>
       )}
 
       {showSettings && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
           onClick={() => setShowSettings(false)}
         >
           <div
-            className="card flex max-h-[90vh] w-full max-w-md flex-col space-y-4 overflow-y-auto bg-white"
+            role="dialog"
+            aria-modal="true"
+            aria-label="ตั้งค่ารายงาน"
+            className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:rounded-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold">ตั้งค่ารายงาน</h2>
+            <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-4">
+              <div>
+                <h2 className="text-sm font-semibold text-neutral-900">ตั้งค่ารายงาน</h2>
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  โลโก้ ข้อมูลบริษัท และรูปแบบเอกสาร
+                </p>
+              </div>
               <button
-                className="text-neutral-400 hover:text-neutral-700"
+                type="button"
+                className="text-lg text-neutral-400 hover:text-neutral-700"
                 onClick={() => setShowSettings(false)}
                 aria-label="ปิด"
               >
@@ -2769,169 +3087,219 @@ export default function ReportsPage() {
               </button>
             </div>
 
-            <div className="space-y-2">
-              <label className="label">โลโก้บริษัท (หัวกระดาษหน้าปก)</label>
-              <p className="text-xs text-neutral-500">
-                แสดงมุมซ้ายบนของหน้าปกรายงาน PDF — รองรับ PNG/JPG
-              </p>
-              {settingsLoading ? (
-                <p className="text-xs text-neutral-500">กำลังโหลด...</p>
-              ) : logoPreviewUrl ? (
-                <div className="flex flex-col items-start gap-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={logoPreviewUrl}
-                    alt="โลโก้"
-                    className="max-h-24 rounded border border-neutral-200 bg-neutral-50 object-contain p-2"
-                  />
-                  <span className="text-xs text-neutral-500">
-                    {logoFileName}
-                  </span>
-                  <button
-                    className="btn-danger text-xs"
-                    onClick={handleLogoRemove}
-                    disabled={logoBusy}
-                  >
-                    ลบโลโก้
-                  </button>
+            <div className="flex gap-1 overflow-x-auto border-b border-neutral-200 px-3 py-2">
+              {([
+                ["brand", "แบรนด์ & โลโก้"],
+                ["company", "ข้อมูลบริษัท"],
+                ["format", "รูปแบบรายงาน"],
+                ["share", "ลิงก์แชร์"],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setSettingsTab(key)}
+                  className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    settingsTab === key
+                      ? "bg-neutral-900 text-white"
+                      : "text-neutral-600 hover:bg-neutral-100"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto p-5">
+              {settingsTab === "brand" && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="label">โลโก้บริษัท (หัวกระดาษหน้าปก)</label>
+                    <p className="text-xs text-neutral-500">
+                      แสดงมุมซ้ายบนของหน้าปกรายงาน PDF — รองรับ PNG/JPG
+                    </p>
+                  </div>
+                  {settingsLoading ? (
+                    <div className="h-24 animate-pulse rounded-lg bg-neutral-100" />
+                  ) : logoPreviewUrl ? (
+                    <div className="flex flex-col items-start gap-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={logoPreviewUrl}
+                        alt="โลโก้"
+                        className="max-h-24 rounded-lg border border-neutral-200 bg-neutral-50 object-contain p-2"
+                      />
+                      <span className="text-xs text-neutral-500">{logoFileName}</span>
+                      <button
+                        type="button"
+                        className="btn-danger text-xs"
+                        onClick={handleLogoRemove}
+                        disabled={logoBusy}
+                      >
+                        ลบโลโก้
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-xs text-neutral-600 hover:border-blue-300 hover:bg-blue-50/40">
+                      {logoBusy ? "กำลังอัปโหลด..." : "เลือกไฟล์โลโก้ (PNG / JPG)"}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        className="hidden"
+                        disabled={logoBusy}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          handleLogoUpload(file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  )}
+                  <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-xs leading-snug text-neutral-500">
+                    ใช้โลโก้พื้นหลังโปร่งใสเพื่อให้เข้ากับหัวกระดาษขาวดำของรายงาน
+                  </div>
                 </div>
-              ) : (
-                <label className="btn inline-flex cursor-pointer text-xs">
-                  {logoBusy ? "กำลังอัปโหลด..." : "เลือกไฟล์โลโก้..."}
+              )}
+
+              {settingsTab === "company" && (
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="label">ชื่อบริษัท / สำนักงาน</label>
+                    <input
+                      className="input"
+                      placeholder="Taxwork"
+                      value={firmName}
+                      onChange={(e) => setFirmName(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="label">ผู้จัดทำ (แสดงบนปก)</label>
+                    <input
+                      className="input"
+                      placeholder="เว้นว่างเพื่อใช้ชื่อบริษัท / สำนักงาน"
+                      value={preparedBy}
+                      onChange={(e) => setPreparedBy(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2 border-t border-neutral-200 pt-3">
+                    <label className="label">ข้อมูลติดต่อ (ท้ายอีเมลถึงลูกค้า)</label>
+                    <input
+                      className="input"
+                      placeholder="เบอร์โทรศัพท์ เช่น 02-000-0000"
+                      value={firmPhone}
+                      onChange={(e) => setFirmPhone(e.target.value)}
+                    />
+                    <input
+                      className="input"
+                      placeholder="LINE เช่น @taxwork"
+                      value={firmLine}
+                      onChange={(e) => setFirmLine(e.target.value)}
+                    />
+                    <input
+                      className="input"
+                      placeholder="ที่อยู่ (ไม่บังคับ)"
+                      value={firmAddress}
+                      onChange={(e) => setFirmAddress(e.target.value)}
+                    />
+                    <p className="text-xs text-neutral-500">
+                      แสดงในอีเมลที่ส่งรายงานให้ลูกค้า (เว้นว่างได้)
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "format" && (
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="label">รูปแบบปก</label>
+                    <select
+                      className="input"
+                      value={coverStyle}
+                      onChange={(e) =>
+                        setCoverStyle(e.target.value === "classic" ? "classic" : "modern")
+                      }
+                    >
+                      <option value="modern">ใหม่ (ขาวดำ หัวกระดาษ + โลโก้กลาง)</option>
+                      <option value="classic">เดิม (ขาวดำ)</option>
+                    </select>
+                    <p className="text-xs text-neutral-500">
+                      เลือก &quot;เดิม&quot; เพื่อย้อนกลับไปใช้ปกแบบก่อนหน้า (ใช้ได้ทันที
+                      โดยไม่ต้อง deploy ใหม่)
+                    </p>
+                  </div>
+                  <div className="space-y-1 border-t border-neutral-200 pt-3">
+                    <label className="label">ตัวสร้างไฟล์ PDF</label>
+                    <select
+                      className="input"
+                      value={reportRenderer}
+                      onChange={(e) =>
+                        setReportRenderer(e.target.value === "server" ? "server" : "legacy")
+                      }
+                    >
+                      <option value="legacy">เดิม (สร้างในเบราว์เซอร์)</option>
+                      <option value="server">
+                        ใหม่ (สร้างบนเซิร์ฟเวอร์ — ข้อความจริง คัดลอกได้)
+                      </option>
+                    </select>
+                    <p className="text-xs text-neutral-500">
+                      เลือก &quot;เดิม&quot; เพื่อย้อนกลับได้ทันทีโดยไม่ต้อง deploy ใหม่
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "share" && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="label">ตัวอย่างลิงก์ (LINE / โซเชียล)</label>
+                    <p className="text-xs text-neutral-500">
+                      ชื่อและคำอธิบายที่จะแสดงก่อนผู้รับเปิดลิงก์
+                    </p>
+                  </div>
                   <input
-                    type="file"
-                    accept="image/png,image/jpeg"
-                    className="hidden"
-                    disabled={logoBusy}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      handleLogoUpload(file);
-                      e.target.value = "";
-                    }}
+                    className="input"
+                    placeholder="รายงานภาษี"
+                    value={sharePreviewTitle}
+                    onChange={(e) => setSharePreviewTitle(e.target.value)}
                   />
-                </label>
+                  <input
+                    className="input"
+                    placeholder="เว้นว่างเพื่อใช้ข้อความเริ่มต้น (มีชื่อบริษัท)"
+                    value={sharePreviewDescription}
+                    onChange={(e) => setSharePreviewDescription(e.target.value)}
+                  />
+                  <div className="space-y-1">
+                    <label className="label">รายละเอียดในตัวอย่างลิงก์</label>
+                    <select
+                      className="input"
+                      value={sharePreviewDetail}
+                      onChange={(e) => setSharePreviewDetail(e.target.value)}
+                    >
+                      <option value="none">ไม่แสดง (ชื่อบริษัทเท่านั้น)</option>
+                      <option value="period">รอบระยะเวลา + ครั้งที่</option>
+                      <option value="client">รอบระยะเวลา + ชื่อลูกค้า</option>
+                      <option value="amount">รอบระยะเวลา + ชื่อลูกค้า + ยอดเงิน</option>
+                    </select>
+                  </div>
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-snug text-amber-800">
+                    ตัวอย่างลิงก์ถูกดึงโดยผู้ที่ถือลิงก์ก่อนยืนยันตัวตน —
+                    เลือกระดับรายละเอียดให้ละเอียดเท่าที่ต้องการเปิดเผยในแชต
+                    และ LINE อาจแคชตัวอย่างไว้ 2–3 วัน
+                  </p>
+                </div>
               )}
             </div>
 
-            <div className="space-y-3 border-t border-neutral-200 pt-3">
-              <div className="space-y-1">
-                <label className="label">ชื่อบริษัท / สำนักงาน</label>
-                <input
-                  className="input"
-                  placeholder="Taxwork"
-                  value={firmName}
-                  onChange={(e) => setFirmName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="label">ผู้จัดทำ (แสดงบนปก)</label>
-                <input
-                  className="input"
-                  placeholder="เว้นว่างเพื่อใช้ชื่อบริษัท / สำนักงาน"
-                  value={preparedBy}
-                  onChange={(e) => setPreparedBy(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2 border-t border-neutral-200 pt-3">
-                <label className="label">ข้อมูลติดต่อ (ท้ายอีเมลถึงลูกค้า)</label>
-                <input
-                  className="input"
-                  placeholder="เบอร์โทรศัพท์ เช่น 02-000-0000"
-                  value={firmPhone}
-                  onChange={(e) => setFirmPhone(e.target.value)}
-                />
-                <input
-                  className="input"
-                  placeholder="LINE เช่น @taxwork"
-                  value={firmLine}
-                  onChange={(e) => setFirmLine(e.target.value)}
-                />
-                <input
-                  className="input"
-                  placeholder="ที่อยู่ (ไม่บังคับ)"
-                  value={firmAddress}
-                  onChange={(e) => setFirmAddress(e.target.value)}
-                />
-                <p className="text-xs text-neutral-500">
-                  แสดงในอีเมลที่ส่งรายงานให้ลูกค้า (เว้นว่างได้)
-                </p>
-              </div>
-              <div className="space-y-1">
-                <label className="label">รูปแบบปก</label>
-                <select
-                  className="input"
-                  value={coverStyle}
-                  onChange={(e) =>
-                    setCoverStyle(
-                      e.target.value === "classic" ? "classic" : "modern"
-                    )
-                  }
-                >
-                  <option value="modern">ใหม่ (ขาวดำ หัวกระดาษ + โลโก้กลาง)</option>
-                  <option value="classic">เดิม (ขาวดำ)</option>
-                </select>
-              </div>
-              <p className="text-xs text-neutral-500">
-                เลือก &quot;เดิม&quot; เพื่อย้อนกลับไปใช้ปกแบบก่อนหน้า (ใช้ได้ทันที
-                โดยไม่ต้อง deploy ใหม่)
-              </p>
-              <div className="space-y-1">
-                <label className="label">ตัวสร้างไฟล์ PDF (ทดลอง)</label>
-                <select
-                  className="input"
-                  value={reportRenderer}
-                  onChange={(e) =>
-                    setReportRenderer(e.target.value === "server" ? "server" : "legacy")
-                  }
-                >
-                  <option value="legacy">เดิม (สร้างในเบราว์เซอร์)</option>
-                  <option value="server">ใหม่ (สร้างบนเซิร์ฟเวอร์ — ข้อความจริง คัดลอกได้)</option>
-                </select>
-                <p className="text-xs text-neutral-500">
-                  เลือก &quot;เดิม&quot; เพื่อย้อนกลับได้ทันทีโดยไม่ต้อง deploy ใหม่
-                </p>
-              </div>
-              <div className="space-y-2 border-t border-neutral-200 pt-3">
-                <label className="label">ตัวอย่างลิงก์ (LINE / โซเชียล)</label>
-                <input
-                  className="input"
-                  placeholder="รายงานภาษี"
-                  value={sharePreviewTitle}
-                  onChange={(e) => setSharePreviewTitle(e.target.value)}
-                />
-                <input
-                  className="input"
-                  placeholder="เว้นว่างเพื่อใช้ข้อความเริ่มต้น (มีชื่อบริษัท)"
-                  value={sharePreviewDescription}
-                  onChange={(e) => setSharePreviewDescription(e.target.value)}
-                />
-                <div className="space-y-1">
-                  <label className="label">รายละเอียดในตัวอย่างลิงก์</label>
-                  <select
-                    className="input"
-                    value={sharePreviewDetail}
-                    onChange={(e) => setSharePreviewDetail(e.target.value)}
-                  >
-                    <option value="none">ไม่แสดง (ชื่อบริษัทเท่านั้น)</option>
-                    <option value="period">รอบระยะเวลา + ครั้งที่</option>
-                    <option value="client">รอบระยะเวลา + ชื่อลูกค้า</option>
-                    <option value="amount">รอบระยะเวลา + ชื่อลูกค้า + ยอดเงิน</option>
-                  </select>
-                  <p className="text-xs text-neutral-500">
-                    ตัวอย่างลิงก์ถูกดึงโดยผู้ที่ถือลิงก์ (ก่อนยืนยันตัวตน) —
-                    เลือกให้ละเอียดเท่าที่ต้องการเปิดเผยในแชต
-                  </p>
-                </div>
-                <p className="text-xs text-neutral-500">
-                  ใช้เมื่อส่งลิงก์ใน LINE — ชื่อ/คำอธิบายด้านบนจะแทนที่ข้อความอัตโนมัติ
-                  และ LINE อาจแคชตัวอย่างไว้ 2–3 วัน (ลิงก์ใหม่จะอัปเดตทันที)
-                </p>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2 border-t border-neutral-200 px-5 py-3">
               <button
+                type="button"
+                className="btn"
+                onClick={() => setShowSettings(false)}
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
                 className="btn-primary"
                 onClick={async () => {
                   await saveBranding();
@@ -2939,7 +3307,7 @@ export default function ReportsPage() {
                 }}
                 disabled={brandingBusy || settingsLoading}
               >
-                {brandingBusy ? "กำลังบันทึก..." : "เสร็จสิ้น"}
+                {brandingBusy ? "กำลังบันทึก..." : "บันทึก"}
               </button>
             </div>
           </div>
@@ -2988,6 +3356,45 @@ export default function ReportsPage() {
           </div>
         </div>
       )}
+
+      {confirmPrompt && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+          onClick={() => resolveConfirm(false)}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="ยืนยันการทำรายการ"
+            className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-semibold text-neutral-900">ยืนยันการทำรายการ</h2>
+            <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-neutral-600">
+              {confirmPrompt.message}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => resolveConfirm(false)}
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => resolveConfirm(true)}
+                autoFocus
+              >
+                ยืนยัน
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }
@@ -3098,7 +3505,7 @@ function FilingCard({
   }
 
   return (
-    <div className="card space-y-3">
+    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm space-y-3">
       <div className="grid grid-cols-2 gap-x-2 gap-y-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,0.85fr)_minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_auto] lg:items-end lg:gap-x-3">
         <div className="order-1 lg:order-none">
           <label className="label">แบบฟอร์ม</label>
@@ -3260,7 +3667,7 @@ function AttachmentSlot({
   onRemove: (att: Attachment) => void;
 }) {
   return (
-    <div className="min-w-0 rounded-lg border border-neutral-200 bg-neutral-50/50 p-2.5">
+    <div className="min-w-0 rounded-lg border border-neutral-200 bg-neutral-50/60 p-3">
       <div className="text-[11px] font-semibold text-neutral-600">{label}</div>
       {file ? (
         <div className="mt-1.5 flex items-center gap-2">
@@ -3478,11 +3885,10 @@ function WorkflowStepper({
     { label: "กรอกข้อมูล", done: filled },
     { label: "ออกรายงาน", done: issued },
     { label: "ส่งให้ลูกค้า", done: delivered },
-    { label: "ติดตามการชำระ", done: false },
   ];
   const activeIndex = steps.findIndex((s) => !s.done);
   return (
-    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-xs shadow-sm">
       {steps.map((s, i) => {
         const active = i === activeIndex;
         return (
