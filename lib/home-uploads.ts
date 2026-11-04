@@ -34,17 +34,14 @@ export function splitUploads<T extends { uploaded_by: string | null }>(
 }
 
 /**
- * Return uploads newer than the stored last-seen timestamp. A missing or
- * invalid timestamp deliberately yields no "new" badges (first visit).
+ * Stable-sort undownloaded files first, preserving upload order within each
+ * group. Keeps the next action at the top of each list.
  */
-export function findNewUploads<T extends { id: string; uploaded_at: string }>(
+export function sortUndownloadedFirst<T extends { id: string }>(
   files: T[],
-  lastSeen: number | null
+  downloadedIds: ReadonlySet<string>
 ): T[] {
-  if (lastSeen == null || !Number.isFinite(lastSeen)) return [];
-
-  return files.filter((file) => {
-    const uploaded = new Date(file.uploaded_at).getTime();
-    return Number.isFinite(uploaded) && uploaded > lastSeen;
-  });
+  return [...files].sort(
+    (a, b) => Number(downloadedIds.has(a.id)) - Number(downloadedIds.has(b.id))
+  );
 }

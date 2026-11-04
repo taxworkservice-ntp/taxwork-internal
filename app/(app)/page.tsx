@@ -1,7 +1,15 @@
 import Link from "next/link";
 import PageHeader from "@/components/page-header";
-import { listFiles, listUploaderNames } from "@/lib/actions/files";
-import { splitUploads, type HomeUploadFile } from "@/lib/home-uploads";
+import {
+  listDownloadedFileIds,
+  listFiles,
+  listUploaderNames,
+} from "@/lib/actions/files";
+import {
+  sortUndownloadedFirst,
+  splitUploads,
+  type HomeUploadFile,
+} from "@/lib/home-uploads";
 import { navLinks } from "@/lib/nav";
 import { requireUser } from "@/lib/session";
 import HomeUpload from "./home-upload";
@@ -19,6 +27,7 @@ export default async function HomePage() {
   const user = await requireUser();
   const files = await listFiles();
   const uploaderNames = await listUploaderNames();
+  const downloadedIds = await listDownloadedFileIds();
 
   const homeFiles: HomeUploadFile[] = files.map((file) => ({
     id: file.id,
@@ -29,7 +38,12 @@ export default async function HomePage() {
     uploaded_by: file.uploaded_by,
   }));
 
+  const downloadedSet = new Set(downloadedIds);
   const { mine, team } = splitUploads(homeFiles, user.email ?? "");
+  const mineRemaining = mine.filter((file) => !downloadedSet.has(file.id)).length;
+  const teamRemaining = team.filter((file) => !downloadedSet.has(file.id)).length;
+  const mineRecent = sortUndownloadedFirst(mine, downloadedSet).slice(0, 4);
+  const teamRecent = sortUndownloadedFirst(team, downloadedSet).slice(0, 4);
   const primary = navLinks.filter((link) => link.href === "/clients" || link.href === "/files");
   const secondary = navLinks.filter(
     (link) => link.href !== "/" && link.href !== "/clients" && link.href !== "/files"
@@ -75,11 +89,13 @@ export default async function HomePage() {
           </p>
         </div>
         <UploadHistory
-          viewerEmail={user.email ?? ""}
-          mine={mine.slice(0, 4)}
-          team={team.slice(0, 4)}
+          mine={mineRecent}
+          team={teamRecent}
           mineCount={mine.length}
           teamCount={team.length}
+          mineRemaining={mineRemaining}
+          teamRemaining={teamRemaining}
+          initialDownloadedIds={downloadedIds}
           uploaderNames={uploaderNames}
         />
       </section>

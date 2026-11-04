@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findNewUploads, splitUploads } from "@/lib/home-uploads";
+import { sortUndownloadedFirst, splitUploads } from "@/lib/home-uploads";
 
 type File = {
   id: string;
@@ -28,26 +28,29 @@ describe("splitUploads", () => {
   });
 });
 
-describe("findNewUploads", () => {
-  it("returns nothing on a first visit", () => {
-    expect(findNewUploads(files, null)).toEqual([]);
-    expect(findNewUploads(files, Number.NaN)).toEqual([]);
-  });
-
-  it("returns files uploaded after the last-seen timestamp", () => {
-    const lastSeen = new Date("2026-10-02T10:00:00.000Z").getTime();
-    expect(findNewUploads(files, lastSeen).map((file) => file.id)).toEqual([
+describe("sortUndownloadedFirst", () => {
+  it("moves downloaded files below undownloaded files", () => {
+    const sorted = sortUndownloadedFirst(files, new Set(["other"]));
+    expect(sorted.map((file) => file.id)).toEqual([
+      "mine",
       "unknown",
       "blank",
+      "other",
     ]);
   });
 
-  it("ignores invalid upload dates", () => {
-    const lastSeen = new Date("2026-10-01T00:00:00.000Z").getTime();
-    const result = findNewUploads(
-      [{ id: "bad", uploaded_by: null, uploaded_at: "not-a-date" }],
-      lastSeen
-    );
-    expect(result).toEqual([]);
+  it("preserves upload order within each group", () => {
+    const sorted = sortUndownloadedFirst(files, new Set(["mine", "unknown"]));
+    expect(sorted.map((file) => file.id)).toEqual([
+      "other",
+      "blank",
+      "mine",
+      "unknown",
+    ]);
+  });
+
+  it("returns everything when nothing has been downloaded", () => {
+    const sorted = sortUndownloadedFirst(files, new Set());
+    expect(sorted.map((file) => file.id)).toEqual(files.map((file) => file.id));
   });
 });

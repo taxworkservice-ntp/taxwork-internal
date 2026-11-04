@@ -3,6 +3,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { requireUserApi } from "@/lib/session";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { asciiFileName } from "@/lib/download";
+import { recordFileDownloadByPath } from "@/lib/file-downloads";
 
 export const runtime = "nodejs";
 
@@ -40,6 +41,12 @@ export async function POST(request: NextRequest) {
   const bytes = await obj.Body?.transformToByteArray();
   if (!bytes) {
     return NextResponse.json({ error: "empty object" }, { status: 404 });
+  }
+
+  try {
+    await recordFileDownloadByPath(storagePath, user.email);
+  } catch {
+    // Tracking is best-effort and must never block the download.
   }
 
   const name =

@@ -3,6 +3,10 @@
 import { sql } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { FILE_CATEGORY_KEYS, SYSTEM_REPORT_CATEGORY } from "@/lib/file-categories";
+import {
+  listDownloadedFileIds as listDownloadedFileIdsForUser,
+  recordFileDownload,
+} from "@/lib/file-downloads";
 import { num } from "./db-helpers";
 
 export type FileRow = {
@@ -87,7 +91,25 @@ export async function recordFile(meta: FileMeta): Promise<string> {
   const rows = (await sql`insert into files (client_id, storage_path, file_name, size_bytes, mime_type, category, note, uploaded_by)
     values (${meta.client_id}, ${meta.storage_path}, ${meta.file_name}, ${meta.size_bytes}, ${meta.mime_type}, ${meta.category ?? null}, ${note}, ${user.email})
     returning id`) as { id: string }[];
-  return String(rows[0].id);
+  const fileId = String(rows[0].id);
+  try {
+    // Uploading counts as having the file already.
+    await recordFileDownload(fileId, user.email);
+  } catch {
+    // Download tracking is best-effort; never fail the upload.
+  }
+  return fileId;
+}
+
+/** File IDs the signed-in user has downloaded (for home-page status). */
+export async function listDownloadedFileIds(): Promise<string[]> {
+  const user = await requireUser();
+  try {
+    return await listDownloadedFileIdsForUser(user.email);
+  } catch {
+    // The migration may not be applied yet; the landing page still works.
+    return [];
+  }
 }
 
 export async function updateFileNote(id: string, note: string): Promise<void> {

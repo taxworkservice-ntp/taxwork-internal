@@ -40,7 +40,7 @@ Single-user tool (the owner) used daily to:
 app/
   login/page.tsx              Email+password sign-in (better-auth)
    password/page.tsx           Change password (signed-in users)
-  (app)/page.tsx              Home landing: quick upload, own/team upload history with direct downloads
+  (app)/page.tsx              Home landing: quick upload, own/team upload history with download progress
   (app)/upload-history.tsx    Home history client component: own/team split, direct download, new badges
   (app)/layout.tsx            Shell: desktop sidebar / mobile bottom nav
   (app)/clients/page.tsx      Client list: sortable, copy icons, expandable credential rows
@@ -90,6 +90,9 @@ credentials  id, client_id → clients (CASCADE), label (platform name, free tex
 
 files        id, client_id → clients (nullable = general), storage_path,
              file_name, size_bytes, mime_type, category, uploaded_at
+
+file_downloads file_id → files (CASCADE), user_email, downloaded_at,
+             primary key (file_id, user_email) — powers home "ยังไม่โหลด"
 
 contacts     id, name, firm, type ('auditor'|'accountant'|'both'),
              tax_id, license_no (audit ID), phone, email, line_id,
