@@ -40,9 +40,8 @@ export default async function HomePage() {
 
   const downloadedSet = new Set(downloadedIds);
   const { mine, team } = splitUploads(homeFiles, user.email ?? "");
-  const mineRemaining = mine.filter((file) => !downloadedSet.has(file.id)).length;
   const teamRemaining = team.filter((file) => !downloadedSet.has(file.id)).length;
-  const mineRecent = sortUndownloadedFirst(mine, downloadedSet).slice(0, 4);
+  const mineRecent = mine.slice(0, 4);
   const teamRecent = sortUndownloadedFirst(team, downloadedSet).slice(0, 4);
   const primary = navLinks.filter((link) => link.href === "/clients" || link.href === "/files");
   const secondary = navLinks.filter(
@@ -93,7 +92,6 @@ export default async function HomePage() {
           team={teamRecent}
           mineCount={mine.length}
           teamCount={team.length}
-          mineRemaining={mineRemaining}
           teamRemaining={teamRemaining}
           initialDownloadedIds={downloadedIds}
           uploaderNames={uploaderNames}

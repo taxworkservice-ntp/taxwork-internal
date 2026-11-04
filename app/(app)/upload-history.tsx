@@ -55,16 +55,19 @@ function StaffAvatar({ name }: { name: string }) {
 function FileRow({
   file,
   downloaded,
+  showStatus = true,
   uploaderName,
   onDownloaded,
   onError,
 }: {
   file: HomeUploadFile;
   downloaded: boolean;
+  showStatus?: boolean;
   uploaderName?: string;
   onDownloaded: (id: string) => void;
   onError: (message: string) => void;
 }) {
+  const isDone = showStatus && downloaded;
   const [busy, setBusy] = useState(false);
   const badge = fileBadge(file.file_name);
 
@@ -84,11 +87,11 @@ function FileRow({
   }
 
   return (
-    <li className={`px-4 py-3 transition-colors sm:px-5 ${downloaded ? "bg-neutral-50/50" : ""}`}>
+    <li className={`px-4 py-3 transition-colors sm:px-5 ${isDone ? "bg-neutral-50/50" : ""}`}>
       <div className="flex flex-wrap items-center gap-3">
         <span
           className={`flex h-10 w-12 shrink-0 items-center justify-center rounded-lg border text-[10px] font-bold ${badge.className} ${
-            downloaded ? "opacity-60" : ""
+            isDone ? "opacity-60" : ""
           }`}
         >
           {badge.label}
@@ -103,33 +106,34 @@ function FileRow({
           )}
           <div
             className={`truncate text-[15px] font-medium ${
-              downloaded ? "text-neutral-600" : "text-neutral-900"
+              isDone ? "text-neutral-600" : "text-neutral-900"
             }`}
             title={file.file_name}
           >
             {file.file_name}
           </div>
-          <div className={`mt-0.5 text-xs ${downloaded ? "text-neutral-400" : "text-neutral-500"}`}>
+          <div className={`mt-0.5 text-xs ${isDone ? "text-neutral-400" : "text-neutral-500"}`}>
             {fmtSize(file.size_bytes)} · {fmtDate(file.uploaded_at)}
           </div>
         </div>
 
-        {downloaded ? (
-          <span className="shrink-0 text-xs font-medium text-emerald-600">
-            ✓ โหลดแล้ว
-          </span>
-        ) : (
-          <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-            ยังไม่โหลด
-          </span>
-        )}
+        {showStatus &&
+          (isDone ? (
+            <span className="shrink-0 text-xs font-medium text-emerald-600">
+              ✓ โหลดแล้ว
+            </span>
+          ) : (
+            <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+              ยังไม่โหลด
+            </span>
+          ))}
 
         <button
           type="button"
           onClick={handleDownload}
           disabled={busy}
           className={`${
-            downloaded ? "btn" : "btn-primary"
+            isDone ? "btn" : "btn-primary"
           } inline-flex min-h-10 w-full items-center justify-center gap-1.5 px-4 sm:w-auto`}
         >
           <svg
@@ -144,7 +148,7 @@ function FileRow({
             <path d="M12 4v12M8 12l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M4 20h16" strokeLinecap="round" />
           </svg>
-          {busy ? "กำลังดาวน์โหลด..." : downloaded ? "โหลดอีกครั้ง" : "ดาวน์โหลด"}
+          {busy ? "กำลังดาวน์โหลด..." : isDone ? "โหลดอีกครั้ง" : "ดาวน์โหลด"}
         </button>
       </div>
     </li>
@@ -155,7 +159,8 @@ function UploadSection({
   title,
   subtitle,
   count,
-  remaining,
+  remaining = 0,
+  showProgress = false,
   accent = false,
   icon,
   empty,
@@ -164,7 +169,8 @@ function UploadSection({
   title: string;
   subtitle: string;
   count: number;
-  remaining: number;
+  remaining?: number;
+  showProgress?: boolean;
   accent?: boolean;
   icon: ReactNode;
   empty?: string;
@@ -202,9 +208,7 @@ function UploadSection({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {count === 0 ? (
-              <span className="text-xs text-neutral-500">0 ไฟล์</span>
-            ) : (
+            {showProgress && count > 0 ? (
               <>
                 {remaining > 0 ? (
                   <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
@@ -219,6 +223,10 @@ function UploadSection({
                   โหลดแล้ว {done}/{count}
                 </span>
               </>
+            ) : (
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-600">
+                {count} ไฟล์
+              </span>
             )}
             <Link href="/files" className="text-xs font-medium text-blue-600 hover:underline">
               ดูทั้งหมด →
@@ -226,7 +234,7 @@ function UploadSection({
           </div>
         </div>
 
-        {count > 0 && (
+        {showProgress && count > 0 && (
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-neutral-200/70">
             <div
               className={`h-full rounded-full transition-all ${
@@ -252,7 +260,6 @@ export default function UploadHistory({
   team,
   mineCount,
   teamCount,
-  mineRemaining,
   teamRemaining,
   initialDownloadedIds,
   uploaderNames,
@@ -261,7 +268,6 @@ export default function UploadHistory({
   team: HomeUploadFile[];
   mineCount: number;
   teamCount: number;
-  mineRemaining: number;
   teamRemaining: number;
   initialDownloadedIds: string[];
   uploaderNames: Record<string, string>;
@@ -285,10 +291,7 @@ export default function UploadHistory({
       (id) => !initialDownloaded.has(id) && files.some((file) => file.id === id)
     ).length;
 
-  const mineRemainingNow = Math.max(0, mineRemaining - newlyDownloaded(mine));
   const teamRemainingNow = Math.max(0, teamRemaining - newlyDownloaded(team));
-
-  const mineSorted = sortUndownloadedFirst(mine, downloaded);
   const teamSorted = sortUndownloadedFirst(team, downloaded);
 
   function handleDownloaded(id: string) {
@@ -322,6 +325,7 @@ export default function UploadHistory({
           subtitle="อัปโหลดล่าสุดโดยเพื่อนร่วมทีม"
           count={teamCount}
           remaining={teamRemainingNow}
+          showProgress
           accent
           icon={
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
@@ -348,7 +352,6 @@ export default function UploadHistory({
         title="ไฟล์ของฉัน"
         subtitle="อัปโหลดล่าสุดโดยคุณ"
         count={mineCount}
-        remaining={mineRemainingNow}
         icon={
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -361,11 +364,12 @@ export default function UploadHistory({
             : undefined
         }
       >
-        {mineSorted.map((file) => (
+        {mine.map((file) => (
           <FileRow
             key={file.id}
             file={file}
             downloaded={downloaded.has(file.id)}
+            showStatus={false}
             onDownloaded={handleDownloaded}
             onError={handleError}
           />
